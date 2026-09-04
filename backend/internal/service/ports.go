@@ -1,0 +1,85 @@
+// Package service implements business rules on top of the repository layer.
+// Stores are declared here as consumer-side interfaces so services can be
+// unit-tested against fakes without SQLite.
+package service
+
+import (
+	"context"
+
+	"home-finance-planner/backend/internal/domain"
+)
+
+// AccountStore is the persistence contract for accounts.
+type AccountStore interface {
+	List(ctx context.Context) ([]domain.Account, error)
+	GetByID(ctx context.Context, id int64) (domain.Account, error)
+	Create(ctx context.Context, a domain.Account) (domain.Account, error)
+	Update(ctx context.Context, a domain.Account) (domain.Account, error)
+	Delete(ctx context.Context, id int64) error
+}
+
+// CategoryStore is the persistence contract for categories.
+type CategoryStore interface {
+	List(ctx context.Context) ([]domain.Category, error)
+	GetByID(ctx context.Context, id int64) (domain.Category, error)
+	Create(ctx context.Context, c domain.Category) (domain.Category, error)
+	Delete(ctx context.Context, id int64) error
+}
+
+// TransactionFilters re-exports the shared domain filter type.
+type TransactionFilters = domain.TransactionFilters
+
+// TransactionStore is the persistence contract for transactions.
+type TransactionStore interface {
+	List(ctx context.Context, f domain.TransactionFilters) ([]domain.Transaction, error)
+	GetByID(ctx context.Context, id int64) (domain.Transaction, error)
+	Create(ctx context.Context, t domain.Transaction) (domain.Transaction, error)
+	Update(ctx context.Context, t domain.Transaction) (domain.Transaction, error)
+	Delete(ctx context.Context, id int64) error
+}
+
+// BudgetStore is the persistence contract for budgets.
+type BudgetStore interface {
+	ListByMonth(ctx context.Context, month string) ([]domain.Budget, error)
+	GetByID(ctx context.Context, id int64) (domain.Budget, error)
+	Create(ctx context.Context, b domain.Budget) (domain.Budget, error)
+	Update(ctx context.Context, b domain.Budget) (domain.Budget, error)
+	Delete(ctx context.Context, id int64) error
+}
+
+// SummaryStore is the persistence contract for dashboard aggregates.
+type SummaryStore interface {
+	MonthSummaryFor(ctx context.Context, month string) (domain.MonthSummary, error)
+}
+
+// Services bundles the business services for handler wiring.
+type Services struct {
+	Accounts     *AccountService
+	Categories   *CategoryService
+	Transactions *TransactionService
+	Budgets      *BudgetService
+	Summary      *SummaryService
+	Settings     *SettingsService
+	Bills        *BillService
+}
+
+// New wires services onto their stores.
+func New(
+	accounts AccountStore,
+	categories CategoryStore,
+	transactions TransactionStore,
+	budgets BudgetStore,
+	summary SummaryStore,
+	settings *SettingsService,
+	bills *BillService,
+) *Services {
+	return &Services{
+		Accounts:     &AccountService{accounts: accounts},
+		Categories:   &CategoryService{categories: categories},
+		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories},
+		Budgets:      &BudgetService{budgets: budgets, categories: categories},
+		Summary:      &SummaryService{summary: summary},
+		Settings:     settings,
+		Bills:        bills,
+	}
+}

@@ -1,0 +1,26 @@
+# Root
+.DS_Store
+*.log
+.env
+.env.local
+
+# Data (SQLite lives here)
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Go
+backend/bin/
+backend/tmp/
+backend/coverage.out
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/.vite/
+
+# Editors
+.idea/
+.vscode/
