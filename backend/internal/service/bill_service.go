@@ -473,26 +473,57 @@ func (s *BillService) extractDraft(ctx context.Context, file []byte, mimeType st
 	return &draft, nil
 }
 
-// categoryAliases maps loose AI category names onto the fixed storage
+// categoryAliases maps loose AI category names onto the fixed product
 // taxonomy. Anything unmatched stays unset — the user picks it in review.
 var categoryAliases = map[string]string{
-	"dairy":      "dairy & eggs",
-	"produce":    "produce",
-	"vegetables": "produce",
-	"vegetable":  "produce",
-	"fruits":     "produce",
-	"fruit":      "produce",
-	"herbs":      "produce",
-	"meat":       "meats & seafood",
-	"meats":      "meats & seafood",
-	"seafood":    "meats & seafood",
-	"fish":       "meats & seafood",
-	"beverages":  "beverages",
-	"drinks":     "beverages",
-	"snacks":     "snacks & treats",
-	"sweets":     "snacks & treats",
-	"cleaning":   "cleaning & dish",
-	"household":  "cleaning & dish",
+	// fresh produce
+	"produce":   "vegetables",
+	"vegetable": "vegetables",
+	"veggies":   "vegetables",
+	"herbs":     "vegetables",
+	"fruit":     "fruits",
+	// dairy
+	"dairy": "dairy & eggs",
+	"eggs":  "dairy & eggs",
+	"milk":  "dairy & eggs",
+	// proteins
+	"meat":        "meats",
+	"meats":       "meats",
+	"poultry":     "meats",
+	"fish":        "seafood",
+	"deli":        "deli & ready-to-eat",
+	"charcuterie": "deli & ready-to-eat",
+	// pantry
+	"grains":    "pasta, rice & grains",
+	"pasta":     "pasta, rice & grains",
+	"rice":      "pasta, rice & grains",
+	"canned":    "canned & jarred",
+	"jarred":    "canned & jarred",
+	"spices":    "spices & baking",
+	"baking":    "spices & baking",
+	"breakfast": "breakfast & spreads",
+	"spreads":   "breakfast & spreads",
+	"snacks":    "salty snacks",
+	"chips":     "salty snacks",
+	"sweets":    "sweets & chocolate",
+	"candy":     "sweets & chocolate",
+	"chocolate": "sweets & chocolate",
+	"cookies":   "sweets & chocolate",
+	"nuts":      "nuts & dried fruits",
+	// drinks (loose drink names stay unmapped — no generic bucket anymore)
+	"soda":        "cola & soda",
+	"cola":        "cola & soda",
+	"soft drinks": "cola & soda",
+	"juices":      "juice",
+	"water":       "water & iced tea",
+	"coffee":      "coffee & tea",
+	"tea":         "coffee & tea",
+	"alcohol":     "spirits & liqueurs",
+	"spirits":     "spirits & liqueurs",
+	// household
+	"cleaning":  "cleaning & dish",
+	"household": "cleaning & dish",
+	"paper":     "paper goods",
 }
 
 // resolveDraftCategories classifies each item against the fixed storage

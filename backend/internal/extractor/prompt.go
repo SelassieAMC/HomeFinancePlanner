@@ -14,7 +14,7 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
     {
       "name": "article name as printed",
       "brand": "product brand if recognizable, else \"\"",
-      "category": "one of the fixed storage categories, written EXACTLY as listed: Produce, Dairy & Eggs, Meats & Seafood, Deli & Ready-to-Eat, Chilled Condiments, Grains & Carbs, Canned Goods, Oils & Vinegars, Spices & Baking, Breakfast & Spreads, Snacks & Treats, Beverages, Root Vegetables, Frozen Proteins, Frozen Fruits & Veggies, Frozen Ready Meals, Frozen Breads, Paper Goods, Food Wrap & Storage, Cleaning & Dish",
+      "category": "one of the fixed product categories, written EXACTLY as listed: Vegetables, Fruits, Dairy & Eggs, Cheese, Meats, Seafood, Deli & Ready-to-Eat, Chilled Condiments, "Pasta, Rice & Grains", Canned & Jarred, Oils & Vinegars, Spices & Baking, Breakfast & Spreads, Sweets & Chocolate, Salty Snacks, Nuts & Dried Fruits, Root Vegetables, Water & Iced Tea, Cola & Soda, Juice, Coffee & Tea, Milk Drinks & Alternatives, Beer, Wine, Spirits & Liqueurs, Frozen Vegetables, Frozen Fruits, Frozen Meat & Fish, Frozen Ready Meals, Frozen Breads, Paper Goods, Food Wrap & Storage, Cleaning & Dish",
       "unit": "measure unit printed with the quantity (kg, g, l, ml, pcs, …), or \"\" for plain counts",
       "quantity": 1.0,
       "unit_price": 2.5,
@@ -30,7 +30,14 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
 Rules:
 - "items" lists every article line, one entry per article, in receipt order.
 - quantity defaults to 1 when not printed; use decimals for weights (0.532 kg) and set "unit" to the printed measure (kg, g, l, ml, pcs, …).
-- classify every item into the fixed category list by how the product is stored: frozen products go to a Frozen category, fridge products to Produce/Dairy & Eggs/Meats & Seafood/Deli & Ready-to-Eat/Chilled Condiments, room-temperature groceries to the Pantry categories, and non-food items to Paper Goods, Food Wrap & Storage or Cleaning & Dish. Bread is "Frozen Breads" only when the product is sold frozen.
+- classify every item into the fixed category list, choosing the MOST SPECIFIC category (the list is fine-grained so spending can be analyzed per product family):
+  * Drinks are never a generic bucket: water/iced tea → "Water & Iced Tea", cola and other sodas/energy drinks → "Cola & Soda", juices and nectars → "Juice", coffee/tea products → "Coffee & Tea", plant milks and drinking yogurt → "Milk Drinks & Alternatives", beer (incl. non-alcoholic and radler) → "Beer", wine and sparkling wine → "Wine", hard alcohol → "Spirits & Liqueurs". Plain milk itself is "Dairy & Eggs".
+  * Fresh produce splits by type: vegetables and fresh herbs → "Vegetables"; fruit → "Fruits". Potatoes, onions and garlic stay "Root Vegetables".
+  * "Meats" is for raw meat, "Seafood" for fish and shellfish — never mix them; pre-packed sliced charcuterie is "Deli & Ready-to-Eat". Cheeses are "Cheese", other chilled dairy "Dairy & Eggs".
+  * Pantry: dry pasta/rice/grains/flour → "Pasta Rice & Grains"; canned or jarred food → "Canned & Jarred"; chocolate, candy and cookies → "Sweets & Chocolate"; chips/crackers/pretzels → "Salty Snacks"; nuts, seeds and dried fruit → "Nuts & Dried Fruits".
+  * Frozen products always go to a Frozen category by type (Frozen Vegetables, Frozen Fruits, Frozen Meat & Fish, Frozen Ready Meals, Frozen Breads). Bread is "Frozen Breads" only when sold frozen.
+  * Non-food items go to Paper Goods, Food Wrap & Storage or Cleaning & Dish.
+  * Deposit/bottle return lines keep the category of the drink they belong to when identifiable, otherwise leave the category as the drink family printed (e.g. beer crate → "Beer").
 - unit_price is the printed price per unit (VAT/IVA already included — read the printed value verbatim); discount is the per-line market discount if printed (0 otherwise); line_total is what the line costs after its discount, VAT included. Discounts are informational only — never change the printed unit price.
 - Deposit/bottle returns (lines like "Leergut", "Pfand" returns, empty bottles) are money BACK: read their amounts as NEGATIVE numbers exactly as printed (e.g. line_total -1.50 for an 8¢-bottle crate return). Do not drop those lines and do not flip their sign.
 - discount_total is any global/market-level discount printed on the receipt (0 if none). It is informational only.
