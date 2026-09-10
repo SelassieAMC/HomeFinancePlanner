@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// BillStatus is the persisted state of a bill. Scans stay in memory (never
-// persisted) until confirmed, so stored bills are accepted ones.
+// BillStatus is the persisted state of a bill. Scan drafts live in bill_scans
+// (until confirmed or discarded), so stored bills are accepted ones.
 type BillStatus string
 
 const (
@@ -109,12 +109,39 @@ type BillDraft struct {
 	PrintedTotalCents  int64           `json:"printed_total_cents"` // as printed on the receipt
 }
 
-// BillScan is the response of a scan: a session token identifying the
-// not-yet-persisted receipt plus the extracted draft.
+// BillScanStatus is the pipeline state of one persisted scan. It is separate
+// from BillStatus: a scan is analyzed in the background and only becomes a
+// bill (accepted) when the user confirms it.
+type BillScanStatus string
+
+const (
+	BillScanAnalyzing BillScanStatus = "analyzing"
+	BillScanDone      BillScanStatus = "done"
+	BillScanFailed    BillScanStatus = "failed"
+)
+
+func (s BillScanStatus) Valid() bool {
+	switch s {
+	case BillScanAnalyzing, BillScanDone, BillScanFailed:
+		return true
+	}
+	return false
+}
+
+// BillScan is one receipt upload awaiting analysis and confirmation. Scan is
+// the initial response (status analyzing); the same shape is polled by token
+// until the draft is ready. ImagePath and MimeType are server-side only.
 type BillScan struct {
-	ScanToken  string     `json:"scan_token"`
-	ProviderID string     `json:"provider_id,omitempty"`
-	Draft      *BillDraft `json:"draft"`
+	ID         int64          `json:"-"` // DB id; the token is the API handle
+	ScanToken  string         `json:"scan_token"`
+	Status     BillScanStatus `json:"status"`
+	ProviderID string         `json:"provider_id,omitempty"`
+	Draft      *BillDraft     `json:"draft"`           // null while analyzing or failed
+	Error      string         `json:"error,omitempty"` // set when failed
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"-"`
+	ImagePath  string         `json:"-"`
+	MimeType   string         `json:"-"`
 }
 
 // BillConfirmInput is the (possibly user-corrected) draft the client sends

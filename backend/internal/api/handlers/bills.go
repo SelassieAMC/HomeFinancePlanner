@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"home-finance-planner/backend/internal/domain"
 	"home-finance-planner/backend/internal/service"
@@ -23,8 +24,9 @@ func drainBody(r *http.Request) {
 }
 
 // Scan reads a receipt file (multipart field "image", optional "provider_id"),
-// runs AI extraction, and returns the draft with a scan token. Nothing is
-// persisted until the client confirms.
+// registers a scan, and returns immediately with its token and the status
+// "analyzing" — extraction runs in the background. The client polls GetScan
+// until the draft is ready. Nothing is persisted until the client confirms.
 func (h *BillHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(service.MaxBillImageBytes); err != nil {
 		// The client is still uploading; drain what we can before closing.
@@ -63,6 +65,35 @@ func (h *BillHandler) Scan(w http.ResponseWriter, r *http.Request) {
 // extractRequest pins the provider for a re-extraction; optional.
 type extractRequest struct {
 	ProviderID string `json:"provider_id,omitempty"`
+}
+
+// GetScan returns one scan's pipeline state (analyzing | done | failed with
+// the draft); polled by the client while a scan is analyzing.
+func (h *BillHandler) GetScan(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	scan, err := h.Svc.GetScan(r.Context(), token)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, scan)
+}
+
+// ListScans returns recent scans, optionally filtered by a comma-separated
+// ?status=analyzing,failed.
+func (h *BillHandler) ListScans(w http.ResponseWriter, r *http.Request) {
+	var statuses []domain.BillScanStatus
+	if raw := r.URL.Query().Get("status"); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			statuses = append(statuses, domain.BillScanStatus(strings.TrimSpace(part)))
+		}
+	}
+	scans, err := h.Svc.ListScans(r.Context(), statuses, 50)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, scans)
 }
 
 // Reextract re-runs AI extraction on an unconfirmed scan.

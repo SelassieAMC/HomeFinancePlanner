@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -23,7 +24,7 @@ type BillExtractor interface {
 }
 
 // BillStore is the persistence contract for bills. Only accepted bills are
-// persisted — scans live in memory until confirmed.
+// persisted — scan drafts live in bill_scans until confirmed.
 type BillStore interface {
 	Create(ctx context.Context, b domain.Bill) (domain.Bill, error)
 	Update(ctx context.Context, b domain.Bill) (domain.Bill, error)
@@ -34,44 +35,75 @@ type BillStore interface {
 	ListBrands(ctx context.Context) ([]string, error)
 }
 
+// BillScanStore is the persistence contract for the scan pipeline.
+type BillScanStore interface {
+	Create(ctx context.Context, s domain.BillScan) (domain.BillScan, error)
+	GetByToken(ctx context.Context, token string) (domain.BillScan, error)
+	List(ctx context.Context, statuses []domain.BillScanStatus, limit int) ([]domain.BillScan, error)
+	MarkDone(ctx context.Context, token string, draft *domain.BillDraft) error
+	MarkFailed(ctx context.Context, token, msg string) error
+	ClaimRetry(ctx context.Context, token, providerID string) (bool, error)
+	Delete(ctx context.Context, token string) (domain.BillScan, error)
+	DeleteStale(ctx context.Context, olderThan time.Time) ([]string, error)
+}
+
 // BillFilters re-exports the shared domain filter type.
 type BillFilters = domain.BillFilters
 
 // MaxBillImageBytes caps uploaded receipt files at 10 MB.
 const MaxBillImageBytes = 10 << 20
 
-// scanSessionTTL bounds how long an unconfirmed scan (and its receipt file)
-// is kept in memory/disk.
-const scanSessionTTL = 2 * time.Hour
+const (
+	// scanQueueCapacity bounds pending scan tokens; a full queue rejects the
+	// upload instead of silently losing it.
+	scanQueueCapacity = 64
+	// billScanWorkers bounds concurrent AI extractions (SQLite serializes the
+	// tiny row updates; the long AI HTTP call holds no DB connection).
+	billScanWorkers = 2
+	// scanSessionTTL bounds how long an unconfirmed scan draft (and its
+	// receipt file) is kept — done/failed scans older than this are swept.
+	scanSessionTTL = 24 * time.Hour
+	// shutdownDrainWindow caps how long Close waits for workers between
+	// iterations; it never waits for a running extraction (recovery re-runs it).
+	shutdownDrainWindow = 2 * time.Second
+)
 
-// billScanSession holds the not-yet-persisted receipt: the file stays on disk
-// under billsDir and is promoted to the accepted bill on confirm.
-type billScanSession struct {
+// billScanSource points at the receipt a bill is (or was) built from: the file
+// on disk under billsDir and the provider id that produced the draft. Used by
+// both Confirm (from the scan row) and Update (from the saved bill).
+type billScanSource struct {
 	imagePath  string
 	providerID string
-	createdAt  time.Time
 }
 
 // BillService orchestrates the scan-bills workflow.
 type BillService struct {
-	bills      BillStore
-	extractor  BillExtractor
-	providers  *SettingsService
-	accounts   AccountStore
-	categories CategoryStore
-	budgets    BudgetStore
-	txStore    TransactionStore
-	billsDir   string
+	bills          BillStore
+	scans          BillScanStore
+	extractor      BillExtractor
+	providers      *SettingsService
+	accounts       AccountStore
+	categories     CategoryStore
+	budgets        BudgetStore
+	txStore        TransactionStore
+	billsDir       string
+	extractTimeout time.Duration
+	log            *slog.Logger
 
-	mu        sync.Mutex
-	scans     map[string]*billScanSession
+	queue     chan string
+	wg        sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.Mutex // guards lastSweep only
 	lastSweep time.Time
 }
 
-// NewBillService wires the bill workflow. billsDir is where receipt files are
-// stored.
+// NewBillService wires the bill workflow and starts the background scan
+// workers. billsDir is where receipt files are stored; extractTimeout bounds
+// one AI extraction; scans still analyzing after a restart are re-enqueued.
 func NewBillService(
 	bills BillStore,
+	scans BillScanStore,
 	extractor BillExtractor,
 	providers *SettingsService,
 	accounts AccountStore,
@@ -79,18 +111,38 @@ func NewBillService(
 	budgets BudgetStore,
 	txStore TransactionStore,
 	billsDir string,
+	extractTimeout time.Duration,
+	log *slog.Logger,
 ) *BillService {
-	return &BillService{
-		bills:      bills,
-		extractor:  extractor,
-		providers:  providers,
-		accounts:   accounts,
-		categories: categories,
-		budgets:    budgets,
-		txStore:    txStore,
-		billsDir:   billsDir,
-		scans:      make(map[string]*billScanSession),
+	if extractTimeout <= 0 {
+		extractTimeout = 5 * time.Minute
 	}
+	if log == nil {
+		log = slog.Default()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &BillService{
+		bills:          bills,
+		scans:          scans,
+		extractor:      extractor,
+		providers:      providers,
+		accounts:       accounts,
+		categories:     categories,
+		budgets:        budgets,
+		txStore:        txStore,
+		billsDir:       billsDir,
+		extractTimeout: extractTimeout,
+		log:            log,
+		queue:          make(chan string, scanQueueCapacity),
+		ctx:            ctx,
+		cancel:         cancel,
+	}
+	s.recoverScans(ctx)
+	for i := 1; i <= billScanWorkers; i++ {
+		s.wg.Add(1)
+		go s.runWorker(ctx, i)
+	}
+	return s
 }
 
 // allowedMime maps accepted upload types to file extensions.
@@ -103,9 +155,10 @@ var allowedMime = map[string]string{
 	"application/pdf": ".pdf",
 }
 
-// Scan stores the receipt file (not yet a bill), runs AI extraction, and
-// returns the draft together with a scan token. Nothing is persisted until
-// Confirm. providerID is optional; the first configured provider is used
+// Scan stores the receipt file (not yet a bill), registers a scan row, and
+// returns immediately — extraction runs in the background. The client polls
+// GetScan until the status leaves "analyzing". Nothing is persisted as a bill
+// until Confirm. providerID is optional; the first configured provider is used
 // otherwise.
 func (s *BillService) Scan(ctx context.Context, mimeType string, file []byte, providerID string) (domain.BillScan, error) {
 	mimeType = strings.ToLower(mimeType)
@@ -138,60 +191,113 @@ func (s *BillService) Scan(ctx context.Context, mimeType string, file []byte, pr
 		return domain.BillScan{}, fmt.Errorf("save receipt: %w", err)
 	}
 
-	draft, err := s.extractDraft(ctx, file, strings.ToLower(mimeType), provider)
-	if err != nil {
-		_ = os.Remove(path) // nothing to keep — the read failed
-		return domain.BillScan{}, err
-	}
-
-	token, err := s.storeScanSession(path, provider.ID)
+	token, err := newScanToken()
 	if err != nil {
 		_ = os.Remove(path)
 		return domain.BillScan{}, err
 	}
 
-	assignDraftItemIDs(draft, 0)
-	return domain.BillScan{ScanToken: token, ProviderID: provider.ID, Draft: draft}, nil
-}
-
-// Reextract re-runs AI extraction on an unconfirmed scan (retry), optionally
-// with a different provider. The draft is replaced; any edits are lost.
-func (s *BillService) Reextract(ctx context.Context, token, providerID string) (domain.BillScan, error) {
-	session, ok := s.scanSession(token)
-	if !ok {
-		return domain.BillScan{}, validationError("scan %s not found or expired — scan the receipt again", token)
+	if _, err := s.scans.Create(ctx, domain.BillScan{
+		ScanToken:  token,
+		ImagePath:  path,
+		MimeType:   strings.ToLower(mimeType),
+		ProviderID: provider.ID,
+	}); err != nil {
+		_ = os.Remove(path)
+		return domain.BillScan{}, err
 	}
 
+	if !s.enqueue(token) {
+		// Queue full: be honest instead of losing the upload — drop the row
+		// and the file and tell the client to retry.
+		if _, derr := s.scans.Delete(context.Background(), token); derr != nil {
+			s.log.Warn("drop scan row after queue-full", "token", token, "error", derr)
+		}
+		_ = os.Remove(path)
+		return domain.BillScan{}, validationError("analysis queue is full — try again in a moment")
+	}
+	s.sweepStaleScans()
+	return domain.BillScan{
+		ScanToken:  token,
+		Status:     domain.BillScanAnalyzing,
+		ProviderID: provider.ID,
+		CreatedAt:  time.Now().UTC(),
+	}, nil
+}
+
+// GetScan returns one scan's pipeline state, or domain.ErrNotFound for
+// unknown/consumed/expired tokens.
+func (s *BillService) GetScan(ctx context.Context, token string) (domain.BillScan, error) {
+	scan, err := s.scans.GetByToken(ctx, token)
+	if err != nil {
+		return domain.BillScan{}, err
+	}
+	if scan.Status == domain.BillScanDone && scan.Draft != nil {
+		// Defensive: ids are already 1..n in the stored JSON.
+		assignDraftItemIDs(scan.Draft, 0)
+	}
+	return scan, nil
+}
+
+// ListScans returns recent scans (default 50) in the given states — all
+// states when none is given.
+func (s *BillService) ListScans(ctx context.Context, statuses []domain.BillScanStatus, limit int) ([]domain.BillScan, error) {
+	for _, st := range statuses {
+		if !st.Valid() {
+			return nil, validationError("unknown scan status %q", st)
+		}
+	}
+	return s.scans.List(ctx, statuses, limit)
+}
+
+// Reextract re-runs AI extraction on a finished or failed scan (retry),
+// optionally with a different provider. The scan returns to the analyzing
+// state and the client polls again; any earlier draft edits are lost.
+func (s *BillService) Reextract(ctx context.Context, token, providerID string) (domain.BillScan, error) {
 	provider, err := s.resolveProvider(ctx, providerID)
 	if err != nil {
 		return domain.BillScan{}, err
 	}
 
-	file, err := os.ReadFile(session.imagePath)
-	if err != nil {
-		return domain.BillScan{}, fmt.Errorf("read receipt: %w", err)
-	}
-
-	draft, err := s.extractDraft(ctx, file, detectMime(session.imagePath), provider)
+	claimed, err := s.scans.ClaimRetry(ctx, token, provider.ID)
 	if err != nil {
 		return domain.BillScan{}, err
 	}
+	if !claimed {
+		// Either the token is unknown or the scan is still analyzing.
+		if _, gerr := s.scans.GetByToken(ctx, token); gerr != nil {
+			return domain.BillScan{}, fmt.Errorf("scan %s not found or expired — scan the receipt again: %w", token, domain.ErrNotFound)
+		}
+		return domain.BillScan{}, validationError("scan is currently being analyzed — wait for it to finish")
+	}
 
-	session.providerID = provider.ID
-	assignDraftItemIDs(draft, 0)
-	return domain.BillScan{ScanToken: token, ProviderID: provider.ID, Draft: draft}, nil
+	s.enqueue(token)
+	return domain.BillScan{
+		ScanToken:  token,
+		Status:     domain.BillScanAnalyzing,
+		ProviderID: provider.ID,
+	}, nil
 }
 
 // Confirm persists the (user-corrected) draft as an accepted bill and, with
 // an AccountID, records one expense transaction for the printed total. The
-// scan session is consumed; the receipt file stays as the permanent record.
+// scan row is deleted; the receipt file stays as the permanent record.
 func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillConfirmInput) (domain.Bill, error) {
-	session, ok := s.scanSession(token)
-	if !ok {
-		return domain.Bill{}, validationError("scan %s not found or expired — scan the receipt again", token)
+	scan, err := s.scans.GetByToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.Bill{}, fmt.Errorf("scan %s not found or expired — scan the receipt again: %w", token, domain.ErrNotFound)
+		}
+		return domain.Bill{}, err
+	}
+	switch {
+	case scan.Status == domain.BillScanAnalyzing:
+		return domain.Bill{}, validationError("scan is still being analyzed — try again in a few moments")
+	case scan.Status != domain.BillScanDone || scan.Draft == nil:
+		return domain.Bill{}, validationError("analysis failed — retry or discard the scan")
 	}
 
-	bill, err := s.buildBill(ctx, in, session)
+	bill, err := s.buildBill(ctx, in, &billScanSource{imagePath: scan.ImagePath, providerID: scan.ProviderID})
 	if err != nil {
 		return domain.Bill{}, err
 	}
@@ -222,7 +328,11 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 		}
 	}
 
-	s.removeScanSession(token)
+	// The bill exists — consume the scan row. (Deleting after Create keeps a
+	// crash between the two a redoable confirm.)
+	if _, err := s.scans.Delete(ctx, token); err != nil {
+		s.log.Warn("consume confirmed scan row", "token", token, "error", err)
+	}
 	return created, nil
 }
 
@@ -235,8 +345,8 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 		return domain.Bill{}, err
 	}
 
-	session := &billScanSession{imagePath: existing.ImagePath, providerID: existing.ExtractedBy}
-	bill, err := s.buildBill(ctx, in, session)
+	source := &billScanSource{imagePath: existing.ImagePath, providerID: existing.ExtractedBy}
+	bill, err := s.buildBill(ctx, in, source)
 	if err != nil {
 		return domain.Bill{}, err
 	}
@@ -288,13 +398,18 @@ func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill 
 	return nil
 }
 
-// DiscardScan drops an unconfirmed scan and deletes its receipt file.
+// DiscardScan drops an unconfirmed scan and deletes its receipt file. A
+// worker that is still extracting it matches 0 rows when writing its result,
+// so a discarded scan is never resurrected.
 func (s *BillService) DiscardScan(ctx context.Context, token string) error {
-	session, ok := s.removeScanSession(token)
-	if !ok {
-		return validationError("scan %s not found or expired", token)
+	scan, err := s.scans.Delete(ctx, token)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return fmt.Errorf("scan %s not found or expired: %w", token, domain.ErrNotFound)
+		}
+		return err
 	}
-	if err := os.Remove(session.imagePath); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(scan.ImagePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete receipt file: %w", err)
 	}
 	return nil
@@ -357,7 +472,7 @@ func (s *BillService) resolveProvider(ctx context.Context, providerID string) (d
 // buildBill validates the confirmed draft and turns it into a Bill ready for
 // persistence. The total is always computed from the edited lines + VAT; the
 // receipt's printed amount is carried through for the mismatch warning.
-func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput, session *billScanSession) (domain.Bill, error) {
+func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput, source *billScanSource) (domain.Bill, error) {
 	if in.VATCents < 0 || in.DiscountCents < 0 || in.PrintedTotalCents < 0 {
 		return domain.Bill{}, validationError("totals must not be negative")
 	}
@@ -450,8 +565,8 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		TotalCents:         total,
 		PrintedTotalCents:  printed,
 		Status:             domain.BillStatusAccepted,
-		ImagePath:          session.imagePath,
-		ExtractedBy:        session.providerID,
+		ImagePath:          source.imagePath,
+		ExtractedBy:        source.providerID,
 		BudgetID:           in.BudgetID,
 		Items:              items,
 	}, nil
@@ -559,54 +674,96 @@ func (s *BillService) resolveDraftCategories(ctx context.Context, draft *domain.
 	return nil
 }
 
-// --- scan session store ------------------------------------------------------
+// --- scan queue / maintenance -------------------------------------------------
 
-// storeScanSession registers a receipt file under a fresh random token and
-// sweeps expired sessions.
-func (s *BillService) storeScanSession(path, providerID string) (string, error) {
+// newScanToken returns a fresh 32-char random hex token.
+func newScanToken() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate scan token: %w", err)
 	}
-	token := hex.EncodeToString(buf)
+	return hex.EncodeToString(buf), nil
+}
 
+// enqueue hands a token to the workers without ever blocking: a full queue
+// leaves the row in the DB for the next sweep to re-enqueue.
+func (s *BillService) enqueue(token string) bool {
+	select {
+	case s.queue <- token:
+		return true
+	default:
+		return false
+	}
+}
+
+// recoverScans re-enqueues scans still in the analyzing state — a restart or
+// crash mid-extraction leaves them there and they resume on boot.
+func (s *BillService) recoverScans(ctx context.Context) {
+	pending, err := s.scans.List(ctx, []domain.BillScanStatus{domain.BillScanAnalyzing}, scanQueueCapacity)
+	if err != nil {
+		s.log.Error("recover analyzing scans", "error", err)
+		return
+	}
+	for _, scan := range pending {
+		if !s.enqueue(scan.ScanToken) {
+			s.log.Warn("recovery queue full", "token", scan.ScanToken)
+		}
+	}
+	if len(pending) > 0 {
+		s.log.Info("recovered analyzing scans", "count", len(pending))
+	}
+}
+
+// sweepStaleScans lazily (at most once a minute) deletes done/failed scans
+// past the TTL (with their receipt files) and re-enqueues analyzing scans that
+// stopped making progress (e.g. a queue-full enqueue or a lost worker).
+func (s *BillService) sweepStaleScans() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	if now.Sub(s.lastSweep) > time.Minute {
-		for t, sess := range s.scans {
-			if now.Sub(sess.createdAt) > scanSessionTTL {
-				_ = os.Remove(sess.imagePath)
-				delete(s.scans, t)
+	if time.Since(s.lastSweep) <= time.Minute {
+		s.mu.Unlock()
+		return
+	}
+	s.lastSweep = time.Now()
+	s.mu.Unlock()
+
+	cutoff := time.Now().Add(-scanSessionTTL)
+	paths, err := s.scans.DeleteStale(s.ctx, cutoff)
+	if err != nil {
+		s.log.Error("sweep stale scans", "error", err)
+	}
+	for _, path := range paths {
+		_ = os.Remove(path)
+	}
+
+	// A stranded analyzing row gets re-enqueued once it is older than two
+	// extraction timeouts (never while an in-flight extraction can still be
+	// running).
+	staleBefore := time.Now().Add(-2 * s.extractTimeout)
+	if staleAnalyzing, err := s.scans.List(s.ctx, []domain.BillScanStatus{domain.BillScanAnalyzing}, scanQueueCapacity); err == nil {
+		for _, scan := range staleAnalyzing {
+			if scan.UpdatedAt.Before(staleBefore) {
+				if !s.enqueue(scan.ScanToken) {
+					break // queue still full — next sweep retries
+				}
 			}
 		}
-		s.lastSweep = now
 	}
-	s.scans[token] = &billScanSession{imagePath: path, providerID: providerID, createdAt: now}
-	return token, nil
 }
 
-func (s *BillService) scanSession(token string) (*billScanSession, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.scans[token]
-	if !ok || time.Since(sess.createdAt) > scanSessionTTL {
-		return nil, false
+// Close stops the scan workers. It cancels the pool and waits at most
+// shutdownDrainWindow for workers between iterations — it never waits for a
+// running extraction; the scan stays analyzing and is recovered on next boot.
+func (s *BillService) Close() {
+	s.cancel()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(shutdownDrainWindow):
 	}
-	return sess, true
-}
-
-// removeScanSession deletes a session and returns the removed one (nil when
-// the token was unknown or already consumed). The receipt file itself is left
-// in place: confirm keeps it as the bill's record.
-func (s *BillService) removeScanSession(token string) (*billScanSession, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.scans[token]
-	if ok {
-		delete(s.scans, token)
-	}
-	return sess, ok
 }
 
 // --- helpers -----------------------------------------------------------------

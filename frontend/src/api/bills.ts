@@ -3,6 +3,7 @@ import type {
   Bill,
   BillConfirmInput,
   BillScan,
+  BillScanStatus,
   BillStatsRow,
 } from '../types/domain';
 
@@ -24,14 +25,22 @@ function toQuery(filters: BillListFilters): string {
 }
 
 export const billsApi = {
-  /** Upload + AI-extract a receipt. Returns an unpersisted draft. */
+  /** Upload a receipt for AI extraction. Returns immediately with status
+   *  "analyzing"; poll getScan until the draft is ready. */
   scan: (file: File, providerId?: string) => {
     const form = new FormData();
     form.append('image', file);
     if (providerId) form.append('provider_id', providerId);
     return apiClient.postForm<BillScan>(`${BASE}/bills/scan`, form);
   },
-  /** Re-run extraction on an unconfirmed scan (replaces the draft). */
+  /** Poll one scan's pipeline state (analyzing → done/failed). */
+  getScan: (token: string) => apiClient.get<BillScan>(`${BASE}/bills/scan/${token}`),
+  /** Recent scans (analysis in progress / failed) for the bills view. */
+  listScans: (statuses?: BillScanStatus[]) => {
+    const qs = statuses?.length ? `?status=${statuses.join(',')}` : '';
+    return apiClient.get<BillScan[]>(`${BASE}/bills/scans${qs}`);
+  },
+  /** Re-run extraction on a finished/failed scan (returns to "analyzing"). */
   reextract: (token: string, providerId?: string) =>
     apiClient.post<BillScan>(`${BASE}/bills/scan/${token}/extract`, {
       provider_id: providerId || undefined,

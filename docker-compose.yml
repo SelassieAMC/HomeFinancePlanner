@@ -14,6 +14,8 @@ services:
       CORS_ALLOWED_ORIGINS: ""
       # Required in production — generate with: openssl rand -base64 32
       AI_ENCRYPTION_KEY: ${AI_ENCRYPTION_KEY:?set AI_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
+      # Generous ceiling for AI bill extraction (local vision models are slow).
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-5m}
     volumes:
       - sqlite-data:/data
     # Lets the container reach services on the host (e.g. a local Ollama at

@@ -50,15 +50,22 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 
 	mux.HandleFunc("GET /api/v1/summary", summaryH.Month)
 
-	// Scan flow: drafts live in memory until the user confirms.
+	// Scan flow: drafts live in bill_scans until the user confirms or discards.
+	// POST /scan returns immediately with status "analyzing"; the client polls
+	// GET /scan/{token}. (Literals beat the {id} wildcard in ServeMux.)
 	mux.HandleFunc("POST /api/v1/bills/scan", billH.Scan)
+	mux.HandleFunc("GET /api/v1/bills/scans", billH.ListScans)
+	mux.HandleFunc("GET /api/v1/bills/scan/{token}", billH.GetScan)
 	mux.HandleFunc("POST /api/v1/bills/scan/{token}/extract", billH.Reextract)
 	mux.HandleFunc("POST /api/v1/bills/scan/{token}/confirm", billH.Confirm)
 	mux.HandleFunc("DELETE /api/v1/bills/scan/{token}", billH.DiscardScan)
 	mux.HandleFunc("GET /api/v1/bills", billH.List)
 	mux.HandleFunc("GET /api/v1/bills/{id}", billH.Get)
 	mux.HandleFunc("PUT /api/v1/bills/{id}", billH.Update)
-	mux.HandleFunc("GET /api/v1/bills/{id}/image", billH.Image)
+	// /image/{id} rather than /{id}/image: a 3-segment wildcard route next to
+	// /bills/scan/{token} (e.g. /{id}/image) is ambiguous with it in ServeMux
+	// (".../scan/image" matches both, neither more specific).
+	mux.HandleFunc("GET /api/v1/bills/image/{id}", billH.Image)
 	mux.HandleFunc("GET /api/v1/bills/stats", billH.Stats)
 	mux.HandleFunc("GET /api/v1/bills/brands", billH.Brands)
 

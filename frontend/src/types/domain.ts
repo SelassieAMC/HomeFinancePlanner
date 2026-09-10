@@ -202,10 +202,16 @@ export interface BillDraft {
   budget_id?: number | null; // budget the whole bill counts toward
 }
 
+/** Pipeline state of one uploaded receipt (analysis runs in the background). */
+export type BillScanStatus = 'analyzing' | 'done' | 'failed';
+
 export interface BillScan {
   scan_token: string;
+  status: BillScanStatus;
   provider_id?: string;
-  draft: BillDraft;
+  draft?: BillDraft; // absent while analyzing or failed
+  error?: string; // set when failed
+  created_at?: string;
 }
 
 export interface BillConfirmInput {

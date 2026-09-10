@@ -56,6 +56,7 @@ func run() error {
 	budgets := repository.NewBudgetRepository(db)
 	summary := repository.NewSummaryRepository(db)
 	bills := repository.NewBillRepository(db)
+	billScans := repository.NewBillScanRepository(db)
 	settingsRepo := repository.NewSettingsRepository(db)
 
 	box, err := newEncryptionBox(cfg, log)
@@ -64,7 +65,8 @@ func run() error {
 	}
 	billExtractor := extractor.New(cfg.LLMTimeout)
 	settingsSvc := service.NewSettingsService(settingsRepo, box, billExtractor)
-	billSvc := service.NewBillService(bills, billExtractor, settingsSvc, accounts, categories, budgets, transactions, cfg.BillsPath)
+	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
+		accounts, categories, budgets, transactions, cfg.BillsPath, cfg.LLMTimeout, log)
 
 	svc := service.New(accounts, categories, transactions, budgets, summary, settingsSvc, billSvc)
 
@@ -101,6 +103,9 @@ func run() error {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
+		// Stop the scan workers before the DB pool closes (never waits for a
+		// running extraction — those scans resume on the next start).
+		billSvc.Close()
 	}
 	return nil
 }

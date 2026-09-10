@@ -23,7 +23,7 @@ type Extractor struct {
 // New builds an Extractor whose outbound calls honor the given timeout.
 func New(timeout time.Duration) *Extractor {
 	if timeout <= 0 {
-		timeout = 90 * time.Second
+		timeout = 5 * time.Minute
 	}
 	return &Extractor{client: &http.Client{Timeout: timeout}}
 }

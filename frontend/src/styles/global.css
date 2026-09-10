@@ -400,6 +400,18 @@ select:focus,
   text-decoration: line-through;
 }
 
+.badge-analyzing {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.badge-failed {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+  color: var(--negative);
+  background: color-mix(in srgb, var(--negative) 10%, var(--surface));
+}
+
 /* --- Horizontal scroll for wide tables ------------------------------------- */
 .table-scroll {
   overflow-x: auto;

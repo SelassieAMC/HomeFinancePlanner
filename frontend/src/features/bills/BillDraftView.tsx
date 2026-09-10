@@ -70,7 +70,7 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
             {bill.card_last_digits ? ` •${bill.card_last_digits}` : ''}
           </span>
           <span className="stat-card-sub">
-            <a href={`/api/v1/bills/${bill.id}/image`} target="_blank" rel="noreferrer">
+            <a href={`/api/v1/bills/image/${bill.id}`} target="_blank" rel="noreferrer">
               View receipt
             </a>
           </span>

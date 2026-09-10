@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
 import { billsApi, type BillStatsGroupBy } from '../../api/bills';
 import { budgetsApi } from '../../api/budgets';
@@ -16,6 +17,46 @@ export function BillsPage() {
   const [statsMonth, setStatsMonth] = useState(currentMonth());
   const categories = useAsync(() => categoriesApi.list(), []);
   const brands = useAsync(() => billsApi.brands(), []);
+
+  // Scans waiting for AI analysis or review — polled while any is analyzing.
+  const scans = useAsync(() => billsApi.listScans(), []);
+  const [scanBusyToken, setScanBusyToken] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const hasAnalyzing = (scans.data ?? []).some((s) => s.status === 'analyzing');
+
+  useEffect(() => {
+    if (!hasAnalyzing) return;
+    const timer = setInterval(scans.reload, 5000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasAnalyzing]);
+
+  async function retryScan(token: string) {
+    setScanBusyToken(token);
+    setScanError(null);
+    try {
+      await billsApi.reextract(token);
+      scans.reload();
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : 'Retry failed.');
+      scans.reload(); // a consumed token disappears from the list
+    } finally {
+      setScanBusyToken(null);
+    }
+  }
+
+  async function discardScan(token: string) {
+    setScanBusyToken(token);
+    setScanError(null);
+    try {
+      await billsApi.discardScan(token);
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : 'Failed to discard the scan.');
+    } finally {
+      setScanBusyToken(null);
+      scans.reload();
+    }
+  }
 
   const filters: { month?: string } = {};
   if (month) filters.month = month;
@@ -134,6 +175,78 @@ export function BillsPage() {
           </div>
         )}
       </Card>
+
+      {(scans.data ?? []).length > 0 && (
+        <Card title="Receipt analysis in progress">
+          {scanError && <ErrorMessage message={scanError} />}
+          <ItemPanels>
+            {(scans.data ?? []).map((scan) => (
+              <details key={scan.scan_token} className="item-panel">
+                <summary>
+                  <span className="item-icon">🧾</span>
+                  <span className="item-title">
+                    <span className="item-name">Receipt scan</span>
+                    <span className="item-brand">
+                      {scan.created_at
+                        ? new Date(scan.created_at).toLocaleString()
+                        : 'just now'}
+                    </span>
+                  </span>
+                  <span
+                    className={`badge ${
+                      scan.status === 'analyzing'
+                        ? 'badge-analyzing'
+                        : scan.status === 'failed'
+                          ? 'badge-failed'
+                          : 'badge-draft'
+                    }`}
+                  >
+                    {scan.status === 'analyzing'
+                      ? 'Analyzing…'
+                      : scan.status === 'failed'
+                        ? 'Failed'
+                        : 'Ready to review'}
+                  </span>
+                </summary>
+                <div className="item-detail">
+                  {scan.status === 'analyzing' && <Spinner label="Reading the receipt…" />}
+                  {scan.status === 'failed' && (
+                    <>
+                      <ErrorMessage message={scan.error || 'Analysis failed.'} />
+                      <div className="camera-row">
+                        <Button
+                          variant="secondary"
+                          disabled={scanBusyToken !== null}
+                          onClick={() => retryScan(scan.scan_token)}
+                        >
+                          🔁 Try again
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={scanBusyToken !== null}
+                          onClick={() => discardScan(scan.scan_token)}
+                        >
+                          Discard
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                  {scan.status === 'done' && (
+                    <div className="camera-row">
+                      <Link
+                        className="btn btn-secondary"
+                        to={`/scan?token=${scan.scan_token}`}
+                      >
+                        Review draft
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              </details>
+            ))}
+          </ItemPanels>
+        </Card>
+      )}
 
       <div className="filter-row">
         <input

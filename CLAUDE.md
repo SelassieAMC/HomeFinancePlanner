@@ -121,6 +121,7 @@ All configuration is env-driven (`internal/config`):
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | comma-separated; empty = same-origin only |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `AI_ENCRYPTION_KEY` | *(empty)* | AES-256-GCM passphrase for AI provider keys; required in production |
+| `LLM_TIMEOUT` | `5m` | per-extraction timeout for AI bill scanning (large local vision models need minutes) |
 
 ## Current State
 

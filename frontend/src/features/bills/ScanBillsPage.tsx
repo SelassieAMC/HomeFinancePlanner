@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { billsApi } from '../../api/bills';
 import { settingsApi } from '../../api/settings';
 import { accountsApi } from '../../api/accounts';
 import { categoriesApi } from '../../api/categories';
 import { budgetsApi } from '../../api/budgets';
+import { ApiError } from '../../api/client';
 import type { Bill, BillDraft, BillScan } from '../../types/domain';
 import { useAsync } from '../../hooks/useAsync';
+import { usePolling } from '../../hooks/usePolling';
 import { formatCents } from '../../lib/money';
 import { Button, Card, Spinner, ErrorMessage } from '../../components/ui';
 import {
@@ -15,7 +17,7 @@ import {
   type BillBusyAction,
 } from './BillDraftEditor';
 
-type Phase = 'capture' | 'review' | 'done';
+type Phase = 'capture' | 'analyzing' | 'review' | 'done';
 
 const FILE_ACCEPT = 'image/*,.heic,.heif,.pdf,application/pdf';
 
@@ -47,12 +49,71 @@ export function ScanBillsPage() {
 
   const firstProvider = providers.data?.[0];
 
+  // Deep link from the bills view: /scan?token=… resumes an existing scan.
+  const [searchParams] = useSearchParams();
+  const deepLinkRef = useRef(false);
+
+  // While a scan is analyzing, poll its pipeline state every 2s.
+  const scanPoll = usePolling(
+    () =>
+      scan
+        ? billsApi.getScan(scan.scan_token)
+        : Promise.reject(new Error('no scan to poll')),
+    { intervalMs: 2000, enabled: phase === 'analyzing' && scan !== null, maxMs: 10 * 60_000 },
+  );
+
   useEffect(() => {
     // Revoke the object URL when it changes or the page unmounts.
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  // Poll result → phase transitions.
+  useEffect(() => {
+    const polled = scanPoll.data;
+    if (phase !== 'analyzing' || !polled) return;
+    setScan(polled); // keeps the latest status/error for display
+    if (polled.status === 'done' && polled.draft) {
+      setDraft(polled.draft);
+      setDraftKey((k) => k + 1); // fresh extraction → remount the editor cells
+      setPhase('review');
+    }
+  }, [scanPoll.data, phase]);
+
+  // A consumed/expired token (confirmed, discarded, or swept) stops polling.
+  useEffect(() => {
+    if (phase === 'analyzing' && scanPoll.error instanceof ApiError && scanPoll.error.status === 404) {
+      setScan(null);
+      setPhase('capture');
+      setError('scan not found or expired — scan the receipt again');
+    }
+  }, [scanPoll.error, phase]);
+
+  // Resume a scan reached from the bills view (?token=…).
+  useEffect(() => {
+    if (deepLinkRef.current) return;
+    deepLinkRef.current = true;
+    const token = searchParams.get('token');
+    if (!token) return;
+    billsApi
+      .getScan(token)
+      .then((res) => {
+        setScan(res);
+        if (res.status === 'done' && res.draft) {
+          setDraft(res.draft);
+          setDraftKey((k) => k + 1);
+          setPhase('review');
+        } else {
+          setPhase('analyzing');
+        }
+      })
+      .catch((err: unknown) => {
+        setScan(null);
+        setPhase('capture');
+        setError(err instanceof Error ? err.message : 'Scan not found.');
+      });
+  }, [searchParams]);
 
   async function handleFile(file: File | undefined) {
     if (!file || busy) return;
@@ -63,11 +124,11 @@ export function ScanBillsPage() {
     setPreviewUrl(url);
 
     try {
+      // Returns immediately; the analysis runs in the background and the
+      // page polls below. Nothing is lost if the user leaves now.
       const result = await billsApi.scan(file, firstProvider?.id);
       setScan(result);
-      setDraft(result.draft);
-      setDraftKey((k) => k + 1);
-      setPhase('review');
+      setPhase('analyzing');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process the receipt.');
       setPreviewUrl(null);
@@ -113,8 +174,8 @@ export function ScanBillsPage() {
     try {
       const result = await billsApi.reextract(scan.scan_token, firstProvider?.id);
       setScan(result);
-      setDraft(result.draft);
-      setDraftKey((k) => k + 1); // replaces any in-progress edits
+      setDraft(null); // replaces any in-progress edits
+      setPhase('analyzing');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Re-read failed.');
     } finally {
@@ -199,6 +260,36 @@ export function ScanBillsPage() {
           )}
           {busy === 'extract' && (
             <Spinner label="Uploading and reading the receipt — this can take up to a minute…" />
+          )}
+          {error && <ErrorMessage message={error} />}
+        </Card>
+      )}
+
+      {phase === 'analyzing' && (
+        <Card title="Receipt">
+          {previewUrl && (
+            <img className="bill-preview" src={previewUrl} alt="Receipt preview" />
+          )}
+          {scan?.status === 'failed' ? (
+            <>
+              <ErrorMessage message={scan.error || 'Analysis failed.'} />
+              <div className="camera-row">
+                <Button onClick={handleRetry} disabled={busy !== null}>
+                  🔁 Try again
+                </Button>
+                <Button variant="secondary" onClick={handleDiscard} disabled={busy !== null}>
+                  Discard
+                </Button>
+              </div>
+            </>
+          ) : scanPoll.timedOut ? (
+            <div className="hint-banner">
+              Still analyzing — large receipts can take a while. You can leave
+              this page; the scan keeps running and appears under{' '}
+              <Link to="/bills">Bills &amp; analysis</Link> once it finishes.
+            </div>
+          ) : (
+            <Spinner label="Reading the receipt — you can leave this page; the scan is kept in the Bills view." />
           )}
           {error && <ErrorMessage message={error} />}
         </Card>

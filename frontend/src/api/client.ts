@@ -48,8 +48,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const apiClient = {
-  get<T>(path: string): Promise<T> {
-    return request<T>(path);
+  get<T>(path: string, init?: { signal?: AbortSignal }): Promise<T> {
+    return request<T>(path, init);
   },
   post<T>(path: string, body: unknown): Promise<T> {
     return request<T>(path, { method: 'POST', body: JSON.stringify(body) });

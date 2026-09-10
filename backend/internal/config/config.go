@@ -39,6 +39,14 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("LOG_LEVEL: %w", err)
 	}
 
+	// Vision models on a local Ollama can take minutes on large receipts, so
+	// the ceiling is generous by default. The write deadline trails it so a
+	// normal request is never cut short by the HTTP server itself.
+	llmTimeout, err := envDuration("LLM_TIMEOUT", 5*time.Minute)
+	if err != nil {
+		return Config{}, fmt.Errorf("LLM_TIMEOUT: %w", err)
+	}
+
 	return Config{
 		Env:                envString("APP_ENV", "development"),
 		Port:               port,
@@ -47,9 +55,9 @@ func Load() (Config, error) {
 		CORSAllowedOrigins: envList("CORS_ALLOWED_ORIGINS", ""),
 		LogLevel:           logLevel,
 		AIEncryptionKey:    envString("AI_ENCRYPTION_KEY", ""),
-		LLMTimeout:         90 * time.Second,
+		LLMTimeout:         llmTimeout,
 		ReadTimeout:        30 * time.Second,
-		WriteTimeout:       120 * time.Second, // bill extraction can take ~1 min
+		WriteTimeout:       llmTimeout + 60*time.Second,
 		ShutdownTimeout:    15 * time.Second,
 	}, nil
 }
@@ -74,6 +82,19 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("invalid integer %q", v)
 	}
 	return n, nil
+}
+
+// envDuration parses a Go duration string ("90s", "5m", "2m30s").
+func envDuration(key string, fallback time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("invalid duration %q (want e.g. 90s or 5m)", v)
+	}
+	return d, nil
 }
 
 func envList(key, fallback string) []string {
