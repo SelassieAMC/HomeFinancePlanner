@@ -88,14 +88,15 @@ type Transaction struct {
 // Category groups transactions (groceries, rent, …). The migration-seeded
 // storage taxonomy (is_system) adds section/icon/description for bill items.
 type Category struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Section     string    `json:"section,omitempty"`     // storage group (Fridge, Freezer, …)
-	Icon        string    `json:"icon,omitempty"`        // emoji representing the category
-	Description string    `json:"description,omitempty"` // what belongs in it
-	Kind        string    `json:"kind"`                  // 'product' (bill items) vs 'expense' (budgets)
-	IsSystem    bool      `json:"is_system"`             // seeded taxonomy row
-	CreatedAt   time.Time `json:"created_at"`
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	Section        string    `json:"section,omitempty"`     // storage group (Fridge, Freezer, …)
+	Icon           string    `json:"icon,omitempty"`        // emoji representing the category
+	Description    string    `json:"description,omitempty"` // what belongs in it
+	Kind           string    `json:"kind"`                  // 'product' (bill items) vs 'expense' (budgets)
+	IsSystem       bool      `json:"is_system"`             // seeded taxonomy row
+	AllowsNegative bool      `json:"allows_negative"`       // deposit/refund lines (Pfand, Leergut) may carry negative prices
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Budget is a monthly spending cap for one category. Month is "YYYY-MM".

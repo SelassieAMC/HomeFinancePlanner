@@ -22,6 +22,17 @@ type Phase = 'capture' | 'analyzing' | 'review' | 'done';
 
 const FILE_ACCEPT = 'image/*,.heic,.heif,.pdf,application/pdf';
 
+// Mirrors the backend's MaxBillImageBytes — oversized files are skipped
+// before upload instead of failing on the server.
+const MAX_BILL_IMAGE_BYTES = 10 * 1024 * 1024;
+
+// One line in the post-upload summary: accepted, or rejected with a reason.
+interface UploadOutcome {
+  name: string;
+  ok: boolean;
+  message?: string;
+}
+
 export function ScanBillsPage() {
   const providers = useAsync(() => settingsApi.listAIProviders(), []);
   const accounts = useAsync(() => accountsApi.list(), []);
@@ -43,8 +54,9 @@ export function ScanBillsPage() {
     [budgetMonth],
   );
   const [accepted, setAccepted] = useState<Bill | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Summary of the last batch of uploads (capture phase only).
+  const [uploadResults, setUploadResults] = useState<UploadOutcome[]>([]);
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,13 +75,6 @@ export function ScanBillsPage() {
         : Promise.reject(new Error('no scan to poll')),
     { intervalMs: 2000, enabled: phase === 'analyzing' && scan !== null, maxMs: 10 * 60_000 },
   );
-
-  useEffect(() => {
-    // Revoke the object URL when it changes or the page unmounts.
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
 
   // Poll result → phase transitions.
   useEffect(() => {
@@ -117,27 +122,41 @@ export function ScanBillsPage() {
       });
   }, [searchParams]);
 
-  async function handleFile(file: File | undefined) {
-    if (!file || busy) return;
+  // Uploads each selected receipt as its own scan. Analysis runs in the
+  // background — the user only gets an upload summary here and checks the
+  // result later in the bills view. Files over the size limit are skipped
+  // client-side.
+  async function handleFiles(files: FileList | null) {
+    if (!files || files.length === 0 || busy) return;
     setError(null);
+    setUploadResults([]);
     setBusy('extract');
 
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-
-    try {
-      // Returns immediately; the analysis runs in the background and the
-      // page polls below. Nothing is lost if the user leaves now.
-      const result = await billsApi.scan(file, firstProvider?.id);
-      setScan(result);
-      setPhase('analyzing');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to process the receipt.');
-      setPreviewUrl(null);
-      URL.revokeObjectURL(url);
-    } finally {
-      setBusy(null);
+    const results: UploadOutcome[] = [];
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_BILL_IMAGE_BYTES) {
+        results.push({
+          name: file.name,
+          ok: false,
+          message: `skipped — larger than the ${MAX_BILL_IMAGE_BYTES >> 20} MB limit`,
+        });
+        continue;
+      }
+      try {
+        // Returns immediately; extraction runs in the background. Nothing
+        // is lost if the user leaves the page now.
+        await billsApi.scan(file, firstProvider?.id);
+        results.push({ name: file.name, ok: true });
+      } catch (err) {
+        results.push({
+          name: file.name,
+          ok: false,
+          message: err instanceof Error ? err.message : 'Upload failed.',
+        });
+      }
     }
+    setUploadResults(results);
+    setBusy(null);
   }
 
   async function handleConfirm(accountId?: number, createCardAccount?: boolean) {
@@ -200,12 +219,11 @@ export function ScanBillsPage() {
   }
 
   function reset() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
     setScan(null);
     setDraft(null);
     setAccepted(null);
     setError(null);
+    setUploadResults([]);
     setPhase('capture');
   }
 
@@ -224,21 +242,28 @@ export function ScanBillsPage() {
       )}
 
       {phase === 'capture' && (
-        <Card title="Receipt photo or PDF">
+        <Card title="Receipt photos or PDFs">
           <input
             ref={cameraInputRef}
             type="file"
             accept={FILE_ACCEPT}
             capture="environment"
             className="visually-hidden"
-            onChange={(e) => handleFile(e.target.files?.[0])}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.target.value = ''; // allow re-selecting the same file
+            }}
           />
           <input
             ref={fileInputRef}
             type="file"
             accept={FILE_ACCEPT}
+            multiple
             className="visually-hidden"
-            onChange={(e) => handleFile(e.target.files?.[0])}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.target.value = ''; // allow re-selecting the same files
+            }}
           />
           <div className="camera-row">
             <Button onClick={() => cameraInputRef.current?.click()} disabled={busy !== null}>
@@ -249,29 +274,43 @@ export function ScanBillsPage() {
               onClick={() => fileInputRef.current?.click()}
               disabled={busy !== null}
             >
-              📁 Choose file
+              📁 Choose files
             </Button>
           </div>
           <p className="hint-text">
-            On a phone, “Take photo” opens the camera directly. Photos (JPEG,
-            HEIC) and PDF receipts are accepted. Flat, well-lit receipts read
-            best.
+            On a phone, “Take photo” opens the camera directly. You can pick
+            several receipts at once. Photos (JPEG, HEIC) and PDF receipts are
+            accepted — each file up to {MAX_BILL_IMAGE_BYTES >> 20} MB. Flat,
+            well-lit receipts read best.
           </p>
-          {previewUrl && (
-            <img className="bill-preview" src={previewUrl} alt="Receipt preview" />
-          )}
           {busy === 'extract' && (
-            <Spinner label="Uploading and reading the receipt — this can take up to a minute…" />
+            <Spinner label="Uploading receipts — they are analysed in the background…" />
           )}
           {error && <ErrorMessage message={error} />}
+          {uploadResults.length > 0 && !busy && (
+            <>
+              <ul className="upload-results">
+                {uploadResults.map((r) => (
+                  <li key={r.name}>
+                    <span aria-hidden="true">{r.ok ? '✅' : '❌'}</span> {r.name}
+                    {r.message && <span className="hint-inline"> — {r.message}</span>}
+                  </li>
+                ))}
+              </ul>
+              <div className="hint-banner">
+                {uploadResults.filter((r) => r.ok).length} receipt
+                {uploadResults.filter((r) => r.ok).length === 1 ? '' : 's'} accepted
+                for analysis — this can take a few minutes per receipt. Check the
+                status later in <Link to="/bills">Bills &amp; analysis</Link> and
+                review each extracted draft there.
+              </div>
+            </>
+          )}
         </Card>
       )}
 
       {phase === 'analyzing' && (
         <Card title="Receipt">
-          {previewUrl && (
-            <img className="bill-preview" src={previewUrl} alt="Receipt preview" />
-          )}
           {scan?.status === 'failed' ? (
             <>
               <ErrorMessage message={scan.error || 'Analysis failed.'} />
@@ -298,34 +337,27 @@ export function ScanBillsPage() {
       )}
 
       {phase === 'review' && draft && (
-        <>
-          {previewUrl && (
-            <Card title="Receipt">
-              <img className="bill-preview" src={previewUrl} alt="Receipt preview" />
-            </Card>
-          )}
-          <Card title="Extracted draft — please review before confirming">
-            <BillDraftEditor
-              key={draftKey}
-              draft={draft}
-              onChange={setDraft}
-              onConfirm={handleConfirm}
-              onRetry={handleRetry}
-              onDiscard={handleDiscard}
-              busy={busy}
-              error={error}
-              accounts={(accounts.data ?? []).map((a) => ({
-                id: a.id,
-                name: a.name,
-                card_last_digits: a.card_last_digits,
-              }))}
-              categories={categories.data ?? []}
-              brands={brands.data ?? []}
-              budgets={budgets.data ?? []}
-              stores={stores.data ?? []}
-            />
-          </Card>
-        </>
+        <Card title="Extracted draft — please review before confirming">
+          <BillDraftEditor
+            key={draftKey}
+            draft={draft}
+            onChange={setDraft}
+            onConfirm={handleConfirm}
+            onRetry={handleRetry}
+            onDiscard={handleDiscard}
+            busy={busy}
+            error={error}
+            accounts={(accounts.data ?? []).map((a) => ({
+              id: a.id,
+              name: a.name,
+              card_last_digits: a.card_last_digits,
+            }))}
+            categories={categories.data ?? []}
+            brands={brands.data ?? []}
+            budgets={budgets.data ?? []}
+            stores={stores.data ?? []}
+          />
+        </Card>
       )}
 
       {phase === 'done' && accepted && (

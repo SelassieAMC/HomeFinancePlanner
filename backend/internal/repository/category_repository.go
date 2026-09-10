@@ -17,7 +17,7 @@ func NewCategoryRepository(db *sql.DB) *CategoryRepository { return &CategoryRep
 
 func (r *CategoryRepository) List(ctx context.Context) ([]domain.Category, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, name, section, icon, description, kind, is_system, created_at
+		`SELECT id, name, section, icon, description, kind, is_system, allows_negative, created_at
 		 FROM categories ORDER BY kind, is_system DESC, section, name`)
 	if err != nil {
 		return nil, fmt.Errorf("list categories: %w", err)
@@ -30,7 +30,7 @@ func (r *CategoryRepository) List(ctx context.Context) ([]domain.Category, error
 			c         domain.Category
 			createdAt int64
 		)
-		if err := rows.Scan(&c.ID, &c.Name, &c.Section, &c.Icon, &c.Description, &c.Kind, &c.IsSystem, &createdAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Section, &c.Icon, &c.Description, &c.Kind, &c.IsSystem, &c.AllowsNegative, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan category: %w", err)
 		}
 		c.CreatedAt = time.Unix(createdAt, 0).UTC()
@@ -45,9 +45,9 @@ func (r *CategoryRepository) GetByID(ctx context.Context, id int64) (domain.Cate
 		createdAt int64
 	)
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, section, icon, description, kind, is_system, created_at
+		`SELECT id, name, section, icon, description, kind, is_system, allows_negative, created_at
 		 FROM categories WHERE id = ?`, id).
-		Scan(&c.ID, &c.Name, &c.Section, &c.Icon, &c.Description, &c.Kind, &c.IsSystem, &createdAt)
+		Scan(&c.ID, &c.Name, &c.Section, &c.Icon, &c.Description, &c.Kind, &c.IsSystem, &c.AllowsNegative, &createdAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return domain.Category{}, domain.ErrNotFound
@@ -60,9 +60,9 @@ func (r *CategoryRepository) GetByID(ctx context.Context, id int64) (domain.Cate
 
 func (r *CategoryRepository) Create(ctx context.Context, c domain.Category) (domain.Category, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO categories (name, section, icon, description, kind, is_system, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.Name, c.Section, c.Icon, c.Description, c.Kind, c.IsSystem, time.Now().Unix())
+		`INSERT INTO categories (name, section, icon, description, kind, is_system, allows_negative, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.Name, c.Section, c.Icon, c.Description, c.Kind, c.IsSystem, c.AllowsNegative, time.Now().Unix())
 	if err != nil {
 		return domain.Category{}, mapWriteError("create category", err)
 	}

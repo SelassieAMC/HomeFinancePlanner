@@ -61,6 +61,7 @@ export interface Category {
   description?: string;
   kind: CategoryKind;
   is_system: boolean; // seeded taxonomy row
+  allows_negative?: boolean; // deposit/refund lines (Pfand, Leergut) may be negative
   created_at: string;
 }
 

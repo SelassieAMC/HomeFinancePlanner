@@ -44,11 +44,11 @@ func (r *BillRepository) Create(ctx context.Context, b domain.Bill) (domain.Bill
 		INSERT INTO bills
 			(market_name, date, payment_method, card_last_digits, currency,
 			 items_subtotal_cents, discount_cents, vat_cents, total_cents, printed_total_cents,
-			 status, image_path, extracted_by, created_at, updated_at, budget_id, store_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 status, image_path, file_hash, extracted_by, created_at, updated_at, budget_id, store_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.MarketName, b.Date, b.PaymentMethod, b.CardLastDigits, b.Currency,
 		b.ItemsSubtotalCents, b.DiscountCents, b.VATCents, b.TotalCents, b.PrintedTotalCents,
-		string(b.Status), b.ImagePath, b.ExtractedBy, now, now, b.BudgetID, b.StoreID)
+		string(b.Status), b.ImagePath, b.FileHash, b.ExtractedBy, now, now, b.BudgetID, b.StoreID)
 	if err != nil {
 		tx.Rollback()
 		return domain.Bill{}, mapWriteError("create bill", err)
@@ -134,6 +134,26 @@ func (r *BillRepository) SetTransaction(ctx context.Context, billID, txID int64)
 		return fmt.Errorf("link bill %d to transaction: %w", billID, err)
 	}
 	return nil
+}
+
+// GetByFileHash returns the saved bill carrying this receipt hash (without
+// items), or domain.ErrNotFound. Used to reject re-uploads of a receipt that
+// has already been processed.
+func (r *BillRepository) GetByFileHash(ctx context.Context, hash string) (domain.Bill, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT b.id, b.market_name, b.date, b.total_cents, b.status
+		 FROM bills b WHERE b.file_hash = ? LIMIT 1`, hash)
+	var b domain.Bill
+	var status string
+	err := row.Scan(&b.ID, &b.MarketName, &b.Date, &b.TotalCents, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Bill{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Bill{}, fmt.Errorf("get bill by hash: %w", err)
+	}
+	b.Status = domain.BillStatus(status)
+	return b, nil
 }
 
 // GetByID returns the bill with its items, or domain.ErrNotFound.

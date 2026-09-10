@@ -459,6 +459,19 @@ select:focus,
   border-radius: var(--radius);
 }
 
+/* Per-file summary after a scan upload batch. */
+.upload-results {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.upload-results li {
+  padding: 0.15rem 0;
+  word-break: break-word;
+}
+
 .hint-text {
   color: var(--text-muted);
   font-size: 0.85rem;
@@ -770,6 +783,26 @@ select:focus,
 
 .item-panel[open] summary::after {
   transform: rotate(180deg);
+}
+
+/* Small ✕ on a draft item summary — removes the line from the bill. */
+.item-remove {
+  flex: none;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.item-remove:hover {
+  color: var(--negative);
+  border-color: var(--negative);
 }
 
 .item-icon {

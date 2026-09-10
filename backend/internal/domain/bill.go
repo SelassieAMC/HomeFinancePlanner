@@ -46,6 +46,7 @@ type Bill struct {
 	PrintedTotalCents  int64      `json:"printed_total_cents"` // as printed on the receipt (warning when ≠ TotalCents)
 	Status             BillStatus `json:"status"`
 	ImagePath          string     `json:"image_path,omitempty"`  // server-side path; not exposed
+	FileHash           string     `json:"-"`                     // sha256 of the receipt bytes; dedup only
 	ExtractedBy        string     `json:"extracted_by"`          // provider id that produced the draft
 	BudgetID           *int64     `json:"budget_id"`             // optional budget this bill counts toward
 	BudgetName         string     `json:"budget_name,omitempty"` // display-only, joined from budgets
@@ -143,6 +144,7 @@ type BillScan struct {
 	UpdatedAt  time.Time      `json:"-"`
 	ImagePath  string         `json:"-"`
 	MimeType   string         `json:"-"`
+	FileHash   string         `json:"-"` // sha256 of the uploaded bytes; duplicate detection
 }
 
 // BillConfirmInput is the (possibly user-corrected) draft the client sends

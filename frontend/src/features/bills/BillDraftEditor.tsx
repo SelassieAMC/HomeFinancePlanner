@@ -200,6 +200,16 @@ export function BillDraftEditor({
     onChange({ ...draft, ...patch });
   }
 
+  // Deposit returns ("Leergut") and lines filed under a negative-allowed
+  // category (the "Deposit & Returns" / Pfand family) are money back or
+  // refund-like: their amounts may go negative and reduce the total.
+  function negativeAllowed(it: BillDraftItem): boolean {
+    return (
+      it.is_return ||
+      Boolean(it.category_id && categories.find((c) => c.id === it.category_id)?.allows_negative)
+    );
+  }
+
   function updateItem(id: number, patch: Partial<BillDraftItem>) {
     onChange({
       ...draft,
@@ -210,12 +220,17 @@ export function BillDraftEditor({
         // their amount may go negative and reduces the total.
         next.is_return = isDepositReturn(next.name);
         const line = next.quantity * next.unit_price_cents - next.discount_cents;
-        next.line_total_cents = next.is_return
+        next.line_total_cents = negativeAllowed(next)
           ? Math.round(line)
           : Math.max(0, Math.round(line));
         return next;
       }),
     });
+  }
+
+  /** Drops a line from the draft (wrong extraction, duplicated, …). */
+  function removeItem(id: number) {
+    onChange({ ...draft, items: draft.items.filter((it) => it.id !== id) });
   }
 
   function confirm() {
@@ -403,6 +418,19 @@ export function BillDraftEditor({
                   )}
                 </span>
                 <span className="item-price">{formatCents(it.line_total_cents, currency)}</span>
+                <button
+                  type="button"
+                  className="item-remove"
+                  aria-label={`Remove ${it.name}`}
+                  title="Remove this article from the bill"
+                  onClick={(e) => {
+                    e.preventDefault(); // don't toggle the panel
+                    e.stopPropagation();
+                    removeItem(it.id);
+                  }}
+                >
+                  ✕
+                </button>
               </summary>
               <div className="item-detail">
                 <div className="item-field">
@@ -507,10 +535,10 @@ export function BillDraftEditor({
                       aria-label={`Unit price for ${it.name}`}
                       onBlur={(e) => {
                         const cents = dollarsToCents(e.target.value);
-                        // Deposit returns ("Leergut") may have negative prices.
+                        // Deposit/refund lines may have negative prices.
                         const allowed =
                           Number.isFinite(cents) &&
-                          (cents >= 0 || Boolean(it.is_return)) &&
+                          (cents >= 0 || negativeAllowed(it)) &&
                           cents !== it.unit_price_cents;
                         if (allowed) {
                           updateItem(it.id, { unit_price_cents: cents });
@@ -528,7 +556,9 @@ export function BillDraftEditor({
                       aria-label={`Discount for ${it.name}`}
                       onBlur={(e) => {
                         const cents = dollarsToCents(e.target.value) || 0;
-                        if (cents >= 0 && cents !== it.discount_cents) {
+                        // Deposit/refund lines may carry negative discounts
+                        // (e.g. a printed rebate refund).
+                        if ((cents >= 0 || negativeAllowed(it)) && cents !== it.discount_cents) {
                           updateItem(it.id, { discount_cents: cents });
                         }
                       }}

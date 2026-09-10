@@ -131,7 +131,11 @@ expenses, budget progress, per-product-category spending), and AI bill
 scanning (upload → extract → review → confirm, saved-bill editing, stats) are
 implemented. Bills link to stores via `store_id`; on confirm/update the service
 find-or-creates the store from the (case-insensitive) market name, while
-`market_name` stays a denormalized snapshot. When adding a new entity, follow
-the vertical slice:
+`market_name` stays a denormalized snapshot. Receipt uploads are deduplicated by
+content: each upload's sha256 is stored on `bill_scans` and `bills`, and
+re-uploading the same image is a 409 conflict. Negative item prices are allowed
+only for "Leergut" lines or items under a category with `allows_negative` (the
+seeded "Deposit & Returns" product category covers Pfand/Leergut). When adding
+a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.

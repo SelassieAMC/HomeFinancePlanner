@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ type BillStore interface {
 	Update(ctx context.Context, b domain.Bill) (domain.Bill, error)
 	SetTransaction(ctx context.Context, billID, txID int64) error
 	GetByID(ctx context.Context, id int64) (domain.Bill, error)
+	GetByFileHash(ctx context.Context, hash string) (domain.Bill, error)
 	List(ctx context.Context, f domain.BillFilters) ([]domain.Bill, error)
 	Stats(ctx context.Context, groupBy, month string) ([]domain.BillStatsRow, error)
 	ListBrands(ctx context.Context) ([]string, error)
@@ -38,6 +40,7 @@ type BillStore interface {
 type BillScanStore interface {
 	Create(ctx context.Context, s domain.BillScan) (domain.BillScan, error)
 	GetByToken(ctx context.Context, token string) (domain.BillScan, error)
+	GetByFileHash(ctx context.Context, hash string) (domain.BillScan, error)
 	List(ctx context.Context, statuses []domain.BillScanStatus, limit int) ([]domain.BillScan, error)
 	MarkDone(ctx context.Context, token string, draft *domain.BillDraft) error
 	MarkFailed(ctx context.Context, token, msg string) error
@@ -68,11 +71,13 @@ const (
 )
 
 // billScanSource points at the receipt a bill is (or was) built from: the file
-// on disk under billsDir and the provider id that produced the draft. Used by
-// both Confirm (from the scan row) and Update (from the saved bill).
+// on disk under billsDir, its content hash (duplicate detection) and the
+// provider id that produced the draft. Used by both Confirm (from the scan
+// row) and Update (from the saved bill).
 type billScanSource struct {
 	imagePath  string
 	providerID string
+	fileHash   string
 }
 
 // BillService orchestrates the scan-bills workflow.
@@ -173,6 +178,21 @@ func (s *BillService) Scan(ctx context.Context, mimeType string, file []byte, pr
 		return domain.BillScan{}, validationError("receipt file exceeds %d MB limit", MaxBillImageBytes>>20)
 	}
 
+	// Duplicate protection: the same receipt must not be processed twice.
+	// The content hash matches an active scan (still analyzing / awaiting
+	// review) or an already-saved bill.
+	hash := fileHash(file)
+	if _, err := s.scans.GetByFileHash(ctx, hash); err == nil {
+		return domain.BillScan{}, conflictError("duplicate receipt: this image is already being analyzed — check the bills view")
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.BillScan{}, fmt.Errorf("check scan duplicate: %w", err)
+	}
+	if existing, err := s.bills.GetByFileHash(ctx, hash); err == nil {
+		return domain.BillScan{}, conflictError("duplicate receipt: this image was already saved as bill #%d", existing.ID)
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return domain.BillScan{}, fmt.Errorf("check bill duplicate: %w", err)
+	}
+
 	provider, err := s.resolveProvider(ctx, providerID)
 	if err != nil {
 		return domain.BillScan{}, err
@@ -194,6 +214,7 @@ func (s *BillService) Scan(ctx context.Context, mimeType string, file []byte, pr
 		ImagePath:  path,
 		MimeType:   strings.ToLower(mimeType),
 		ProviderID: provider.ID,
+		FileHash:   hash,
 	}); err != nil {
 		_ = os.Remove(path)
 		return domain.BillScan{}, err
@@ -289,7 +310,7 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 		return domain.Bill{}, validationError("analysis failed — retry or discard the scan")
 	}
 
-	bill, err := s.buildBill(ctx, in, &billScanSource{imagePath: scan.ImagePath, providerID: scan.ProviderID})
+	bill, err := s.buildBill(ctx, in, &billScanSource{imagePath: scan.ImagePath, providerID: scan.ProviderID, fileHash: scan.FileHash})
 	if err != nil {
 		return domain.Bill{}, err
 	}
@@ -337,7 +358,7 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 		return domain.Bill{}, err
 	}
 
-	source := &billScanSource{imagePath: existing.ImagePath, providerID: existing.ExtractedBy}
+	source := &billScanSource{imagePath: existing.ImagePath, providerID: existing.ExtractedBy, fileHash: existing.FileHash}
 	bill, err := s.buildBill(ctx, in, source)
 	if err != nil {
 		return domain.Bill{}, err
@@ -495,18 +516,23 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 			return domain.Bill{}, validationError("every item needs a name")
 		}
 		// Deposit returns ("Leergut") are money back: their unit price and
-		// line total may be negative, and they reduce the bill total.
+		// line total may be negative, and they reduce the bill total. The
+		// same applies to any line filed under a category that allows
+		// negatives (the seeded "Deposit & Returns" / Pfand family).
 		isReturn := isDepositReturn(name)
+		allowsNegative := isReturn
+		if it.CategoryID != nil {
+			cat, err := s.categories.GetByID(ctx, *it.CategoryID)
+			if err != nil {
+				return domain.Bill{}, fmt.Errorf("validate category for %q: %w", name, err)
+			}
+			allowsNegative = allowsNegative || cat.AllowsNegative
+		}
 		if it.Quantity <= 0 {
 			return domain.Bill{}, validationError("quantity for %q must be positive", name)
 		}
-		if it.DiscountCents < 0 || (!isReturn && it.UnitPriceCents < 0) {
+		if (!allowsNegative && it.UnitPriceCents < 0) || (!allowsNegative && it.DiscountCents < 0) {
 			return domain.Bill{}, validationError("prices for %q must not be negative", name)
-		}
-		if it.CategoryID != nil {
-			if _, err := s.categories.GetByID(ctx, *it.CategoryID); err != nil {
-				return domain.Bill{}, fmt.Errorf("validate category for %q: %w", name, err)
-			}
 		}
 		if it.BudgetID != nil && (in.BudgetID == nil || *it.BudgetID != *in.BudgetID) {
 			if _, err := s.budgets.GetByID(ctx, *it.BudgetID); err != nil {
@@ -515,7 +541,7 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		}
 		line := it.Quantity*float64(it.UnitPriceCents) - float64(it.DiscountCents)
 		lineCents := int64(math.Round(line))
-		if lineCents < 0 && !isReturn {
+		if lineCents < 0 && !allowsNegative {
 			lineCents = 0
 		}
 		itemsSubtotal += lineCents
@@ -563,6 +589,7 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		PrintedTotalCents:  printed,
 		Status:             domain.BillStatusAccepted,
 		ImagePath:          source.imagePath,
+		FileHash:           source.fileHash,
 		ExtractedBy:        source.providerID,
 		BudgetID:           in.BudgetID,
 		StoreID:            storeID,
@@ -708,6 +735,13 @@ func newScanToken() (string, error) {
 		return "", fmt.Errorf("generate scan token: %w", err)
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// fileHash identifies a receipt by its content (sha256 hex). Equal bytes mean
+// the same receipt — re-uploading it must not create a second analysis or bill.
+func fileHash(file []byte) string {
+	sum := sha256.Sum256(file)
+	return hex.EncodeToString(sum[:])
 }
 
 // enqueue hands a token to the workers without ever blocking: a full queue

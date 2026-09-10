@@ -21,6 +21,11 @@ func validationError(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", domain.ErrValidation, fmt.Sprintf(format, args...))
 }
 
+// conflictError wraps domain.ErrConflict with a human-readable message.
+func conflictError(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", domain.ErrConflict, fmt.Sprintf(format, args...))
+}
+
 func validateMonth(month, field string) error {
 	if month == "" {
 		return validationError("%s is required (format YYYY-MM)", field)

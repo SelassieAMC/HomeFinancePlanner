@@ -20,16 +20,16 @@ type BillScanRepository struct{ db *sql.DB }
 func NewBillScanRepository(db *sql.DB) *BillScanRepository { return &BillScanRepository{db: db} }
 
 const billScanColumns = `
-	id, token, status, image_path, mime_type, provider_id, draft_json, error, created_at, updated_at`
+	id, token, status, image_path, mime_type, provider_id, draft_json, error, file_hash, created_at, updated_at`
 
 // Create inserts a scan row in the analyzing state.
 func (r *BillScanRepository) Create(ctx context.Context, s domain.BillScan) (domain.BillScan, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO bill_scans
-			(token, status, image_path, mime_type, provider_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		s.ScanToken, string(domain.BillScanAnalyzing), s.ImagePath, s.MimeType, s.ProviderID, now, now)
+			(token, status, image_path, mime_type, provider_id, file_hash, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ScanToken, string(domain.BillScanAnalyzing), s.ImagePath, s.MimeType, s.ProviderID, s.FileHash, now, now)
 	if err != nil {
 		return domain.BillScan{}, mapWriteError("create bill scan", err)
 	}
@@ -54,6 +54,22 @@ func (r *BillScanRepository) GetByToken(ctx context.Context, token string) (doma
 	}
 	if err != nil {
 		return domain.BillScan{}, fmt.Errorf("get bill scan: %w", err)
+	}
+	return s, nil
+}
+
+// GetByFileHash returns the (single) scan row carrying this receipt hash, or
+// domain.ErrNotFound. Used to reject re-uploads of a receipt that is already
+// being processed.
+func (r *BillScanRepository) GetByFileHash(ctx context.Context, hash string) (domain.BillScan, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+billScanColumns+` FROM bill_scans WHERE file_hash = ? LIMIT 1`, hash)
+	s, err := scanBillScan(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.BillScan{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.BillScan{}, fmt.Errorf("get bill scan by hash: %w", err)
 	}
 	return s, nil
 }
@@ -205,7 +221,7 @@ func scanBillScan(row interface{ Scan(...any) error }) (domain.BillScan, error) 
 		updatedAt int64
 	)
 	if err := row.Scan(&s.ID, &s.ScanToken, &status, &s.ImagePath, &s.MimeType,
-		&s.ProviderID, &draftJSON, &s.Error, &createdAt, &updatedAt); err != nil {
+		&s.ProviderID, &draftJSON, &s.Error, &s.FileHash, &createdAt, &updatedAt); err != nil {
 		return domain.BillScan{}, err
 	}
 	s.Status = domain.BillScanStatus(status)
