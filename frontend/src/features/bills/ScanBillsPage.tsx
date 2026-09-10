@@ -4,6 +4,7 @@ import { billsApi } from '../../api/bills';
 import { settingsApi } from '../../api/settings';
 import { accountsApi } from '../../api/accounts';
 import { categoriesApi } from '../../api/categories';
+import { storesApi } from '../../api/stores';
 import { budgetsApi } from '../../api/budgets';
 import { ApiError } from '../../api/client';
 import type { Bill, BillDraft, BillScan } from '../../types/domain';
@@ -26,6 +27,7 @@ export function ScanBillsPage() {
   const accounts = useAsync(() => accountsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
   const brands = useAsync(() => billsApi.brands(), []);
+  const stores = useAsync(() => storesApi.list(), []);
 
   const [phase, setPhase] = useState<Phase>('capture');
   const [busy, setBusy] = useState<BillBusyAction>(null);
@@ -320,6 +322,7 @@ export function ScanBillsPage() {
               categories={categories.data ?? []}
               brands={brands.data ?? []}
               budgets={budgets.data ?? []}
+              stores={stores.data ?? []}
             />
           </Card>
         </>

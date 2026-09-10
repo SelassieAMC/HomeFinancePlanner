@@ -6,11 +6,11 @@ help: ## List available targets
 
 # --- Local development -------------------------------------------------------
 
-dev: ## Run backend (:8080) + frontend (:5173) concurrently
+dev: ## Run backend (:5001) + frontend (:5002) concurrently
 	$(MAKE) -j2 dev-backend dev-frontend
 
-dev-backend: ## Run backend with hot config reload (plain go run)
-	cd backend && go run ./cmd/server
+dev-backend: ## Run backend, loading backend/.env first (listens on :5001)
+	cd backend && set -a && . ./.env && set +a && exec go run ./cmd/server
 
 dev-frontend: ## Run Vite dev server
 	cd frontend && npm run dev -- --host

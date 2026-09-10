@@ -11,6 +11,9 @@ services:
       APP_ENV: production
       PORT: "8080"
       DB_PATH: /data/finance.db
+      # Uploaded receipt images and store logos live on the persisted volume.
+      BILLS_PATH: /data/bills
+      STORES_PATH: /data/stores
       CORS_ALLOWED_ORIGINS: ""
       # Required in production — generate with: openssl rand -base64 32
       AI_ENCRYPTION_KEY: ${AI_ENCRYPTION_KEY:?set AI_ENCRYPTION_KEY in .env (openssl rand -base64 32)}

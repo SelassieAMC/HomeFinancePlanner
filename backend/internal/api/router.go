@@ -22,6 +22,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	budgetH := &handlers.BudgetHandler{Svc: svc.Budgets}
 	summaryH := &handlers.SummaryHandler{Svc: svc.Summary}
 	billH := &handlers.BillHandler{Svc: svc.Bills}
+	storeH := &handlers.StoreHandler{Svc: svc.Stores}
 	settingsH := &handlers.SettingsHandler{Svc: svc.Settings}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
@@ -68,6 +69,19 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("GET /api/v1/bills/image/{id}", billH.Image)
 	mux.HandleFunc("GET /api/v1/bills/stats", billH.Stats)
 	mux.HandleFunc("GET /api/v1/bills/brands", billH.Brands)
+
+	// Stores: recurring markets a bill links to (find-or-created from the
+	// market name on confirm). /{id}/logo is 4 segments next to a 2-segment
+	// /{id} — unambiguous in ServeMux. Never add a 3-segment store wildcard
+	// here (see the /bills note).
+	mux.HandleFunc("GET /api/v1/stores", storeH.List)
+	mux.HandleFunc("POST /api/v1/stores", storeH.Create)
+	mux.HandleFunc("GET /api/v1/stores/{id}", storeH.Get)
+	mux.HandleFunc("PUT /api/v1/stores/{id}", storeH.Update)
+	mux.HandleFunc("DELETE /api/v1/stores/{id}", storeH.Delete)
+	mux.HandleFunc("POST /api/v1/stores/{id}/logo", storeH.UploadLogo)
+	mux.HandleFunc("GET /api/v1/stores/{id}/logo", storeH.Logo)
+	mux.HandleFunc("DELETE /api/v1/stores/{id}/logo", storeH.RemoveLogo)
 
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)

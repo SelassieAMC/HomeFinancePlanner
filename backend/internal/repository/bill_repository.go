@@ -19,7 +19,7 @@ type BillFilters = domain.BillFilters
 const billColumns = `
 	b.id, b.market_name, b.date, b.payment_method, b.card_last_digits, b.currency,
 	b.items_subtotal_cents, b.discount_cents, b.vat_cents, b.total_cents, b.printed_total_cents,
-	b.status, b.image_path, b.extracted_by, b.created_at, b.updated_at, b.budget_id, b.transaction_id, bg.name`
+	b.status, b.image_path, b.extracted_by, b.created_at, b.updated_at, b.budget_id, b.transaction_id, b.store_id, bg.name`
 
 const billFrom = `
 	FROM bills b
@@ -44,11 +44,11 @@ func (r *BillRepository) Create(ctx context.Context, b domain.Bill) (domain.Bill
 		INSERT INTO bills
 			(market_name, date, payment_method, card_last_digits, currency,
 			 items_subtotal_cents, discount_cents, vat_cents, total_cents, printed_total_cents,
-			 status, image_path, extracted_by, created_at, updated_at, budget_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 status, image_path, extracted_by, created_at, updated_at, budget_id, store_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.MarketName, b.Date, b.PaymentMethod, b.CardLastDigits, b.Currency,
 		b.ItemsSubtotalCents, b.DiscountCents, b.VATCents, b.TotalCents, b.PrintedTotalCents,
-		string(b.Status), b.ImagePath, b.ExtractedBy, now, now, b.BudgetID)
+		string(b.Status), b.ImagePath, b.ExtractedBy, now, now, b.BudgetID, b.StoreID)
 	if err != nil {
 		tx.Rollback()
 		return domain.Bill{}, mapWriteError("create bill", err)
@@ -89,11 +89,11 @@ func (r *BillRepository) Update(ctx context.Context, b domain.Bill) (domain.Bill
 		UPDATE bills SET
 			market_name = ?, date = ?, payment_method = ?, card_last_digits = ?, currency = ?,
 			items_subtotal_cents = ?, discount_cents = ?, vat_cents = ?, total_cents = ?,
-			printed_total_cents = ?, status = ?, budget_id = ?, updated_at = ?
+			printed_total_cents = ?, status = ?, budget_id = ?, store_id = ?, updated_at = ?
 		WHERE id = ?`,
 		b.MarketName, b.Date, b.PaymentMethod, b.CardLastDigits, b.Currency,
 		b.ItemsSubtotalCents, b.DiscountCents, b.VATCents, b.TotalCents, b.PrintedTotalCents,
-		string(b.Status), b.BudgetID, time.Now().Unix(), b.ID)
+		string(b.Status), b.BudgetID, b.StoreID, time.Now().Unix(), b.ID)
 	if err != nil {
 		tx.Rollback()
 		return domain.Bill{}, mapWriteError("update bill", err)
@@ -321,7 +321,7 @@ func scanBill(row interface{ Scan(dest ...any) error }) (domain.Bill, error) {
 	var budgetName sql.NullString
 	if err := row.Scan(&b.ID, &b.MarketName, &b.Date, &b.PaymentMethod, &b.CardLastDigits, &b.Currency,
 		&b.ItemsSubtotalCents, &b.DiscountCents, &b.VATCents, &b.TotalCents, &b.PrintedTotalCents,
-		&status, &b.ImagePath, &b.ExtractedBy, &createdAt, &upd, &b.BudgetID, &b.TransactionID, &budgetName); err != nil {
+		&status, &b.ImagePath, &b.ExtractedBy, &createdAt, &upd, &b.BudgetID, &b.TransactionID, &b.StoreID, &budgetName); err != nil {
 		return domain.Bill{}, err
 	}
 	b.BudgetName = budgetName.String

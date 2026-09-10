@@ -4,6 +4,7 @@ import { useAsync } from '../../hooks/useAsync';
 import { billsApi, type BillStatsGroupBy } from '../../api/bills';
 import { budgetsApi } from '../../api/budgets';
 import { categoriesApi } from '../../api/categories';
+import { storesApi } from '../../api/stores';
 import type { Bill, BillDraft, BillStatsRow } from '../../types/domain';
 import { formatCents, currentMonth } from '../../lib/money';
 import { Card, Spinner, ErrorMessage, EmptyState, Button, ItemPanels } from '../../components/ui';
@@ -17,6 +18,7 @@ export function BillsPage() {
   const [statsMonth, setStatsMonth] = useState(currentMonth());
   const categories = useAsync(() => categoriesApi.list(), []);
   const brands = useAsync(() => billsApi.brands(), []);
+  const stores = useAsync(() => storesApi.list(), []);
 
   // Scans waiting for AI analysis or review — polled while any is analyzing.
   const scans = useAsync(() => billsApi.listScans(), []);
@@ -304,6 +306,7 @@ export function BillsPage() {
                         categories={categories.data ?? []}
                         brands={brands.data ?? []}
                         budgets={budgets.data ?? []}
+                        stores={stores.data ?? []}
                       />
                     ) : (
                       <>

@@ -18,6 +18,7 @@ type Config struct {
 	Port               int        // listen port
 	DBPath             string     // SQLite file path
 	BillsPath          string     // directory for uploaded receipt images
+	StoresPath         string     // directory for uploaded store logos
 	CORSAllowedOrigins []string   // allowed CORS origins (empty = same-origin only)
 	LogLevel           slog.Level // debug | info | warn | error
 	AIEncryptionKey    string     // passphrase for encrypting AI API keys at rest
@@ -52,6 +53,7 @@ func Load() (Config, error) {
 		Port:               port,
 		DBPath:             envString("DB_PATH", "./data/finance.db"),
 		BillsPath:          envString("BILLS_PATH", "./data/bills"),
+		StoresPath:         envString("STORES_PATH", "./data/stores"),
 		CORSAllowedOrigins: envList("CORS_ALLOWED_ORIGINS", ""),
 		LogLevel:           logLevel,
 		AIEncryptionKey:    envString("AI_ENCRYPTION_KEY", ""),

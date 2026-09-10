@@ -52,10 +52,24 @@ type SummaryStore interface {
 	MonthSummaryFor(ctx context.Context, month string) (domain.MonthSummary, error)
 }
 
+// StoreStore is the persistence contract for stores (recurring markets).
+// Names are unique case-insensitively, which BillService's find-or-create
+// resolves through on a race.
+type StoreStore interface {
+	List(ctx context.Context) ([]domain.Store, error)
+	GetByID(ctx context.Context, id int64) (domain.Store, error)
+	FindByName(ctx context.Context, name string) (domain.Store, error)
+	Create(ctx context.Context, s domain.Store) (domain.Store, error)
+	Update(ctx context.Context, s domain.Store) (domain.Store, error)
+	SetLogo(ctx context.Context, id int64, logoPath string) (domain.Store, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 // Services bundles the business services for handler wiring.
 type Services struct {
 	Accounts     *AccountService
 	Categories   *CategoryService
+	Stores       *StoreService
 	Transactions *TransactionService
 	Budgets      *BudgetService
 	Summary      *SummaryService
@@ -67,6 +81,7 @@ type Services struct {
 func New(
 	accounts AccountStore,
 	categories CategoryStore,
+	stores *StoreService,
 	transactions TransactionStore,
 	budgets BudgetStore,
 	summary SummaryStore,
@@ -76,6 +91,7 @@ func New(
 	return &Services{
 		Accounts:     &AccountService{accounts: accounts},
 		Categories:   &CategoryService{categories: categories},
+		Stores:       stores,
 		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories},
 		Budgets:      &BudgetService{budgets: budgets, categories: categories},
 		Summary:      &SummaryService{summary: summary},

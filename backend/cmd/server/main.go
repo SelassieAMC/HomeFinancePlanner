@@ -52,6 +52,7 @@ func run() error {
 
 	accounts := repository.NewAccountRepository(db)
 	categories := repository.NewCategoryRepository(db)
+	stores := repository.NewStoreRepository(db)
 	transactions := repository.NewTransactionRepository(db)
 	budgets := repository.NewBudgetRepository(db)
 	summary := repository.NewSummaryRepository(db)
@@ -65,10 +66,11 @@ func run() error {
 	}
 	billExtractor := extractor.New(cfg.LLMTimeout)
 	settingsSvc := service.NewSettingsService(settingsRepo, box, billExtractor)
+	storeSvc := service.NewStoreService(stores, cfg.StoresPath)
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
-		accounts, categories, budgets, transactions, cfg.BillsPath, cfg.LLMTimeout, log)
+		accounts, categories, stores, budgets, transactions, cfg.BillsPath, cfg.LLMTimeout, log)
 
-	svc := service.New(accounts, categories, transactions, budgets, summary, settingsSvc, billSvc)
+	svc := service.New(accounts, categories, storeSvc, transactions, budgets, summary, settingsSvc, billSvc)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

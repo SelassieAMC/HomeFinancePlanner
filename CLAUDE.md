@@ -118,6 +118,7 @@ All configuration is env-driven (`internal/config`):
 | `PORT` | `8080` | backend listen port (local dev uses 5001 via `.env`) |
 | `DB_PATH` | `./data/finance.db` | SQLite file location |
 | `BILLS_PATH` | `./data/bills` | uploaded receipt image storage |
+| `STORES_PATH` | `./data/stores` | uploaded store logo storage |
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | comma-separated; empty = same-origin only |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `AI_ENCRYPTION_KEY` | *(empty)* | AES-256-GCM passphrase for AI provider keys; required in production |
@@ -125,9 +126,12 @@ All configuration is env-driven (`internal/config`):
 
 ## Current State
 
-Accounts, categories, transactions, budgets, the planning dashboard (daily
+Accounts, categories, stores, transactions, budgets, the planning dashboard (daily
 expenses, budget progress, per-product-category spending), and AI bill
 scanning (upload → extract → review → confirm, saved-bill editing, stats) are
-implemented. When adding a new entity, follow the vertical slice:
+implemented. Bills link to stores via `store_id`; on confirm/update the service
+find-or-creates the store from the (case-insensitive) market name, while
+`market_name` stays a denormalized snapshot. When adding a new entity, follow
+the vertical slice:
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.

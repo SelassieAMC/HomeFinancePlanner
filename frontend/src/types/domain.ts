@@ -84,6 +84,25 @@ export interface BudgetStatus extends Budget {
   remaining_cents: number;
 }
 
+// --- Stores (recurring markets bills link to) --------------------------------
+
+export interface Store {
+  id: number;
+  name: string;
+  description?: string;
+  location?: string;
+  has_logo: boolean; // GET /stores/{id}/logo returns an image
+  bill_count: number; // display-only, counted from bills
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoreInput {
+  name: string;
+  description?: string;
+  location?: string;
+}
+
 export interface MonthSummary {
   month: string;
   income_cents: number;
@@ -143,6 +162,7 @@ export interface Bill {
   budget_id?: number | null; // budget the bill counts toward
   budget_name?: string; // display-only, joined from budgets
   transaction_id?: number | null; // expense transaction recorded at confirm
+  store_id?: number | null; // store resolved from market_name (nullable)
   items?: BillItem[];
   created_at: string;
   updated_at: string;

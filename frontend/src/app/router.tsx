@@ -4,6 +4,7 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { AccountsPage } from '../features/accounts/AccountsPage';
 import { TransactionsPage } from '../features/transactions/TransactionsPage';
 import { BudgetsPage } from '../features/budgets/BudgetsPage';
+import { StoresPage } from '../features/stores/StoresPage';
 import { ScanBillsPage } from '../features/bills/ScanBillsPage';
 import { BillsPage } from '../features/bills/BillsPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
@@ -17,6 +18,7 @@ export const router = createBrowserRouter([
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'transactions', element: <TransactionsPage /> },
       { path: 'budgets', element: <BudgetsPage /> },
+      { path: 'stores', element: <StoresPage /> },
       { path: 'scan', element: <ScanBillsPage /> },
       { path: 'bills', element: <BillsPage /> },
       { path: 'settings', element: <SettingsPage /> },

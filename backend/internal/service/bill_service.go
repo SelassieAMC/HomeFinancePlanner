@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +83,7 @@ type BillService struct {
 	providers      *SettingsService
 	accounts       AccountStore
 	categories     CategoryStore
+	stores         StoreStore
 	budgets        BudgetStore
 	txStore        TransactionStore
 	billsDir       string
@@ -108,6 +108,7 @@ func NewBillService(
 	providers *SettingsService,
 	accounts AccountStore,
 	categories CategoryStore,
+	stores StoreStore,
 	budgets BudgetStore,
 	txStore TransactionStore,
 	billsDir string,
@@ -128,6 +129,7 @@ func NewBillService(
 		providers:      providers,
 		accounts:       accounts,
 		categories:     categories,
+		stores:         stores,
 		budgets:        budgets,
 		txStore:        txStore,
 		billsDir:       billsDir,
@@ -143,16 +145,6 @@ func NewBillService(
 		go s.runWorker(ctx, i)
 	}
 	return s
-}
-
-// allowedMime maps accepted upload types to file extensions.
-var allowedMime = map[string]string{
-	"image/jpeg":      ".jpg",
-	"image/png":       ".png",
-	"image/webp":      ".webp",
-	"image/heic":      ".heic",
-	"image/heif":      ".heif",
-	"application/pdf": ".pdf",
 }
 
 // Scan stores the receipt file (not yet a bill), registers a scan row, and
@@ -553,8 +545,13 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		payment = "card"
 	}
 
+	storeID, canonicalMarket, err := s.resolveStore(ctx, in.MarketName)
+	if err != nil {
+		return domain.Bill{}, err
+	}
+
 	return domain.Bill{
-		MarketName:         strings.TrimSpace(in.MarketName),
+		MarketName:         canonicalMarket,
 		Date:               date,
 		PaymentMethod:      payment,
 		CardLastDigits:     cardDigits,
@@ -568,8 +565,36 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		ImagePath:          source.imagePath,
 		ExtractedBy:        source.providerID,
 		BudgetID:           in.BudgetID,
+		StoreID:            storeID,
 		Items:              items,
 	}, nil
+}
+
+// resolveStore links the bill to a store matched case-insensitively on the
+// (trimmed) market name, creating the store on first use. The canonical store
+// name is returned so the bill's market_name snapshot normalizes casing.
+// Empty market names (or a nil store backend in tests) link nothing.
+func (s *BillService) resolveStore(ctx context.Context, market string) (*int64, string, error) {
+	name := strings.TrimSpace(market)
+	if name == "" || s.stores == nil {
+		return nil, name, nil
+	}
+	store, err := s.stores.FindByName(ctx, name)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		store, err = s.stores.Create(ctx, domain.Store{Name: name})
+		if errors.Is(err, domain.ErrConflict) {
+			// Lost a race against a concurrent confirm — re-read the winner.
+			store, err = s.stores.FindByName(ctx, name)
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("create store %q: %w", name, err)
+		}
+	case err != nil:
+		return nil, "", fmt.Errorf("find store: %w", err)
+	}
+	id := store.ID
+	return &id, store.Name, nil
 }
 
 // extractDraft runs the connector and resolves the AI's category names
@@ -771,37 +796,7 @@ func (s *BillService) Close() {
 // saveReceipt writes the receipt under billsDir with a random, unguessable
 // name. The same file later becomes the accepted bill's stored receipt.
 func (s *BillService) saveReceipt(ext string, file []byte) (string, error) {
-	if err := os.MkdirAll(s.billsDir, 0o755); err != nil {
-		return "", fmt.Errorf("create bills dir: %w", err)
-	}
-	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("generate receipt name: %w", err)
-	}
-	name := fmt.Sprintf("%s-%s%s", time.Now().Format("20060102"), hex.EncodeToString(buf), ext)
-	path := filepath.Join(s.billsDir, name)
-	if err := os.WriteFile(path, file, 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
-// detectMime infers the file mime from the stored extension.
-func detectMime(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".heic":
-		return "image/heic"
-	case ".heif":
-		return "image/heif"
-	case ".pdf":
-		return "application/pdf"
-	default:
-		return "image/jpeg"
-	}
+	return writeFileRandom(s.billsDir, ext, file)
 }
 
 // assignDraftItemIDs numbers draft lines 1..n so the UI can key rows.
@@ -833,25 +828,6 @@ func normalizeDigits(raw string) string {
 // allowed and they reduce the bill total. Mirrored in the frontend editor.
 func isDepositReturn(name string) bool {
 	return strings.Contains(strings.ToLower(name), "leergut")
-}
-
-// sniffMime detects HEIC/HEIF photos and PDF documents from their magic
-// bytes, for uploads that arrive with a generic content type.
-func sniffMime(file []byte) string {
-	if len(file) >= 12 && string(file[4:8]) == "ftyp" {
-		brand := string(file[8:12])
-		switch {
-		case strings.HasPrefix(brand, "heic"), strings.HasPrefix(brand, "heix"),
-			strings.HasPrefix(brand, "hevc"), strings.HasPrefix(brand, "hevx"):
-			return "image/heic"
-		case strings.HasPrefix(brand, "mif1"), strings.HasPrefix(brand, "msf1"):
-			return "image/heif"
-		}
-	}
-	if len(file) >= 5 && string(file[:4]) == "%PDF" {
-		return "application/pdf"
-	}
-	return ""
 }
 
 func nonEmptyOr(value, fallback string) string {

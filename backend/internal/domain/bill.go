@@ -50,6 +50,7 @@ type Bill struct {
 	BudgetID           *int64     `json:"budget_id"`             // optional budget this bill counts toward
 	BudgetName         string     `json:"budget_name,omitempty"` // display-only, joined from budgets
 	TransactionID      *int64     `json:"transaction_id"`        // expense transaction recorded at confirm
+	StoreID            *int64     `json:"store_id"`              // store resolved from market_name (nil for empty names; ON DELETE SET NULL)
 	Items              []BillItem `json:"items,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
@@ -150,6 +151,8 @@ type BillScan struct {
 // the lines; PrintedTotalCents carries the receipt's printed amount
 // through unchanged for the mismatch warning.
 type BillConfirmInput struct {
+	// MarketName is matched case-insensitively against existing stores; the
+	// server find-or-creates a store from it and links the bill.
 	MarketName        string          `json:"market_name"`
 	Date              string          `json:"date"`
 	PaymentMethod     string          `json:"payment_method"`

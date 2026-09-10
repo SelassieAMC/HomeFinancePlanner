@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { BillConfirmInput, BillDraft, BillDraftItem, Budget, Category } from '../../types/domain';
+import type { BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Store } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
 import { Button, Spinner, ErrorMessage, EmptyState } from '../../components/ui';
 
@@ -35,6 +35,8 @@ export interface BillDraftEditorProps {
   brands?: string[];
   /** Budgets for the bill's month — correlation options. */
   budgets?: Budget[];
+  /** Known stores for the market picker (omit to fall back to a plain input). */
+  stores?: Store[];
 }
 
 const paymentOptions = ['', 'cash', 'card', 'credit', 'debit', 'transfer', 'voucher', 'other'];
@@ -132,6 +134,7 @@ export function BillDraftEditor({
   categories = [],
   brands = [],
   budgets = [],
+  stores = [],
 }: BillDraftEditorProps) {
   const isBusy = busy !== null;
   const isSaved = mode === 'saved';
@@ -142,6 +145,8 @@ export function BillDraftEditor({
   const [accountChoice, setAccountChoice] = useState('');
   // Item id currently typing a brand-new brand ('__custom__' selected).
   const [customBrandItem, setCustomBrandItem] = useState<number | null>(null);
+  // True while typing a market name that is not an existing store.
+  const [customMarket, setCustomMarket] = useState(false);
 
   const query = search.trim().toLowerCase();
   const visibleItems = query
@@ -183,6 +188,13 @@ export function BillDraftEditor({
     }
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [brands, draft.items]);
+
+  // Market picker state: the store matching the draft's market name
+  // (case-insensitive), or null when the name is empty/new.
+  const matchedStore = useMemo(
+    () => stores.find((s) => s.name.toLowerCase() === draft.market_name.trim().toLowerCase()),
+    [stores, draft.market_name],
+  );
 
   function updateHeader(patch: Partial<BillDraft>) {
     onChange({ ...draft, ...patch });
@@ -230,16 +242,66 @@ export function BillDraftEditor({
       <div className="stat-cards">
         <div className="stat-card stat-market">
           <span className="stat-card-label">🏪 Market</span>
-          <input
-            className="stat-card-input"
-            defaultValue={draft.market_name}
-            placeholder="Unknown market"
-            aria-label="Market name"
-            onBlur={(e) =>
-              e.target.value.trim() !== draft.market_name &&
-              updateHeader({ market_name: e.target.value.trim() })
-            }
-          />
+          {stores.length === 0 && !customMarket ? (
+            // No stores loaded yet — keep the plain input behavior.
+            <input
+              className="stat-card-input"
+              defaultValue={draft.market_name}
+              placeholder="Unknown market"
+              aria-label="Market name"
+              onBlur={(e) =>
+                e.target.value.trim() !== draft.market_name &&
+                updateHeader({ market_name: e.target.value.trim() })
+              }
+            />
+          ) : customMarket ? (
+            <input
+              className="stat-card-input"
+              autoFocus
+              defaultValue={draft.market_name}
+              placeholder="New market…"
+              aria-label="New market name"
+              onBlur={(e) => {
+                const value = e.target.value.trim();
+                if (value !== draft.market_name) updateHeader({ market_name: value });
+                setCustomMarket(false);
+              }}
+            />
+          ) : (
+            <select
+              className="stat-card-input"
+              value={matchedStore ? String(matchedStore.id) : draft.market_name}
+              aria-label="Market name"
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === '__custom__') {
+                  setCustomMarket(true);
+                  return;
+                }
+                if (value === '') {
+                  updateHeader({ market_name: '' });
+                  return;
+                }
+                const store = stores.find((s) => String(s.id) === value);
+                if (store) updateHeader({ market_name: store.name });
+              }}
+            >
+              <option value="">Unknown market</option>
+              {[...stores]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              {/* Keep the draft's own name selectable when it matches no store
+                  yet — the backend find-or-creates it on confirm. */}
+              {draft.market_name && !matchedStore && (
+                <option value={draft.market_name}>{draft.market_name}</option>
+              )}
+              <option value="__custom__">+ Add market…</option>
+            </select>
+          )}
         </div>
         <div className="stat-card stat-total">
           <span className="stat-card-label">

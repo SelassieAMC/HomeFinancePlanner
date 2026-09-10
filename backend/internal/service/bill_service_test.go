@@ -160,11 +160,29 @@ func (f *fakeBillStore) Create(_ context.Context, b domain.Bill) (domain.Bill, e
 	return b, nil
 }
 
-func (f *fakeBillStore) Update(context.Context, domain.Bill) (domain.Bill, error) {
+func (f *fakeBillStore) Update(_ context.Context, b domain.Bill) (domain.Bill, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		if f.items[i].ID == b.ID {
+			items := b.Items
+			b.Items = nil
+			f.items[i] = b
+			b.Items = items
+			return b, nil
+		}
+	}
 	return domain.Bill{}, domain.ErrNotFound
 }
 func (f *fakeBillStore) SetTransaction(context.Context, int64, int64) error { return nil }
-func (f *fakeBillStore) GetByID(context.Context, int64) (domain.Bill, error) {
+func (f *fakeBillStore) GetByID(_ context.Context, id int64) (domain.Bill, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, b := range f.items {
+		if b.ID == id {
+			return b, nil
+		}
+	}
 	return domain.Bill{}, domain.ErrNotFound
 }
 func (f *fakeBillStore) List(context.Context, BillFilters) ([]domain.Bill, error) {
@@ -226,18 +244,19 @@ func testProviderJSON() string {
 	return `[{"id":"p1","type":"ollama","model":"test-vision"}]`
 }
 
-func newTestBillService(t *testing.T, extractFn func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore) {
+func newTestBillService(t *testing.T, extractFn func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeStoreStore) {
 	t.Helper()
 	scanStore := newFakeBillScanStore()
 	billStore := &fakeBillStore{}
+	storeStore := newFakeStoreStore()
 	extractor := &fakeBillExtractor{fn: extractFn}
 	settings := NewSettingsService(
 		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
 		passthroughBox{}, extractor)
 	svc := NewBillService(billStore, scanStore, extractor, settings,
-		nil, fakeCategoryStore{}, nil, nil, t.TempDir(), 5*time.Second, nil)
+		nil, fakeCategoryStore{}, storeStore, nil, nil, t.TempDir(), 5*time.Second, nil)
 	t.Cleanup(svc.Close)
-	return svc, scanStore, billStore
+	return svc, scanStore, billStore, storeStore
 }
 
 // waitFor polls until cond passes or the deadline hits (fail via t.Fatal).
@@ -259,7 +278,7 @@ func testImage() []byte { return []byte("fake-jpeg-bytes") }
 
 func TestScanReturnsAnalyzingImmediately(t *testing.T) {
 	blocked := make(chan struct{}) // extractor never returns
-	svc, scanStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, scanStore, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		<-blocked
 		return domain.BillDraft{}, errors.New("unreachable")
 	})
@@ -278,7 +297,7 @@ func TestScanReturnsAnalyzingImmediately(t *testing.T) {
 }
 
 func TestWorkerCompletesExtraction(t *testing.T) {
-	svc, scanStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, scanStore, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		return domain.BillDraft{
 			MarketName: "Test Market",
 			Items: []domain.BillItemDraft{
@@ -305,7 +324,7 @@ func TestWorkerCompletesExtraction(t *testing.T) {
 }
 
 func TestWorkerMarksFailure(t *testing.T) {
-	svc, scanStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, scanStore, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		return domain.BillDraft{}, errors.New("ollama is down")
 	})
 
@@ -325,7 +344,7 @@ func TestWorkerMarksFailure(t *testing.T) {
 }
 
 func TestConfirmGuardsScanState(t *testing.T) {
-	svc, scanStore, billStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, scanStore, billStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "USD"}, nil
 	})
 	ctx := context.Background()
@@ -366,7 +385,7 @@ func TestConfirmGuardsScanState(t *testing.T) {
 func TestReextractGuardsAnalyzingScans(t *testing.T) {
 	release := make(chan struct{})
 	var calls atomic.Int64
-	svc, scanStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, scanStore, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		calls.Add(1)
 		<-release
 		return domain.BillDraft{MarketName: "M"}, nil
@@ -406,7 +425,7 @@ func TestReextractGuardsAnalyzingScans(t *testing.T) {
 }
 
 func TestDiscardScanRemovesRow(t *testing.T) {
-	svc, scanStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, scanStore, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
@@ -425,7 +444,7 @@ func TestDiscardScanRemovesRow(t *testing.T) {
 
 func TestCloseReturnsWhileExtractionBlocked(t *testing.T) {
 	blocked := make(chan struct{})
-	svc, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		<-blocked
 		return domain.BillDraft{}, errors.New("unreachable")
 	})
@@ -441,10 +460,168 @@ func TestCloseReturnsWhileExtractionBlocked(t *testing.T) {
 }
 
 func TestGetScanUnknownTokenIsNotFound(t *testing.T) {
-	svc, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+	svc, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
 		return domain.BillDraft{}, errors.New("not called")
 	})
 	if _, err := svc.GetScan(context.Background(), "deadbeef"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// --- store find-or-create on confirm/update ----------------------------------
+
+func TestConfirmFindOrCreatesStore(t *testing.T) {
+	svc, scanStore, _, storeStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{MarketName: "  REWE  ", Currency: "USD"})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if bill.StoreID == nil || bill.MarketName != "REWE" {
+		t.Fatalf("expected linked store + canonical name, got store=%v market=%q", bill.StoreID, bill.MarketName)
+	}
+	stores, _ := storeStore.List(ctx)
+	if len(stores) != 1 || stores[0].ID != *bill.StoreID || stores[0].Name != "REWE" {
+		t.Fatalf("expected exactly one store REWE, got %+v", stores)
+	}
+}
+
+func TestConfirmReusesStoreCaseInsensitive(t *testing.T) {
+	svc, scanStore, _, storeStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	ctx := context.Background()
+
+	first, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, first.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	bill1, err := svc.Confirm(ctx, first.ScanToken, domain.BillConfirmInput{MarketName: "REWE", Currency: "USD"})
+	if err != nil {
+		t.Fatalf("Confirm 1: %v", err)
+	}
+
+	// A second bill naming the same store in another casing reuses it.
+	second, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan 2: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, second.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	bill2, err := svc.Confirm(ctx, second.ScanToken, domain.BillConfirmInput{MarketName: "rewe", Currency: "USD"})
+	if err != nil {
+		t.Fatalf("Confirm 2: %v", err)
+	}
+
+	if bill1.StoreID == nil || bill2.StoreID == nil || *bill1.StoreID != *bill2.StoreID {
+		t.Fatalf("expected both bills to link the same store, got %v and %v", bill1.StoreID, bill2.StoreID)
+	}
+	if bill2.MarketName != "REWE" {
+		t.Fatalf("expected canonical casing, got %q", bill2.MarketName)
+	}
+	stores, _ := storeStore.List(ctx)
+	if len(stores) != 1 {
+		t.Fatalf("expected one store, got %d", len(stores))
+	}
+}
+
+func TestConfirmEmptyMarketHasNoStore(t *testing.T) {
+	svc, scanStore, _, storeStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{Currency: "USD"})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if bill.StoreID != nil {
+		t.Fatalf("expected no store for empty market, got %v", bill.StoreID)
+	}
+	stores, _ := storeStore.List(ctx)
+	if len(stores) != 0 {
+		t.Fatalf("expected no store created, got %+v", stores)
+	}
+}
+
+func TestBillUpdateRelinksStore(t *testing.T) {
+	svc, scanStore, _, storeStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{MarketName: "Aldi", Currency: "USD"})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+
+	updated, err := svc.Update(ctx, bill.ID, domain.BillConfirmInput{MarketName: "Lidl", Currency: "USD"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.StoreID != nil && bill.StoreID != nil && *updated.StoreID == *bill.StoreID {
+		t.Fatal("expected the bill's store to move, got the same id")
+	}
+	if updated.MarketName != "Lidl" {
+		t.Fatalf("expected market_name to follow, got %q", updated.MarketName)
+	}
+	stores, _ := storeStore.List(ctx)
+	if len(stores) != 2 {
+		t.Fatalf("expected two stores after relink, got %d", len(stores))
+	}
+}
+
+func TestResolveStoreRetriesAfterConflict(t *testing.T) {
+	svc, _, _, storeStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	ctx := context.Background()
+
+	// Pre-create the store, then make the next Create lose the race anyway.
+	storeStore.mu.Lock()
+	storeStore.conflictOnce = true
+	storeStore.mu.Unlock()
+
+	id, name, err := svc.resolveStore(ctx, "Rewe")
+	if err != nil {
+		t.Fatalf("resolveStore: %v", err)
+	}
+	if name != "REWE" || id == nil {
+		t.Fatalf("expected re-read winner, got id=%v name=%q", id, name)
 	}
 }
