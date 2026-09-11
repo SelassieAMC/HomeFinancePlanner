@@ -47,9 +47,17 @@ type BudgetStore interface {
 	Delete(ctx context.Context, id int64) error
 }
 
-// SummaryStore is the persistence contract for dashboard aggregates.
+// SummaryStore is the persistence contract for dashboard aggregates. It
+// returns native-currency groups; conversion into the base currency is the
+// service's job.
 type SummaryStore interface {
-	MonthSummaryFor(ctx context.Context, month string) (domain.MonthSummary, error)
+	RawMonthSummary(ctx context.Context, month string) (domain.RawMonthSummary, error)
+}
+
+// RateSource supplies the freshest cached exchange-rate snapshot
+// (implemented by FXService).
+type RateSource interface {
+	Snapshot(ctx context.Context) (domain.RateSnapshot, error)
 }
 
 // StoreStore is the persistence contract for stores (recurring markets).
@@ -87,6 +95,7 @@ func New(
 	summary SummaryStore,
 	settings *SettingsService,
 	bills *BillService,
+	fx *FXService,
 ) *Services {
 	return &Services{
 		Accounts:     &AccountService{accounts: accounts},
@@ -94,7 +103,7 @@ func New(
 		Stores:       stores,
 		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories},
 		Budgets:      &BudgetService{budgets: budgets, categories: categories},
-		Summary:      &SummaryService{summary: summary},
+		Summary:      &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},
 		Settings:     settings,
 		Bills:        bills,
 	}

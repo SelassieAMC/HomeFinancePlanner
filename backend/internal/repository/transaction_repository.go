@@ -16,7 +16,7 @@ import (
 type TransactionFilters = domain.TransactionFilters
 
 const transactionColumns = `
-	id, account_id, category_id, kind, amount_cents, description, date,
+	id, account_id, category_id, kind, amount_cents, currency, description, date,
 	created_at, updated_at`
 
 // TransactionRepository is the SQLite-backed implementation of the
@@ -97,10 +97,10 @@ func (r *TransactionRepository) Create(ctx context.Context, t domain.Transaction
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO transactions
-			(account_id, category_id, kind, amount_cents, description, date, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Description, t.Date, now, now)
+		t.Currency, t.Description, t.Date, now, now)
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("create transaction", err)
 	}
@@ -114,11 +114,11 @@ func (r *TransactionRepository) Create(ctx context.Context, t domain.Transaction
 func (r *TransactionRepository) Update(ctx context.Context, t domain.Transaction) (domain.Transaction, error) {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE transactions
-		SET account_id = ?, category_id = ?, kind = ?, amount_cents = ?,
+		SET account_id = ?, category_id = ?, kind = ?, amount_cents = ?, currency = ?,
 		    description = ?, date = ?, updated_at = ?
 		WHERE id = ?`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Description, t.Date, time.Now().Unix(), t.ID)
+		t.Currency, t.Description, t.Date, time.Now().Unix(), t.ID)
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("update transaction", err)
 	}
@@ -156,7 +156,7 @@ func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transacti
 		createdAt, upd int64
 	)
 	if err := row.Scan(&t.ID, &t.AccountID, &category, &kind, &t.AmountCents,
-		&t.Description, &t.Date, &createdAt, &upd); err != nil {
+		&t.Currency, &t.Description, &t.Date, &createdAt, &upd); err != nil {
 		return domain.Transaction{}, err
 	}
 	if category.Valid {

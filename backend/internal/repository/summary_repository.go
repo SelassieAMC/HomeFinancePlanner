@@ -4,84 +4,111 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
 
 	"home-finance-planner/backend/internal/domain"
 )
 
-// SummaryRepository computes read-only dashboard aggregates.
+// SummaryRepository computes read-only dashboard aggregates, grouped by
+// native currency. Conversion into the user's base currency happens in the
+// service layer.
 type SummaryRepository struct{ db *sql.DB }
 
 func NewSummaryRepository(db *sql.DB) *SummaryRepository { return &SummaryRepository{db: db} }
 
-// MonthSummaryFor aggregates income, expenses, balances, budget progress and
-// top spending categories for a month ("YYYY-MM").
-func (r *SummaryRepository) MonthSummaryFor(ctx context.Context, month string) (domain.MonthSummary, error) {
-	s := domain.MonthSummary{Month: month}
+// RawMonthSummary aggregates income, expenses, balances, budget progress and
+// spending categories for a month ("YYYY-MM"), each row labeled with the
+// native currency it was recorded in.
+func (r *SummaryRepository) RawMonthSummary(ctx context.Context, month string) (domain.RawMonthSummary, error) {
+	raw := domain.RawMonthSummary{Month: month}
 
-	if err := r.db.QueryRowContext(ctx, `
-		SELECT
-			COALESCE(SUM(CASE WHEN kind = 'income'  THEN amount_cents ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount_cents ELSE 0 END), 0)
-		FROM transactions WHERE substr(date, 1, 7) = ?`, month).
-		Scan(&s.IncomeCents, &s.ExpenseCents); err != nil {
-		return s, fmt.Errorf("summary totals %s: %w", month, err)
-	}
-	s.NetCents = s.IncomeCents - s.ExpenseCents
-
-	if err := r.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(balance_cents), 0) FROM accounts`).
-		Scan(&s.TotalBalanceCents); err != nil {
-		return s, fmt.Errorf("summary balance: %w", err)
-	}
-
-	spentByCategory, err := r.spentByCategory(ctx, month)
+	kinds, err := r.amountsByKind(ctx, month)
 	if err != nil {
-		return s, err
+		return raw, err
 	}
+	raw.Income = kinds["income"]
+	raw.Expense = kinds["expense"]
 
-	billSpend, err := r.billSpendByBudget(ctx, month)
-	if err != nil {
-		return s, err
+	if raw.Balances, err = r.balances(ctx); err != nil {
+		return raw, err
 	}
-
-	budgets, err := r.budgetStatuses(ctx, month, spentByCategory, billSpend)
-	if err != nil {
-		return s, err
+	if raw.DailyExpenses, err = r.dailyExpenses(ctx, month); err != nil {
+		return raw, err
 	}
-	s.Budgets = budgets
-
-	top, err := r.topCategories(ctx, month, spentByCategory)
-	if err != nil {
-		return s, err
+	if raw.CategorySpend, err = r.spendByCategory(ctx, month); err != nil {
+		return raw, err
 	}
-	s.TopCategories = top
-
-	daily, err := r.dailyExpenses(ctx, month)
-	if err != nil {
-		return s, err
+	if raw.BillBudgetSpend, err = r.billSpendByBudget(ctx, month); err != nil {
+		return raw, err
 	}
-	s.DailyExpenses = daily
-
-	return s, nil
+	if raw.Budgets, err = r.monthBudgets(ctx, month); err != nil {
+		return raw, err
+	}
+	return raw, nil
 }
 
-// dailyExpenses lists each day of the month that had expenses, in date order.
-func (r *SummaryRepository) dailyExpenses(ctx context.Context, month string) ([]domain.DayTotal, error) {
+// amountsByKind sums transaction amounts per kind and native currency.
+func (r *SummaryRepository) amountsByKind(ctx context.Context, month string) (map[string][]domain.CurrencyAmount, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT date, SUM(amount_cents)
+		SELECT kind, currency, SUM(amount_cents)
+		FROM transactions
+		WHERE substr(date, 1, 7) = ?
+		GROUP BY kind, currency`, month)
+	if err != nil {
+		return nil, fmt.Errorf("summary totals %s: %w", month, err)
+	}
+	defer rows.Close()
+
+	out := map[string][]domain.CurrencyAmount{}
+	for rows.Next() {
+		var kind, currency string
+		var cents int64
+		if err := rows.Scan(&kind, &currency, &cents); err != nil {
+			return nil, fmt.Errorf("scan totals: %w", err)
+		}
+		out[kind] = append(out[kind], domain.CurrencyAmount{Currency: currency, Cents: cents})
+	}
+	return out, rows.Err()
+}
+
+// balances sums account balances per native currency.
+func (r *SummaryRepository) balances(ctx context.Context) ([]domain.CurrencyAmount, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT currency, SUM(balance_cents)
+		FROM accounts
+		GROUP BY currency`)
+	if err != nil {
+		return nil, fmt.Errorf("summary balances: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.CurrencyAmount{}
+	for rows.Next() {
+		var a domain.CurrencyAmount
+		if err := rows.Scan(&a.Currency, &a.Cents); err != nil {
+			return nil, fmt.Errorf("scan balance: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// dailyExpenses lists each day of the month that had expenses, grouped per
+// native currency, in date order.
+func (r *SummaryRepository) dailyExpenses(ctx context.Context, month string) ([]domain.DayCurrencyTotal, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT date, currency, SUM(amount_cents)
 		FROM transactions
 		WHERE kind = 'expense' AND substr(date, 1, 7) = ?
-		GROUP BY date ORDER BY date`, month)
+		GROUP BY date, currency ORDER BY date`, month)
 	if err != nil {
 		return nil, fmt.Errorf("summary daily expenses %s: %w", month, err)
 	}
 	defer rows.Close()
 
-	out := []domain.DayTotal{}
+	out := []domain.DayCurrencyTotal{}
 	for rows.Next() {
-		var d domain.DayTotal
-		if err := rows.Scan(&d.Date, &d.ExpenseCents); err != nil {
+		var d domain.DayCurrencyTotal
+		if err := rows.Scan(&d.Date, &d.Currency, &d.ExpenseCents); err != nil {
 			return nil, fmt.Errorf("scan daily expense: %w", err)
 		}
 		out = append(out, d)
@@ -89,29 +116,32 @@ func (r *SummaryRepository) dailyExpenses(ctx context.Context, month string) ([]
 	return out, rows.Err()
 }
 
-func (r *SummaryRepository) spentByCategory(ctx context.Context, month string) (map[int64]int64, error) {
+// spendByCategory sums expense transactions per category and currency.
+func (r *SummaryRepository) spendByCategory(ctx context.Context, month string) ([]domain.CategoryCurrencyTotal, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT category_id, SUM(amount_cents)
+		SELECT category_id, currency, SUM(amount_cents)
 		FROM transactions
 		WHERE kind = 'expense' AND category_id IS NOT NULL AND substr(date, 1, 7) = ?
-		GROUP BY category_id`, month)
+		GROUP BY category_id, currency`, month)
 	if err != nil {
 		return nil, fmt.Errorf("summary spend by category %s: %w", month, err)
 	}
 	defer rows.Close()
 
-	out := map[int64]int64{}
+	out := []domain.CategoryCurrencyTotal{}
 	for rows.Next() {
-		var cat, spent int64
-		if err := rows.Scan(&cat, &spent); err != nil {
+		var c domain.CategoryCurrencyTotal
+		if err := rows.Scan(&c.CategoryID, &c.Currency, &c.TotalCents); err != nil {
 			return nil, fmt.Errorf("scan category spend: %w", err)
 		}
-		out[cat] = spent
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
-func (r *SummaryRepository) budgetStatuses(ctx context.Context, month string, spent map[int64]int64, billSpend map[int64]int64) ([]domain.BudgetStatus, error) {
+// monthBudgets reads the month's budget rows (amounts are in the base
+// currency; the service compares them against converted spend).
+func (r *SummaryRepository) monthBudgets(ctx context.Context, month string) ([]domain.Budget, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, category_id, month, amount_cents, created_at, updated_at
 		FROM budgets WHERE month = ? ORDER BY category_id`, month)
@@ -120,88 +150,41 @@ func (r *SummaryRepository) budgetStatuses(ctx context.Context, month string, sp
 	}
 	defer rows.Close()
 
-	out := []domain.BudgetStatus{}
+	out := []domain.Budget{}
 	for rows.Next() {
 		b, err := scanBudget(rows)
 		if err != nil {
-			return nil, fmt.Errorf("scan budget status: %w", err)
+			return nil, fmt.Errorf("scan budget: %w", err)
 		}
-		st := domain.BudgetStatus{Budget: b}
-		// Category spending from transactions plus the bill line amounts
-		// correlated with this budget (per-line overrides included).
-		st.SpentCents = spent[b.CategoryID] + billSpend[b.ID]
-		st.RemainingCents = b.AmountCents - st.SpentCents
-		out = append(out, st)
+		out = append(out, b)
 	}
 	return out, rows.Err()
 }
 
 // billSpendByBudget sums accepted bill line amounts attributed to budgets in
-// the month. Per-line assignments fall back to the bill's budget (COALESCE);
-// bill spending is NOT double counted here because the bill's transaction is
-// created without a category.
-func (r *SummaryRepository) billSpendByBudget(ctx context.Context, month string) (map[int64]int64, error) {
+// the month, per native currency. Per-line assignments fall back to the
+// bill's budget (COALESCE); bill spending is NOT double counted here because
+// the bill's transaction is created without a category.
+func (r *SummaryRepository) billSpendByBudget(ctx context.Context, month string) ([]domain.BudgetCurrencySpend, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT COALESCE(bi.budget_id, b.budget_id), SUM(bi.line_total_cents)
+		SELECT COALESCE(bi.budget_id, b.budget_id), b.currency, SUM(bi.line_total_cents)
 		FROM bill_items bi
 		JOIN bills b ON b.id = bi.bill_id
 		WHERE b.status = 'accepted' AND substr(b.date, 1, 7) = ?
 		  AND COALESCE(bi.budget_id, b.budget_id) IS NOT NULL
-		GROUP BY COALESCE(bi.budget_id, b.budget_id)`, month)
+		GROUP BY COALESCE(bi.budget_id, b.budget_id), b.currency`, month)
 	if err != nil {
 		return nil, fmt.Errorf("summary bill spend by budget %s: %w", month, err)
 	}
 	defer rows.Close()
 
-	out := map[int64]int64{}
+	out := []domain.BudgetCurrencySpend{}
 	for rows.Next() {
-		var budgetID, total int64
-		if err := rows.Scan(&budgetID, &total); err != nil {
+		var s domain.BudgetCurrencySpend
+		if err := rows.Scan(&s.BudgetID, &s.Currency, &s.Cents); err != nil {
 			return nil, fmt.Errorf("scan bill budget spend: %w", err)
 		}
-		out[budgetID] += total
+		out = append(out, s)
 	}
 	return out, rows.Err()
-}
-
-func (r *SummaryRepository) topCategories(ctx context.Context, month string, spent map[int64]int64) ([]domain.CategoryTotal, error) {
-	if len(spent) == 0 {
-		return []domain.CategoryTotal{}, nil
-	}
-
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name FROM categories`)
-	if err != nil {
-		return nil, fmt.Errorf("summary category names: %w", err)
-	}
-	defer rows.Close()
-
-	names := map[int64]string{}
-	for rows.Next() {
-		var id int64
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return nil, fmt.Errorf("scan category name: %w", err)
-		}
-		names[id] = name
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	out := make([]domain.CategoryTotal, 0, len(spent))
-	for cat, total := range spent {
-		out = append(out, domain.CategoryTotal{
-			CategoryID:   cat,
-			CategoryName: names[cat],
-			TotalCents:   total,
-		})
-	}
-	// sort by total descending
-	sort.Slice(out, func(i, j int) bool { return out[i].TotalCents > out[j].TotalCents })
-	const topN = 5
-	if len(out) > topN {
-		out = out[:topN]
-	}
-	return out, nil
 }

@@ -16,6 +16,7 @@ import (
 type rawWire struct {
 	MarketName     string    `json:"market_name"`
 	Date           string    `json:"date"`
+	Currency       string    `json:"currency"`
 	PaymentMethod  string    `json:"payment_method"`
 	CardLastDigits string    `json:"card_last_digits"`
 	Items          []rawItem `json:"items"`
@@ -58,6 +59,7 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 	draft := domain.BillDraft{
 		MarketName:     strings.TrimSpace(wire.MarketName),
 		Date:           normalizeDate(wire.Date),
+		Currency:       strings.ToUpper(strings.TrimSpace(wire.Currency)),
 		PaymentMethod:  strings.ToLower(strings.TrimSpace(wire.PaymentMethod)),
 		CardLastDigits: normalizeCardDigits(wire.CardLastDigits),
 	}

@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Store } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
+import { COMMON_CURRENCIES } from '../../lib/currencies';
+import { useAsync } from '../../hooks/useAsync';
+import { settingsApi } from '../../api/settings';
 import { Button, Spinner, ErrorMessage, EmptyState } from '../../components/ui';
 
 // BillDraftEditor edits the scan draft client-side — nothing is persisted
@@ -139,6 +142,9 @@ export function BillDraftEditor({
   const isBusy = busy !== null;
   const isSaved = mode === 'saved';
   const currency = draft.currency || 'USD';
+  // Budget amounts are denominated in the base display currency, unlike the
+  // bill's own native amounts.
+  const baseCurrency = useAsync(() => settingsApi.getBaseCurrency(), []);
 
   const [search, setSearch] = useState('');
   // '' = no transaction, '__new_card__' = create a card account, else id.
@@ -366,6 +372,27 @@ export function BillDraftEditor({
           <span className="stat-card-label">🏷️ Total savings</span>
           <span className="stat-card-value">{formatCents(savings, currency)}</span>
           <span className="stat-card-sub">all discounts</span>
+        </div>
+        <div className="stat-card stat-currency">
+          <span className="stat-card-label">💱 Currency</span>
+          <select
+            className="stat-card-input"
+            value={currency}
+            aria-label="Bill currency"
+            disabled={isBusy}
+            onChange={(e) => updateHeader({ currency: e.target.value })}
+          >
+            {COMMON_CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code}
+              </option>
+            ))}
+            {/* Unlisted code from an old bill stays selectable. */}
+            {!COMMON_CURRENCIES.some((c) => c.code === currency) && (
+              <option value={currency}>{currency}</option>
+            )}
+          </select>
+          <span className="stat-card-sub">as printed on the receipt</span>
         </div>
       </div>
 
@@ -610,7 +637,7 @@ export function BillDraftEditor({
                     </option>
                     {budgets.map((b) => (
                       <option key={b.id} value={b.id}>
-                        {budgetLabel(b, categories)} • {formatCents(b.amount_cents, currency)}
+                        {budgetLabel(b, categories)} • {formatCents(b.amount_cents, baseCurrency.data?.currency ?? currency)}
                       </option>
                     ))}
                   </select>
@@ -715,7 +742,7 @@ export function BillDraftEditor({
             <option value="">No budget</option>
             {budgets.map((b) => (
               <option key={b.id} value={b.id}>
-                {budgetLabel(b, categories)} • {formatCents(b.amount_cents, currency)}
+                {budgetLabel(b, categories)} • {formatCents(b.amount_cents, baseCurrency.data?.currency ?? currency)}
               </option>
             ))}
           </select>

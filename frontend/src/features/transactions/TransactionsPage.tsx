@@ -152,7 +152,7 @@ export function TransactionsPage() {
                 icon={isIncome ? '💰' : '🛒'}
                 title={t.description || '(no description)'}
                 subtitle={`${t.date}${cat ? ` • ${cat}` : ''}`}
-                value={`${isIncome ? '+' : '−'}${formatCents(t.amount_cents)}`}
+                value={`${isIncome ? '+' : '−'}${formatCents(t.amount_cents, t.currency)}`}
                 valueClass={isIncome ? 'stat-positive' : 'stat-negative'}
               >
                 <div className="item-field-grid">
@@ -166,7 +166,7 @@ export function TransactionsPage() {
                   </div>
                   <div className="item-field">
                     <span>Amount</span>
-                    <strong>{formatCents(t.amount_cents)}</strong>
+                    <strong>{formatCents(t.amount_cents, t.currency)}</strong>
                   </div>
                 </div>
                 <div className="item-field-grid">

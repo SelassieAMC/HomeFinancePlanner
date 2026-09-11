@@ -35,6 +35,7 @@ export interface Transaction {
   category_id: number | null;
   kind: TransactionKind;
   amount_cents: number;
+  currency: string; // ISO 4217; account's currency, bill's for confirmations
   description: string;
   date: string; // YYYY-MM-DD
   created_at: string;
@@ -106,6 +107,8 @@ export interface StoreInput {
 
 export interface MonthSummary {
   month: string;
+  currency: string; // base currency of all amounts
+  conversion_warnings: string[]; // currencies shown 1:1 (no rate available)
   income_cents: number;
   expense_cents: number;
   net_cents: number;
@@ -189,6 +192,14 @@ export interface BillStatsRow {
   bill_count: number;
   quantity?: number;
   total_cents: number;
+}
+
+// Envelope for GET /bills/stats: rows merged across currencies and
+// converted into the user's base currency.
+export interface BillStatsResponse {
+  currency: string;
+  conversion_warnings: string[];
+  rows: BillStatsRow[];
 }
 
 // --- Scan draft (in memory until confirmed) ---------------------------------

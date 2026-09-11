@@ -4,6 +4,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -79,6 +80,7 @@ type Transaction struct {
 	CategoryID  *int64          `json:"category_id"` // nullable
 	Kind        TransactionKind `json:"kind"`
 	AmountCents int64           `json:"amount_cents"` // always positive; Kind gives direction
+	Currency    string          `json:"currency"`     // ISO 4217 code; account's currency for manual rows, bill's for confirmations
 	Description string          `json:"description"`
 	Date        string          `json:"date"` // YYYY-MM-DD
 	CreatedAt   time.Time       `json:"created_at"`
@@ -109,16 +111,19 @@ type Budget struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// MonthSummary is the dashboard aggregate for one month.
+// MonthSummary is the dashboard aggregate for one month, with every amount
+// converted into the user's base Currency.
 type MonthSummary struct {
-	Month             string          `json:"month"`
-	IncomeCents       int64           `json:"income_cents"`
-	ExpenseCents      int64           `json:"expense_cents"`
-	NetCents          int64           `json:"net_cents"`
-	TotalBalanceCents int64           `json:"total_balance_cents"`
-	Budgets           []BudgetStatus  `json:"budgets"`
-	TopCategories     []CategoryTotal `json:"top_categories"`
-	DailyExpenses     []DayTotal      `json:"daily_expenses"`
+	Month              string          `json:"month"`
+	Currency           string          `json:"currency"`            // base currency of all amounts
+	ConversionWarnings []string        `json:"conversion_warnings"` // currencies shown 1:1 (no rate available)
+	IncomeCents        int64           `json:"income_cents"`
+	ExpenseCents       int64           `json:"expense_cents"`
+	NetCents           int64           `json:"net_cents"`
+	TotalBalanceCents  int64           `json:"total_balance_cents"`
+	Budgets            []BudgetStatus  `json:"budgets"`
+	TopCategories      []CategoryTotal `json:"top_categories"`
+	DailyExpenses      []DayTotal      `json:"daily_expenses"`
 }
 
 // DayTotal aggregates one day of expenses for the dashboard chart.
@@ -139,4 +144,87 @@ type CategoryTotal struct {
 	CategoryID   int64  `json:"category_id"`
 	CategoryName string `json:"category_name"`
 	TotalCents   int64  `json:"total_cents"`
+}
+
+// CurrencyAmount is one native-currency subtotal inside an aggregate.
+type CurrencyAmount struct {
+	Currency string `json:"currency"`
+	Cents    int64  `json:"cents"`
+}
+
+// DayCurrencyTotal is one day's expenses in one native currency.
+type DayCurrencyTotal struct {
+	Date         string `json:"date"`
+	Currency     string `json:"currency"`
+	ExpenseCents int64  `json:"expense_cents"`
+}
+
+// CategoryCurrencyTotal is one category's month spend in one native currency.
+type CategoryCurrencyTotal struct {
+	CategoryID int64  `json:"category_id"`
+	Currency   string `json:"currency"`
+	TotalCents int64  `json:"total_cents"`
+}
+
+// BudgetCurrencySpend is the bill-line spend attributed to one budget in one
+// native currency.
+type BudgetCurrencySpend struct {
+	BudgetID int64  `json:"budget_id"`
+	Currency string `json:"currency"`
+	Cents    int64  `json:"cents"`
+}
+
+// RawMonthSummary aggregates one month in the NATIVE currency of each row,
+// before conversion into the user's base currency. It is internal to the
+// repository→service seam and never leaves the backend.
+type RawMonthSummary struct {
+	Month           string
+	Income          []CurrencyAmount
+	Expense         []CurrencyAmount
+	Balances        []CurrencyAmount
+	DailyExpenses   []DayCurrencyTotal
+	CategorySpend   []CategoryCurrencyTotal
+	BillBudgetSpend []BudgetCurrencySpend
+	Budgets         []Budget // base-currency amounts; compared against converted spend
+}
+
+// RateSnapshot is a set of reference exchange rates quoted against a pivot
+// currency (EUR for the ECB/Frankfurter table). Rates are units of the key
+// currency per 1 unit of the pivot.
+type RateSnapshot struct {
+	Pivot     string             `json:"pivot"`
+	Date      string             `json:"date"` // YYYY-MM-DD of the reference data
+	FetchedAt time.Time          `json:"fetched_at"`
+	Rates     map[string]float64 `json:"rates"`
+}
+
+// Rate returns the conversion rate from → to (units of `to` per 1 `from`).
+// ok=false when either currency is absent from the snapshot. from == to is 1.
+func (s RateSnapshot) Rate(from, to string) (float64, bool) {
+	from = strings.ToUpper(strings.TrimSpace(from))
+	to = strings.ToUpper(strings.TrimSpace(to))
+	if from == "" || to == "" {
+		return 0, false
+	}
+	if from == to {
+		return 1, true
+	}
+	if s.Pivot == "" || s.Rates == nil {
+		return 0, false
+	}
+	fromRate, fromOK := s.rateFromPivot(from)
+	toRate, toOK := s.rateFromPivot(to)
+	if !fromOK || !toOK {
+		return 0, false
+	}
+	return toRate / fromRate, true
+}
+
+// rateFromPivot gives the units of `c` per 1 pivot (pivot itself is 1).
+func (s RateSnapshot) rateFromPivot(c string) (float64, bool) {
+	if c == s.Pivot {
+		return 1, true
+	}
+	r, ok := s.Rates[c]
+	return r, ok
 }

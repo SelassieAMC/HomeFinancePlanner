@@ -23,6 +23,7 @@ type Config struct {
 	LogLevel           slog.Level // debug | info | warn | error
 	AIEncryptionKey    string     // passphrase for encrypting AI API keys at rest
 	LLMTimeout         time.Duration
+	FXTimeout          time.Duration // outbound timeout for the exchange-rates API
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
 	ShutdownTimeout    time.Duration
@@ -48,6 +49,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("LLM_TIMEOUT: %w", err)
 	}
 
+	fxTimeout, err := envDuration("FX_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("FX_TIMEOUT: %w", err)
+	}
+
 	return Config{
 		Env:                envString("APP_ENV", "development"),
 		Port:               port,
@@ -58,6 +64,7 @@ func Load() (Config, error) {
 		LogLevel:           logLevel,
 		AIEncryptionKey:    envString("AI_ENCRYPTION_KEY", ""),
 		LLMTimeout:         llmTimeout,
+		FXTimeout:          fxTimeout,
 		ReadTimeout:        30 * time.Second,
 		WriteTimeout:       llmTimeout + 60*time.Second,
 		ShutdownTimeout:    15 * time.Second,

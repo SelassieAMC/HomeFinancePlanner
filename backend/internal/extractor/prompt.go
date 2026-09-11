@@ -8,6 +8,7 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
 {
   "market_name": "store or market name from the header",
   "date": "YYYY-MM-DD",
+  "currency": "ISO 4217 code of the currency the amounts are printed in (e.g. \"EUR\", \"USD\", \"GBP\")",
   "payment_method": "cash | card | credit | debit | transfer | voucher | other (pick the closest; use what the receipt shows)",
   "card_last_digits": "last 4 digits of the card printed on the receipt (e.g. \"4321\"), or \"\" for cash/other",
   "items": [
@@ -28,6 +29,7 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
 }
 
 Rules:
+- currency: detect the ISO 4217 code of the receipt's currency from the symbol or name printed next to any amount (€ → EUR, $ → USD, £ → GBP, zł → PLN, CHF → CHF, "kr" with a Swedish market → SEK, etc.). If no symbol is printed anywhere, use the currency of the country the market is in. Return "" ONLY when the currency is genuinely not determinable — never invent a code.
 - "items" lists every article line, one entry per article, in receipt order.
 - quantity defaults to 1 when not printed; use decimals for weights (0.532 kg) and set "unit" to the printed measure (kg, g, l, ml, pcs, …).
 - classify every item into the fixed category list, choosing the MOST SPECIFIC category (the list is fine-grained so spending can be analyzed per product family):

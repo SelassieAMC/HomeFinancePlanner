@@ -62,6 +62,8 @@ export function BudgetsPage() {
     (summary.data?.budgets ?? []).map((b) => [b.id, b.spent_cents]),
   );
   const categoryNames = new Map((categories.data ?? []).map((c) => [c.id, c.name]));
+  // Budget amounts and spend are denominated in the base currency.
+  const currency = summary.data?.currency ?? 'USD';
 
   return (
     <div className="page">
@@ -86,7 +88,7 @@ export function BudgetsPage() {
               ))}
           </select>
           <input
-            placeholder="Monthly limit ($)"
+            placeholder={`Monthly limit (${currency})`}
             inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -112,6 +114,7 @@ export function BudgetsPage() {
                   (categories.data ?? []).find((c) => c.id === b.category_id)?.icon
                 }
                 spent={spent}
+                currency={currency}
                 onDelete={() => handleDelete(b.id)}
               />
             );
@@ -128,12 +131,14 @@ function BudgetPanel({
   categoryName,
   categoryIcon,
   spent,
+  currency,
   onDelete,
 }: {
   budget: Budget;
   categoryName: string;
   categoryIcon?: string;
   spent: number;
+  currency: string;
   onDelete: () => void;
 }) {
   const remaining = budget.amount_cents - spent;
@@ -142,8 +147,8 @@ function BudgetPanel({
     <ItemPanel
       icon={categoryIcon ?? '🎯'}
       title={categoryName}
-      subtitle={`${formatCents(spent)} of ${formatCents(budget.amount_cents)}`}
-      value={formatCents(remaining)}
+      subtitle={`${formatCents(spent, currency)} of ${formatCents(budget.amount_cents, currency)}`}
+      value={formatCents(remaining, currency)}
       valueClass={remaining < 0 ? 'stat-negative' : ''}
     >
       <div className="progress-track">
@@ -155,16 +160,16 @@ function BudgetPanel({
       <div className="item-field-grid">
         <div className="item-field">
           <span>Limit</span>
-          <strong>{formatCents(budget.amount_cents)}</strong>
+          <strong>{formatCents(budget.amount_cents, currency)}</strong>
         </div>
         <div className="item-field">
           <span>Spent</span>
-          <span>{formatCents(spent)}</span>
+          <span>{formatCents(spent, currency)}</span>
         </div>
         <div className="item-field">
           <span>Remaining</span>
           <span className={remaining < 0 ? 'stat-negative' : ''}>
-            {formatCents(remaining)}
+            {formatCents(remaining, currency)}
           </span>
         </div>
       </div>

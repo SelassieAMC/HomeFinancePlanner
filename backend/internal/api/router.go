@@ -86,6 +86,8 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)
 	mux.HandleFunc("POST /api/v1/settings/ai/test/{id}", settingsH.TestAIProvider)
+	mux.HandleFunc("GET /api/v1/settings/currency", settingsH.GetBaseCurrency)
+	mux.HandleFunc("PUT /api/v1/settings/currency", settingsH.SaveBaseCurrency)
 
 	// Middleware chain, outermost first.
 	return middleware.RequestID(

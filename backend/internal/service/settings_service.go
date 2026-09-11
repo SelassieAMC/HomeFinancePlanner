@@ -19,6 +19,12 @@ type SettingsStore interface {
 
 const settingsKeyAIProviders = "ai_providers"
 
+// settingsKeyBaseCurrency stores the user's display/base currency code.
+const settingsKeyBaseCurrency = "base_currency"
+
+// DefaultBaseCurrency is the base currency when the user has not set one.
+const DefaultBaseCurrency = "USD"
+
 // SecretBox is the abstraction services use to encrypt/decrypt secrets.
 type SecretBox interface {
 	EncryptString(plaintext string) (string, error)
@@ -180,6 +186,36 @@ func (s *SettingsService) validateProvider(in ProviderInput, stored domain.AIPro
 		return validationError("api_key is required for %s providers", in.Type)
 	}
 	return nil
+}
+
+// BaseCurrency returns the user's display/base currency — the currency all
+// aggregated totals are converted into. Falls back to DefaultBaseCurrency
+// when unset; a corrupt stored value is treated as unset.
+func (s *SettingsService) BaseCurrency(ctx context.Context) (string, error) {
+	raw, err := s.settings.Get(ctx, settingsKeyBaseCurrency)
+	if errors.Is(err, domain.ErrNotFound) {
+		return DefaultBaseCurrency, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	cur, err := normalizeCurrency(raw)
+	if err != nil {
+		return DefaultBaseCurrency, nil
+	}
+	return cur, nil
+}
+
+// SaveBaseCurrency validates and persists the display/base currency.
+func (s *SettingsService) SaveBaseCurrency(ctx context.Context, currency string) (string, error) {
+	cur, err := normalizeCurrency(currency)
+	if err != nil {
+		return "", err
+	}
+	if err := s.settings.Put(ctx, settingsKeyBaseCurrency, cur); err != nil {
+		return "", fmt.Errorf("save base currency: %w", err)
+	}
+	return cur, nil
 }
 
 func (s *SettingsService) storedProviders(ctx context.Context) ([]domain.AIProvider, error) {

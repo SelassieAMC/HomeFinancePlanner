@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAsync } from '../../hooks/useAsync';
 import {
   settingsApi,
@@ -6,7 +6,8 @@ import {
   type ConnectionTestResult,
 } from '../../api/settings';
 import type { AIProvider, AIProviderType } from '../../types/domain';
-import { Button, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
+import { COMMON_CURRENCIES } from '../../lib/currencies';
+import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
 const providerTypes: { value: AIProviderType; label: string }[] = [
   { value: 'ollama', label: 'Ollama (local, no key)' },
@@ -58,6 +59,34 @@ function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
 
 export function SettingsPage() {
   const saved = useAsync(() => settingsApi.listAIProviders(), []);
+
+  // --- Display currency ------------------------------------------------------
+  const baseCurrency = useAsync(() => settingsApi.getBaseCurrency(), []);
+  const [currency, setCurrency] = useState('');
+  const [currencySaving, setCurrencySaving] = useState(false);
+  const [currencyError, setCurrencyError] = useState<string | null>(null);
+  const [currencySaved, setCurrencySaved] = useState(false);
+  useEffect(() => {
+    if (baseCurrency.data && currency === '') {
+      setCurrency(baseCurrency.data.currency);
+    }
+  }, [baseCurrency.data, currency]);
+
+  async function handleSaveCurrency() {
+    setCurrencySaving(true);
+    setCurrencyError(null);
+    setCurrencySaved(false);
+    try {
+      const result = await settingsApi.saveBaseCurrency(currency);
+      setCurrency(result.currency);
+      setCurrencySaved(true);
+    } catch (err) {
+      setCurrencyError(err instanceof Error ? err.message : 'Failed to save currency.');
+    } finally {
+      setCurrencySaving(false);
+    }
+  }
+
   const [drafts, setDrafts] = useState<DraftProvider[] | null>(null);
   const [nextKey, setNextKey] = useState<DraftKey>(1);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -141,7 +170,46 @@ export function SettingsPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Settings — AI connectors</h2>
+      <h2 className="page-title">Settings</h2>
+
+      <Card title="Display currency">
+        <form
+          className="form-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSaveCurrency();
+          }}
+        >
+          <select
+            value={currency}
+            onChange={(e) => {
+              setCurrency(e.target.value);
+              setCurrencySaved(false);
+            }}
+            aria-label="Base display currency"
+            disabled={baseCurrency.loading || currencySaving}
+          >
+            {COMMON_CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code} — {c.label}
+              </option>
+            ))}
+          </select>
+          <Button type="submit" disabled={currencySaving || baseCurrency.loading}>
+            {currencySaving ? 'Saving…' : 'Save'}
+          </Button>
+        </form>
+        <p className="hint-text">
+          Totals on the dashboard, budgets and bill analysis are shown in this
+          currency; each bill keeps the currency printed on its receipt and is
+          converted using ECB reference rates. Bills in other currencies cannot
+          be converted while offline — those totals show 1:1 with a warning.
+        </p>
+        {currencyError && <ErrorMessage message={currencyError} />}
+        {currencySaved && <div className="hint-banner">Saved ✓</div>}
+      </Card>
+
+      <h2 className="page-title">AI connectors</h2>
 
       <p className="hint-text">
         These connectors read receipt photos during bill scanning. Keys are

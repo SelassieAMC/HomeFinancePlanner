@@ -64,3 +64,31 @@ func (h *SettingsHandler) TestAIProvider(w http.ResponseWriter, r *http.Request)
 	}
 	respondJSON(w, r, http.StatusOK, map[string]any{"ok": true})
 }
+
+type currencyRequest struct {
+	Currency string `json:"currency"`
+}
+
+// GetBaseCurrency returns the user's display/base currency.
+func (h *SettingsHandler) GetBaseCurrency(w http.ResponseWriter, r *http.Request) {
+	currency, err := h.Svc.BaseCurrency(r.Context())
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, currencyRequest{Currency: currency})
+}
+
+// SaveBaseCurrency sets the display/base currency all aggregates convert into.
+func (h *SettingsHandler) SaveBaseCurrency(w http.ResponseWriter, r *http.Request) {
+	var req currencyRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	currency, err := h.Svc.SaveBaseCurrency(r.Context(), req.Currency)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, currencyRequest{Currency: currency})
+}

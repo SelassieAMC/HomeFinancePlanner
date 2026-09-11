@@ -4,7 +4,7 @@ import type {
   BillConfirmInput,
   BillScan,
   BillScanStatus,
-  BillStatsRow,
+  BillStatsResponse,
 } from '../types/domain';
 
 const BASE = '/api/v1';
@@ -60,7 +60,7 @@ export const billsApi = {
   stats: (groupBy: BillStatsGroupBy, month?: string) => {
     const params = new URLSearchParams({ group_by: groupBy });
     if (month) params.set('month', month);
-    return apiClient.get<BillStatsRow[]>(`${BASE}/bills/stats?${params.toString()}`);
+    return apiClient.get<BillStatsResponse>(`${BASE}/bills/stats?${params.toString()}`);
   },
   /** Distinct brands already recorded on bill items (dropdown options). */
   brands: () => apiClient.get<string[]>(`${BASE}/bills/brands`),

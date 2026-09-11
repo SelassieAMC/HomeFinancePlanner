@@ -19,29 +19,36 @@ export function DashboardPage() {
 
   const hasBudgets = data.budgets.length > 0;
   const hasTopCategories = data.top_categories.length > 0;
-  const productRows = productStats.data ?? [];
+  const productRows = productStats.data?.rows ?? [];
+  const productCurrency = productStats.data?.currency ?? data.currency;
   const categoryInfo = new Map((categories.data ?? []).map((c) => [c.name, c]));
+  // Currencies with no exchange rate are shown 1:1 — surface that explicitly.
+  const conversionWarning = data.conversion_warnings.length > 0
+    ? `Exchange rate missing for ${data.conversion_warnings.join(', ')} — those amounts are shown 1:1.`
+    : '';
 
   return (
     <div className="page">
       <h2 className="page-title">Dashboard — {month}</h2>
 
+      {conversionWarning && <div className="bill-warning">{conversionWarning}</div>}
+
       <div className="stat-grid">
         <Card className="stat-tile">
           <span className="stat-label">Income</span>
-          <span className="stat-value stat-positive">{formatCents(data.income_cents)}</span>
+          <span className="stat-value stat-positive">{formatCents(data.income_cents, data.currency)}</span>
         </Card>
         <Card className="stat-tile">
           <span className="stat-label">Expenses</span>
-          <span className="stat-value stat-negative">{formatCents(data.expense_cents)}</span>
+          <span className="stat-value stat-negative">{formatCents(data.expense_cents, data.currency)}</span>
         </Card>
         <Card className="stat-tile">
           <span className="stat-label">Net</span>
-          <span className="stat-value">{formatSignedCents(data.net_cents)}</span>
+          <span className="stat-value">{formatSignedCents(data.net_cents, data.currency)}</span>
         </Card>
         <Card className="stat-tile">
           <span className="stat-label">Total balance</span>
-          <span className="stat-value">{formatCents(data.total_balance_cents)}</span>
+          <span className="stat-value">{formatCents(data.total_balance_cents, data.currency)}</span>
         </Card>
       </div>
 
@@ -49,7 +56,7 @@ export function DashboardPage() {
         {data.daily_expenses.length === 0 ? (
           <EmptyState message="No expenses recorded this month yet." />
         ) : (
-          <ExpensesByDayChart days={data.daily_expenses} month={month} />
+          <ExpensesByDayChart days={data.daily_expenses} month={month} currency={data.currency} />
         )}
       </Card>
 
@@ -70,7 +77,7 @@ export function DashboardPage() {
                     {cat?.icon ? `${cat.icon} ` : ''}
                     {row.label}
                   </span>
-                  <span>{formatCents(row.total_cents)}</span>
+                  <span>{formatCents(row.total_cents, productCurrency)}</span>
                 </li>
               );
             })}
@@ -94,7 +101,7 @@ export function DashboardPage() {
                         {cat?.name ?? `Category #${b.category_id}`}
                       </span>
                       <span>
-                        {formatCents(b.spent_cents)} / {formatCents(b.amount_cents)}
+                        {formatCents(b.spent_cents, data.currency)} / {formatCents(b.amount_cents, data.currency)}
                       </span>
                     </div>
                     <div className="progress-track">
@@ -118,7 +125,7 @@ export function DashboardPage() {
               {data.top_categories.map((c) => (
                 <li key={c.category_id}>
                   <span>{c.category_name || `Category #${c.category_id}`}</span>
-                  <span>{formatCents(c.total_cents)}</span>
+                  <span>{formatCents(c.total_cents, data.currency)}</span>
                 </li>
               ))}
             </ul>

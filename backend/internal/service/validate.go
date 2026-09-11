@@ -12,8 +12,9 @@ import (
 func timeParseDate(s string) (time.Time, error) { return time.Parse("2006-01-02", s) }
 
 var (
-	monthRegex = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
-	dateRegex  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	monthRegex    = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
+	dateRegex     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	currencyRegex = regexp.MustCompile(`^[A-Z]{3}$`)
 )
 
 // validationError wraps domain.ErrValidation with a human-readable message.
@@ -72,4 +73,15 @@ func validateNonNegativeCents(cents int64, field string) error {
 		return validationError("%s must be zero or a positive amount in cents", field)
 	}
 	return nil
+}
+
+// normalizeCurrency trims/uppercases a currency code and requires a 3-letter
+// ISO 4217 form ("EUR", "USD", …). Callers default the empty string BEFORE
+// calling this — an explicit currency must always be a valid code.
+func normalizeCurrency(raw string) (string, error) {
+	c := strings.ToUpper(strings.TrimSpace(raw))
+	if !currencyRegex.MatchString(c) {
+		return "", validationError("currency %q must be a 3-letter ISO 4217 code", raw)
+	}
+	return c, nil
 }

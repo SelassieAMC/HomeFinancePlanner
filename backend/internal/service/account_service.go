@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"home-finance-planner/backend/internal/domain"
@@ -67,10 +68,11 @@ func (s *AccountService) build(in AccountInput) (domain.Account, error) {
 	}
 	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
 	if currency == "" {
-		currency = "USD"
-	}
-	if len(currency) != 3 {
-		return domain.Account{}, validationError("currency %q must be a 3-letter ISO code", in.Currency)
+		currency = DefaultBaseCurrency
+	} else if cur, err := normalizeCurrency(in.Currency); err != nil {
+		return domain.Account{}, err
+	} else {
+		currency = cur
 	}
 	if err := validateNonNegativeCents(in.BalanceCents, "balance_cents"); err != nil {
 		return domain.Account{}, err
@@ -186,7 +188,8 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		return domain.Transaction{}, validationError("description must be at most 500 characters")
 	}
 	// Referential checks: a transaction must point at real rows.
-	if _, err := s.accounts.GetByID(ctx, in.AccountID); err != nil {
+	acc, err := s.accounts.GetByID(ctx, in.AccountID)
+	if err != nil {
 		return domain.Transaction{}, fmt.Errorf("validate account_id: %w", err)
 	}
 	if in.CategoryID != nil {
@@ -199,6 +202,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		CategoryID:  in.CategoryID,
 		Kind:        in.Kind,
 		AmountCents: in.AmountCents,
+		Currency:    acc.Currency, // manual rows are always in the account's currency
 		Description: strings.TrimSpace(in.Description),
 		Date:        in.Date,
 	}, nil
@@ -268,12 +272,107 @@ func (s *BudgetService) build(ctx context.Context, in BudgetInput) (domain.Budge
 	}, nil
 }
 
-// SummaryService implements dashboard aggregates.
-type SummaryService struct{ summary SummaryStore }
+// SummaryService implements dashboard aggregates, converting every total
+// into the user's base currency.
+type SummaryService struct {
+	summary    SummaryStore
+	settings   *SettingsService
+	rates      RateSource
+	categories CategoryStore
+}
 
 func (s *SummaryService) MonthSummary(ctx context.Context, month string) (domain.MonthSummary, error) {
 	if err := validateMonth(month, "month"); err != nil {
 		return domain.MonthSummary{}, err
 	}
-	return s.summary.MonthSummaryFor(ctx, month)
+	base, err := s.settings.BaseCurrency(ctx)
+	if err != nil {
+		return domain.MonthSummary{}, err
+	}
+	snap, err := s.rates.Snapshot(ctx)
+	if err != nil {
+		return domain.MonthSummary{}, err
+	}
+	raw, err := s.summary.RawMonthSummary(ctx, month)
+	if err != nil {
+		return domain.MonthSummary{}, err
+	}
+	conv := newConverter(base, snap)
+
+	out := domain.MonthSummary{
+		Month:              month,
+		Currency:           base,
+		ConversionWarnings: []string{},
+	}
+	for _, a := range raw.Income {
+		out.IncomeCents += conv.add(a.Currency, a.Cents)
+	}
+	for _, a := range raw.Expense {
+		out.ExpenseCents += conv.add(a.Currency, a.Cents)
+	}
+	out.NetCents = out.IncomeCents - out.ExpenseCents
+	for _, a := range raw.Balances {
+		out.TotalBalanceCents += conv.add(a.Currency, a.Cents)
+	}
+
+	// Daily expenses: merge per-currency rows by date, date order.
+	daily := map[string]*domain.DayTotal{}
+	for _, d := range raw.DailyExpenses {
+		day, ok := daily[d.Date]
+		if !ok {
+			day = &domain.DayTotal{Date: d.Date}
+			daily[d.Date] = day
+		}
+		day.ExpenseCents += conv.add(d.Currency, d.ExpenseCents)
+	}
+	out.DailyExpenses = make([]domain.DayTotal, 0, len(daily))
+	for _, day := range daily {
+		out.DailyExpenses = append(out.DailyExpenses, *day)
+	}
+	sort.Slice(out.DailyExpenses, func(i, j int) bool { return out.DailyExpenses[i].Date < out.DailyExpenses[j].Date })
+
+	// Category spend: merge per-currency rows, resolve names, top 5.
+	categorySpend := map[int64]int64{}
+	for _, c := range raw.CategorySpend {
+		categorySpend[c.CategoryID] += conv.add(c.Currency, c.TotalCents)
+	}
+	names := map[int64]string{}
+	if len(categorySpend) > 0 {
+		cats, err := s.categories.List(ctx)
+		if err != nil {
+			return domain.MonthSummary{}, fmt.Errorf("summary category names: %w", err)
+		}
+		for _, c := range cats {
+			names[c.ID] = c.Name
+		}
+	}
+	out.TopCategories = make([]domain.CategoryTotal, 0, len(categorySpend))
+	for cat, total := range categorySpend {
+		out.TopCategories = append(out.TopCategories, domain.CategoryTotal{
+			CategoryID:   cat,
+			CategoryName: names[cat],
+			TotalCents:   total,
+		})
+	}
+	sort.Slice(out.TopCategories, func(i, j int) bool { return out.TopCategories[i].TotalCents > out.TopCategories[j].TotalCents })
+	if len(out.TopCategories) > 5 {
+		out.TopCategories = out.TopCategories[:5]
+	}
+
+	// Budget progress: transaction-category spend plus bill-line spend
+	// attributed to the budget (per-line overrides included).
+	billSpend := map[int64]int64{}
+	for _, b := range raw.BillBudgetSpend {
+		billSpend[b.BudgetID] += conv.add(b.Currency, b.Cents)
+	}
+	out.Budgets = make([]domain.BudgetStatus, 0, len(raw.Budgets))
+	for _, b := range raw.Budgets {
+		st := domain.BudgetStatus{Budget: b}
+		st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
+		st.RemainingCents = b.AmountCents - st.SpentCents
+		out.Budgets = append(out.Budgets, st)
+	}
+
+	out.ConversionWarnings = conv.warnings()
+	return out, nil
 }

@@ -123,6 +123,7 @@ All configuration is env-driven (`internal/config`):
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `AI_ENCRYPTION_KEY` | *(empty)* | AES-256-GCM passphrase for AI provider keys; required in production |
 | `LLM_TIMEOUT` | `5m` | per-extraction timeout for AI bill scanning (large local vision models need minutes) |
+| `FX_TIMEOUT` | `10s` | outbound timeout for the exchange-rates API (Frankfurter/ECB), cached 24h |
 
 ## Current State
 

@@ -215,15 +215,16 @@ func (h *BillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, bill)
 }
 
-// Stats aggregates accepted bills by market, month, week, item or category.
+// Stats aggregates accepted bills by market, month, week, item or category,
+// converted into the user's base currency.
 func (h *BillHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	rows, err := h.Svc.Stats(r.Context(), q.Get("group_by"), q.Get("month"))
+	stats, err := h.Svc.Stats(r.Context(), q.Get("group_by"), q.Get("month"))
 	if err != nil {
 		respondServiceError(w, r, err)
 		return
 	}
-	respondJSON(w, r, http.StatusOK, rows)
+	respondJSON(w, r, http.StatusOK, stats)
 }
 
 // Brands lists the distinct brands recorded on bill items (for the review

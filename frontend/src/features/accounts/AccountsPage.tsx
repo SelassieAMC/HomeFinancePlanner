@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAsync } from '../../hooks/useAsync';
 import { accountsApi } from '../../api/accounts';
+import { settingsApi } from '../../api/settings';
 import type { Account, AccountInput, AccountType } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
+import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
 const ACCOUNT_TYPES: AccountType[] = ['checking', 'savings', 'credit', 'cash', 'other'];
@@ -17,10 +19,21 @@ const accountIcons: Record<AccountType, string> = {
 
 export function AccountsPage() {
   const { data, loading, error, reload } = useAsync(() => accountsApi.list(), []);
+  // New accounts default to the user's base display currency.
+  const baseCurrency = useAsync(() => settingsApi.getBaseCurrency(), []);
   const [name, setName] = useState('');
   const [type, setType] = useState<AccountType>('checking');
   const [balance, setBalance] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+
+  // New accounts default to the user's base display currency (falls back to
+  // USD until the setting loads).
+  const defaultCurrency = baseCurrency.data?.currency ?? 'USD';
+  const [currency, setCurrency] = useState(defaultCurrency);
+  const [currencyTouched, setCurrencyTouched] = useState(false);
+  useEffect(() => {
+    if (!currencyTouched) setCurrency(defaultCurrency);
+  }, [defaultCurrency, currencyTouched]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -31,7 +44,7 @@ export function AccountsPage() {
       setFormError('Enter a valid non-negative starting balance.');
       return;
     }
-    const input: AccountInput = { name, type, currency: 'USD', balance_cents: cents };
+    const input: AccountInput = { name, type, currency, balance_cents: cents };
     try {
       await accountsApi.create(input);
       setName('');
@@ -75,8 +88,22 @@ export function AccountsPage() {
               </option>
             ))}
           </select>
+          <select
+            value={currency}
+            onChange={(e) => {
+              setCurrency(e.target.value);
+              setCurrencyTouched(true);
+            }}
+            aria-label="Account currency"
+          >
+            {COMMON_CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code}
+              </option>
+            ))}
+          </select>
           <input
-            placeholder="Starting balance ($)"
+            placeholder={`Starting balance (${currency})`}
             inputMode="decimal"
             value={balance}
             onChange={(e) => setBalance(e.target.value)}

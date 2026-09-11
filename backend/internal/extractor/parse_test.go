@@ -8,6 +8,7 @@ func TestParseBillJSON_PinnedSchema(t *testing.T) {
 	raw := `{
 		"market_name": " FreshMart ",
 		"date": "05/03/2026",
+		"currency": " eur ",
 		"payment_method": "CARD",
 		"card_last_digits": "****4321",
 		"items": [
@@ -29,6 +30,9 @@ func TestParseBillJSON_PinnedSchema(t *testing.T) {
 	}
 	if draft.Date != "2026-03-05" {
 		t.Errorf("date: %q (want 2026-03-05, DD/MM/YYYY input)", draft.Date)
+	}
+	if draft.Currency != "EUR" { // trimmed + uppercased
+		t.Errorf("currency: %q (want EUR)", draft.Currency)
 	}
 	if draft.PaymentMethod != "card" {
 		t.Errorf("payment method: %q", draft.PaymentMethod)
@@ -75,6 +79,9 @@ func TestParseBillJSON_PrintedTotalDrivesWarning(t *testing.T) {
 	}
 	if draft.PrintedTotalCents != 599 { // kept verbatim for the warning
 		t.Errorf("printed total: %d (want 599)", draft.PrintedTotalCents)
+	}
+	if draft.Currency != "" { // absent currency stays empty (service defaults it)
+		t.Errorf("currency: %q (want empty when not printed)", draft.Currency)
 	}
 }
 

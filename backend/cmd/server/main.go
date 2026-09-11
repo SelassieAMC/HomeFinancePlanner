@@ -16,6 +16,7 @@ import (
 	"home-finance-planner/backend/internal/config"
 	"home-finance-planner/backend/internal/crypto"
 	"home-finance-planner/backend/internal/extractor"
+	"home-finance-planner/backend/internal/fx"
 	"home-finance-planner/backend/internal/repository"
 	"home-finance-planner/backend/internal/service"
 )
@@ -65,12 +66,14 @@ func run() error {
 		return err
 	}
 	billExtractor := extractor.New(cfg.LLMTimeout)
+	fetcher := fx.New(cfg.FXTimeout)
 	settingsSvc := service.NewSettingsService(settingsRepo, box, billExtractor)
+	fxSvc := service.NewFXService(settingsRepo, fetcher, log)
 	storeSvc := service.NewStoreService(stores, cfg.StoresPath)
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
-		accounts, categories, stores, budgets, transactions, cfg.BillsPath, cfg.LLMTimeout, log)
+		accounts, categories, stores, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
 
-	svc := service.New(accounts, categories, storeSvc, transactions, budgets, summary, settingsSvc, billSvc)
+	svc := service.New(accounts, categories, storeSvc, transactions, budgets, summary, settingsSvc, billSvc, fxSvc)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

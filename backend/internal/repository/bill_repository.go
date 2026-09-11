@@ -214,7 +214,9 @@ func (r *BillRepository) List(ctx context.Context, f BillFilters) ([]domain.Bill
 	return out, rows.Err()
 }
 
-// Stats aggregates accepted bills. groupBy is one of
+// Stats aggregates accepted bills, grouped by label AND native currency —
+// the service merges the per-currency rows and converts them into the user's
+// base currency, so no ordering happens here. groupBy is one of
 // "market" | "month" | "week" | "item" | "category"; month optionally narrows
 // the range.
 func (r *BillRepository) Stats(ctx context.Context, groupBy, month string) ([]domain.BillStatsRow, error) {
@@ -229,29 +231,29 @@ func (r *BillRepository) Stats(ctx context.Context, groupBy, month string) ([]do
 	var q string
 	switch groupBy {
 	case "market":
-		q = `SELECT b.market_name AS label, COUNT(*), 0, SUM(b.total_cents)
+		q = `SELECT b.market_name AS label, b.currency, COUNT(*), 0, SUM(b.total_cents)
 			FROM bills b WHERE ` + whereSQL + ` AND b.market_name != ''
-			GROUP BY lower(b.market_name) ORDER BY SUM(b.total_cents) DESC`
+			GROUP BY lower(b.market_name), b.currency`
 	case "month":
-		q = `SELECT substr(b.date, 1, 7) AS label, COUNT(*), 0, SUM(b.total_cents)
+		q = `SELECT substr(b.date, 1, 7) AS label, b.currency, COUNT(*), 0, SUM(b.total_cents)
 			FROM bills b WHERE ` + whereSQL + ` AND b.date != ''
-			GROUP BY label ORDER BY label DESC`
+			GROUP BY label, b.currency`
 	case "week":
-		q = `SELECT strftime('%Y-W%W', b.date) AS label, COUNT(*), 0, SUM(b.total_cents)
+		q = `SELECT strftime('%Y-W%W', b.date) AS label, b.currency, COUNT(*), 0, SUM(b.total_cents)
 			FROM bills b WHERE ` + whereSQL + ` AND b.date != ''
-			GROUP BY label ORDER BY label DESC`
+			GROUP BY label, b.currency`
 	case "item":
-		q = `SELECT MAX(bi.name) AS label, COUNT(DISTINCT b.id), SUM(bi.quantity), SUM(bi.line_total_cents)
+		q = `SELECT MAX(bi.name) AS label, b.currency, COUNT(DISTINCT b.id), SUM(bi.quantity), SUM(bi.line_total_cents)
 			FROM bill_items bi JOIN bills b ON b.id = bi.bill_id
 			WHERE ` + whereSQL + `
-			GROUP BY lower(bi.name) ORDER BY SUM(bi.line_total_cents) DESC LIMIT 50`
+			GROUP BY lower(bi.name), b.currency LIMIT 500`
 	case "category":
-		q = `SELECT MAX(c.name) AS label, COUNT(DISTINCT b.id), SUM(bi.quantity), SUM(bi.line_total_cents)
+		q = `SELECT MAX(c.name) AS label, b.currency, COUNT(DISTINCT b.id), SUM(bi.quantity), SUM(bi.line_total_cents)
 			FROM bill_items bi
 			JOIN bills b ON b.id = bi.bill_id
 			JOIN categories c ON c.id = bi.category_id
 			WHERE ` + whereSQL + `
-			GROUP BY lower(c.name) ORDER BY SUM(bi.line_total_cents) DESC LIMIT 50`
+			GROUP BY lower(c.name), b.currency LIMIT 500`
 	default:
 		return nil, domain.ErrValidation
 	}
@@ -265,7 +267,7 @@ func (r *BillRepository) Stats(ctx context.Context, groupBy, month string) ([]do
 	out := []domain.BillStatsRow{}
 	for rows.Next() {
 		var row domain.BillStatsRow
-		if err := rows.Scan(&row.Label, &row.BillCount, &row.Quantity, &row.TotalCents); err != nil {
+		if err := rows.Scan(&row.Label, &row.Currency, &row.BillCount, &row.Quantity, &row.TotalCents); err != nil {
 			return nil, fmt.Errorf("scan bill stats: %w", err)
 		}
 		out = append(out, row)

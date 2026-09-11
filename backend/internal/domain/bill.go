@@ -168,12 +168,15 @@ type BillConfirmInput struct {
 	AccountID         *int64          `json:"account_id,omitempty"` // optional expense target
 }
 
-// BillStatsRow is one aggregated row of bill analysis.
+// BillStatsRow is one aggregated row of bill analysis. Currency is the
+// grouping key the repository returns; the service merges per-currency rows
+// and zeroes it before responding, so it never appears on the wire.
 type BillStatsRow struct {
 	Label      string  `json:"label"`
 	BillCount  int64   `json:"bill_count"`
 	Quantity   float64 `json:"quantity,omitempty"` // item grouping only
 	TotalCents int64   `json:"total_cents"`
+	Currency   string  `json:"-"`
 }
 
 // AIProviderType enumerates supported AI connector families.

@@ -5,7 +5,7 @@ import { billsApi, type BillStatsGroupBy } from '../../api/bills';
 import { budgetsApi } from '../../api/budgets';
 import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
-import type { Bill, BillDraft, BillStatsRow } from '../../types/domain';
+import type { Bill, BillDraft } from '../../types/domain';
 import { formatCents, currentMonth } from '../../lib/money';
 import { Card, Spinner, ErrorMessage, EmptyState, Button, ItemPanels } from '../../components/ui';
 import { BillDraftEditor, buildConfirmInput } from './BillDraftEditor';
@@ -148,7 +148,7 @@ export function BillsPage() {
           <Spinner />
         ) : stats.error ? (
           <ErrorMessage message={stats.error.message} />
-        ) : (stats.data ?? []).length === 0 ? (
+        ) : (stats.data?.rows ?? []).length === 0 ? (
           <EmptyState message="No accepted bills yet — confirm a scanned bill to see analysis." />
         ) : (
           <div className="table-scroll">
@@ -158,18 +158,18 @@ export function BillsPage() {
                   <th>{statsLabel(groupBy)}</th>
                   {groupBy === 'item' && <th className="num">Qty</th>}
                   <th className="num">Bills</th>
-                  <th className="num">Total</th>
+                  <th className="num">Total ({stats.data?.currency})</th>
                 </tr>
               </thead>
               <tbody>
-                {(stats.data ?? []).map((row: BillStatsRow) => (
+                {(stats.data?.rows ?? []).map((row) => (
                   <tr key={row.label}>
                     <td>{row.label}</td>
                     {groupBy === 'item' && (
                       <td className="num">{row.quantity ?? '—'}</td>
                     )}
                     <td className="num">{row.bill_count}</td>
-                    <td className="num">{formatCents(row.total_cents)}</td>
+                    <td className="num">{formatCents(row.total_cents, stats.data?.currency ?? 'USD')}</td>
                   </tr>
                 ))}
               </tbody>

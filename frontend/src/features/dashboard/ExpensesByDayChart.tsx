@@ -4,7 +4,7 @@ import { formatCents } from '../../lib/money';
 // ExpensesByDayChart renders one bar per day of the month using plain divs
 // (responsive, no chart library). Days without expenses render as empty
 // slots so the day axis stays aligned.
-export function ExpensesByDayChart({ days, month }: { days: DayTotal[]; month: string }) {
+export function ExpensesByDayChart({ days, month, currency }: { days: DayTotal[]; month: string; currency: string }) {
   // Days in the month, "YYYY-MM-DD" → amount.
   const parts = month.split('-').map(Number);
   const year = parts[0] ?? new Date().getFullYear();
@@ -30,7 +30,7 @@ export function ExpensesByDayChart({ days, month }: { days: DayTotal[]; month: s
             <div
               className={b.cents > 0 ? 'bar-chart-bar' : 'bar-chart-bar empty'}
               style={{ height: `${Math.max((b.cents / max) * 100, b.cents > 0 ? 4 : 0)}%` }}
-              title={`${b.date}: ${formatCents(b.cents)}`}
+              title={`${b.date}: ${formatCents(b.cents, currency)}`}
             />
           </div>
         ))}

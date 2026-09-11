@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +92,7 @@ type BillService struct {
 	stores         StoreStore
 	budgets        BudgetStore
 	txStore        TransactionStore
+	rates          RateSource
 	billsDir       string
 	extractTimeout time.Duration
 	log            *slog.Logger
@@ -116,6 +118,7 @@ func NewBillService(
 	stores StoreStore,
 	budgets BudgetStore,
 	txStore TransactionStore,
+	rates RateSource,
 	billsDir string,
 	extractTimeout time.Duration,
 	log *slog.Logger,
@@ -137,6 +140,7 @@ func NewBillService(
 		stores:         stores,
 		budgets:        budgets,
 		txStore:        txStore,
+		rates:          rates,
 		billsDir:       billsDir,
 		extractTimeout: extractTimeout,
 		log:            log,
@@ -329,6 +333,7 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 			AccountID:   *in.AccountID,
 			Kind:        domain.TransactionExpense,
 			AmountCents: bill.TotalCents,
+			Currency:    bill.Currency,
 			Description: description,
 			Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
 		})
@@ -401,6 +406,7 @@ func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill 
 		return fmt.Errorf("load bill transaction: %w", err)
 	}
 	tx.AmountCents = bill.TotalCents
+	tx.Currency = bill.Currency
 	tx.Description = billDescription(bill)
 	if bill.Date != "" {
 		tx.Date = bill.Date
@@ -441,19 +447,70 @@ func (s *BillService) List(ctx context.Context, f domain.BillFilters) ([]domain.
 	return s.bills.List(ctx, f)
 }
 
-// Stats aggregates accepted bills by market, month, week, item, or category.
-func (s *BillService) Stats(ctx context.Context, groupBy, month string) ([]domain.BillStatsRow, error) {
+// BillStats is the bill-analysis envelope: per-label totals merged across
+// currencies and converted into the user's base Currency.
+type BillStats struct {
+	Currency           string                `json:"currency"`
+	ConversionWarnings []string              `json:"conversion_warnings"`
+	Rows               []domain.BillStatsRow `json:"rows"`
+}
+
+// Stats aggregates accepted bills by market, month, week, item, or category,
+// merging per-currency rows into the base currency.
+func (s *BillService) Stats(ctx context.Context, groupBy, month string) (BillStats, error) {
 	switch groupBy {
 	case "market", "month", "week", "item", "category":
 	default:
-		return nil, validationError("group_by must be market, month, week, item or category")
+		return BillStats{}, validationError("group_by must be market, month, week, item or category")
 	}
 	if month != "" {
 		if err := validateMonth(month, "month"); err != nil {
-			return nil, err
+			return BillStats{}, err
 		}
 	}
-	return s.bills.Stats(ctx, groupBy, month)
+	base, err := s.providers.BaseCurrency(ctx)
+	if err != nil {
+		return BillStats{}, err
+	}
+	snap, err := s.rates.Snapshot(ctx)
+	if err != nil {
+		return BillStats{}, err
+	}
+	rows, err := s.bills.Stats(ctx, groupBy, month)
+	if err != nil {
+		return BillStats{}, err
+	}
+
+	conv := newConverter(base, snap)
+	merged := map[string]*domain.BillStatsRow{}
+	for _, row := range rows {
+		m, ok := merged[row.Label]
+		if !ok {
+			m = &domain.BillStatsRow{Label: row.Label}
+			merged[row.Label] = m
+		}
+		m.BillCount += row.BillCount
+		m.Quantity += row.Quantity
+		m.TotalCents += conv.add(row.Currency, row.TotalCents)
+	}
+	out := make([]domain.BillStatsRow, 0, len(merged))
+	for _, m := range merged {
+		out = append(out, *m)
+	}
+	// Time groupings stay chronological (recent first); the rest rank by spend.
+	if groupBy == "month" || groupBy == "week" {
+		sort.Slice(out, func(i, j int) bool { return out[i].Label > out[j].Label })
+	} else {
+		sort.Slice(out, func(i, j int) bool { return out[i].TotalCents > out[j].TotalCents })
+		if len(out) > 50 {
+			out = out[:50]
+		}
+	}
+	return BillStats{
+		Currency:           base,
+		ConversionWarnings: conv.warnings(),
+		Rows:               out,
+	}, nil
 }
 
 // Brands lists the distinct brands already recorded on bill items, for the
@@ -495,9 +552,19 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 			return domain.Bill{}, validationError("date must be YYYY-MM-DD")
 		}
 	}
-	currency := strings.TrimSpace(strings.ToUpper(in.Currency))
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
 	if currency == "" {
-		currency = "USD"
+		// Undetected/unset currency: the user's base currency is the best
+		// guess — never silently USD.
+		base, err := s.providers.BaseCurrency(ctx)
+		if err != nil {
+			return domain.Bill{}, err
+		}
+		currency = base
+	} else if cur, err := normalizeCurrency(in.Currency); err != nil {
+		return domain.Bill{}, err
+	} else {
+		currency = cur
 	}
 
 	cardDigits := normalizeDigits(in.CardLastDigits)
@@ -632,7 +699,13 @@ func (s *BillService) extractDraft(ctx context.Context, file []byte, mimeType st
 		return nil, fmt.Errorf("extraction failed: %w", err)
 	}
 	if draft.Currency == "" {
-		draft.Currency = "USD"
+		// The model could not determine the receipt's currency — default to
+		// the user's base currency (the editor can override it in review).
+		base, err := s.providers.BaseCurrency(ctx)
+		if err != nil {
+			return nil, err
+		}
+		draft.Currency = base
 	}
 	if err := s.resolveDraftCategories(ctx, &draft); err != nil {
 		return nil, err

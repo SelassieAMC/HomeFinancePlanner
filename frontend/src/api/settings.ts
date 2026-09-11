@@ -22,4 +22,7 @@ export const settingsApi = {
     apiClient.put<AIProvider[]>(`${BASE}/ai`, providers),
   testAIProvider: (id: string) =>
     apiClient.post<ConnectionTestResult>(`${BASE}/ai/test/${encodeURIComponent(id)}`, {}),
+  getBaseCurrency: () => apiClient.get<{ currency: string }>(`${BASE}/currency`),
+  saveBaseCurrency: (currency: string) =>
+    apiClient.put<{ currency: string }>(`${BASE}/currency`, { currency }),
 };

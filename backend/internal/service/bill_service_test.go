@@ -156,10 +156,12 @@ func (f *fakeBillScanStore) DeleteStale(_ context.Context, olderThan time.Time) 
 	return paths, nil
 }
 
-// fakeBillStore is a BillStore stub; only Create is exercised by Confirm.
+// fakeBillStore is a BillStore stub; Create is exercised by Confirm, Stats
+// returns whatever rows the test stages.
 type fakeBillStore struct {
 	mu    sync.Mutex
 	items []domain.Bill
+	stats []domain.BillStatsRow
 }
 
 func (f *fakeBillStore) Create(_ context.Context, b domain.Bill) (domain.Bill, error) {
@@ -210,7 +212,7 @@ func (f *fakeBillStore) List(context.Context, BillFilters) ([]domain.Bill, error
 	return nil, nil
 }
 func (f *fakeBillStore) Stats(context.Context, string, string) ([]domain.BillStatsRow, error) {
-	return nil, nil
+	return f.stats, nil
 }
 func (f *fakeBillStore) ListBrands(context.Context) ([]string, error) { return nil, nil }
 
@@ -281,7 +283,7 @@ func newTestBillService(t *testing.T, extractFn func(context.Context, []byte, st
 		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
 		passthroughBox{}, extractor)
 	svc := NewBillService(billStore, scanStore, extractor, settings,
-		nil, catStore, storeStore, nil, nil, t.TempDir(), 5*time.Second, nil)
+		nil, catStore, storeStore, nil, nil, nil, t.TempDir(), 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, storeStore, catStore
 }
@@ -757,3 +759,277 @@ func TestBuildBillRejectsNegativeForNormalCategory(t *testing.T) {
 }
 
 func ptrInt64(v int64) *int64 { return &v }
+
+// --- currency handling --------------------------------------------------------
+
+// fakeTxStore is an in-memory TransactionStore for confirm/sync tests.
+type fakeTxStore struct {
+	mu    sync.Mutex
+	items map[int64]domain.Transaction
+	next  int64
+}
+
+func newFakeTxStore() *fakeTxStore {
+	return &fakeTxStore{items: map[int64]domain.Transaction{}}
+}
+
+func (f *fakeTxStore) Create(_ context.Context, t domain.Transaction) (domain.Transaction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.next == 0 {
+		f.next = 1
+	}
+	t.ID = f.next
+	f.next++
+	f.items[t.ID] = t
+	return t, nil
+}
+
+func (f *fakeTxStore) GetByID(_ context.Context, id int64) (domain.Transaction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.items[id]
+	if !ok {
+		return domain.Transaction{}, domain.ErrNotFound
+	}
+	return t, nil
+}
+
+func (f *fakeTxStore) Update(_ context.Context, t domain.Transaction) (domain.Transaction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[t.ID]; !ok {
+		return domain.Transaction{}, domain.ErrNotFound
+	}
+	f.items[t.ID] = t
+	return t, nil
+}
+
+func (f *fakeTxStore) Delete(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.items, id)
+	return nil
+}
+
+func (f *fakeTxStore) List(context.Context, domain.TransactionFilters) ([]domain.Transaction, error) {
+	return nil, nil
+}
+
+// newTestBillServiceCustom wires a BillService with a seeded base currency,
+// rate source, account store and transaction store (nil = default empty).
+func newTestBillServiceCustom(t *testing.T, settingsData map[string]string, rates RateSource, accounts AccountStore, txs TransactionStore, extractFn func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeSettingsStore) {
+	t.Helper()
+	scanStore := newFakeBillScanStore()
+	billStore := &fakeBillStore{}
+	storeStore := newFakeStoreStore()
+	extractor := &fakeBillExtractor{fn: extractFn}
+	store := &fakeSettingsStore{data: settingsData}
+	if store.data == nil {
+		store.data = map[string]string{}
+	}
+	store.data[settingsKeyAIProviders] = testProviderJSON()
+	settings := NewSettingsService(store, passthroughBox{}, extractor)
+	if accounts == nil {
+		accounts = newFakeAccountStore()
+	}
+	if txs == nil {
+		txs = newFakeTxStore()
+	}
+	svc := NewBillService(billStore, scanStore, extractor, settings,
+		accounts, &fakeCategoryStore{cats: map[int64]domain.Category{}}, storeStore,
+		nil, txs, rates, t.TempDir(), 5*time.Second, nil)
+	t.Cleanup(svc.Close)
+	return svc, scanStore, billStore, store
+}
+
+func eurSnapshot() domain.RateSnapshot {
+	return domain.RateSnapshot{
+		Pivot:     "EUR",
+		Date:      "2026-09-10",
+		FetchedAt: time.Now().UTC(),
+		Rates:     map[string]float64{"USD": 1.1},
+	}
+}
+
+func TestExtractDraftFallsBackToBaseCurrency(t *testing.T) {
+	svc, scanStore, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "REWE", TotalCents: 100}, nil // no currency detected
+		})
+
+	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(context.Background(), res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	row, _ := scanStore.GetByToken(context.Background(), res.ScanToken)
+	if row.Draft.Currency != "EUR" {
+		t.Fatalf("expected undetected currency to default to base EUR, got %q", row.Draft.Currency)
+	}
+}
+
+func TestExtractDraftKeepsDetectedCurrency(t *testing.T) {
+	svc, scanStore, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "USD"}, nil, nil, nil,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "REWE", TotalCents: 100, Currency: "EUR"}, nil
+		})
+
+	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(context.Background(), res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	row, _ := scanStore.GetByToken(context.Background(), res.ScanToken)
+	if row.Draft.Currency != "EUR" {
+		t.Fatalf("expected detected EUR to survive a USD base, got %q", row.Draft.Currency)
+	}
+}
+
+func TestBuildBillCurrency(t *testing.T) {
+	svc, _, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, errors.New("not called")
+		})
+	ctx := context.Background()
+
+	// Empty defaults to the base currency, messy input normalizes.
+	bill, err := svc.buildBill(ctx, domain.BillConfirmInput{MarketName: "REWE"}, &billScanSource{})
+	if err != nil {
+		t.Fatalf("buildBill (empty): %v", err)
+	}
+	if bill.Currency != "EUR" {
+		t.Errorf("empty currency = %q, want base EUR", bill.Currency)
+	}
+	bill, err = svc.buildBill(ctx, domain.BillConfirmInput{MarketName: "REWE", Currency: " eur "}, &billScanSource{})
+	if err != nil {
+		t.Fatalf("buildBill (messy): %v", err)
+	}
+	if bill.Currency != "EUR" {
+		t.Errorf(`" eur " = %q, want EUR`, bill.Currency)
+	}
+	for _, bad := range []string{"EU", "EURO", "12", "€"} {
+		if _, err := svc.buildBill(ctx, domain.BillConfirmInput{MarketName: "REWE", Currency: bad}, &billScanSource{}); !errors.Is(err, domain.ErrValidation) {
+			t.Errorf("buildBill(currency=%q) error = %v, want domain.ErrValidation", bad, err)
+		}
+	}
+}
+
+func TestConfirmTransactionCarriesBillCurrency(t *testing.T) {
+	accounts := newFakeAccountStore()
+	acc, err := accounts.Create(context.Background(), domain.Account{Name: "Giro", Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	txs := newFakeTxStore()
+	svc, scanStore, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{
+				MarketName: "REWE",
+				Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+			}, nil
+		})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{
+		MarketName: "REWE",
+		Currency:   "EUR",
+		AccountID:  &acc.ID,
+		Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if len(txs.items) != 1 {
+		t.Fatalf("expected one recorded transaction, got %d", len(txs.items))
+	}
+	tx := txs.items[1]
+	if tx.Currency != bill.Currency || tx.Currency != "EUR" {
+		t.Errorf("transaction currency = %q, want bill currency EUR", tx.Currency)
+	}
+	if tx.AmountCents != bill.TotalCents || tx.AmountCents != 250 {
+		t.Errorf("transaction amount = %d, want bill total %d", tx.AmountCents, bill.TotalCents)
+	}
+	if tx.Kind != domain.TransactionExpense {
+		t.Errorf("transaction kind = %q, want expense", tx.Kind)
+	}
+}
+
+func TestSyncBillTransactionUpdatesCurrency(t *testing.T) {
+	txs := newFakeTxStore()
+	created, err := txs.Create(context.Background(), domain.Transaction{
+		AccountID: 1, Kind: domain.TransactionExpense, AmountCents: 250, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, _, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, errors.New("not called")
+		})
+
+	bill := domain.Bill{MarketName: "REWE", TotalCents: 300, Currency: "EUR"}
+	if err := svc.syncBillTransaction(context.Background(), created.ID, bill); err != nil {
+		t.Fatalf("syncBillTransaction: %v", err)
+	}
+	tx, _ := txs.GetByID(context.Background(), created.ID)
+	if tx.Currency != "EUR" || tx.AmountCents != 300 {
+		t.Errorf("synced transaction = %+v, want EUR/300", tx)
+	}
+}
+
+func TestStatsMergesCurrenciesIntoBase(t *testing.T) {
+	svc, _, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"},
+		stubRateSource{snap: eurSnapshot()}, nil, nil,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, errors.New("not called")
+		})
+	billStore.stats = []domain.BillStatsRow{
+		{Label: "REWE", Currency: "EUR", BillCount: 1, TotalCents: 1_000},
+		{Label: "REWE", Currency: "USD", BillCount: 2, Quantity: 3, TotalCents: 1_100}, // → 1_000 EUR
+		{Label: "ALDI", Currency: "JPY", BillCount: 1, TotalCents: 500},                // no rate → 1:1
+	}
+
+	stats, err := svc.Stats(context.Background(), "market", "")
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if stats.Currency != "EUR" {
+		t.Errorf("Currency = %q, want EUR", stats.Currency)
+	}
+	if len(stats.Rows) != 2 || stats.Rows[0].Label != "REWE" {
+		t.Fatalf("rows = %+v, want REWE first of two", stats.Rows)
+	}
+	rewe := stats.Rows[0]
+	if rewe.TotalCents != 2_000 || rewe.BillCount != 3 || rewe.Quantity != 3 {
+		t.Errorf("REWE row = %+v, want total 2000 count 3 qty 3", rewe)
+	}
+	if stats.Rows[0].Currency != "" || stats.Rows[1].Currency != "" {
+		t.Errorf("per-row currency must be zeroed before responding, got %q/%q",
+			stats.Rows[0].Currency, stats.Rows[1].Currency)
+	}
+	if len(stats.ConversionWarnings) != 1 || stats.ConversionWarnings[0] != "JPY" {
+		t.Errorf("ConversionWarnings = %v, want [JPY]", stats.ConversionWarnings)
+	}
+}
