@@ -244,6 +244,7 @@ export function ScanBillsPage() {
   }
 
   const noProviderConfigured = !providers.loading && (providers.data ?? []).length === 0;
+  const acceptedCount = uploadResults.filter((r) => r.ok).length;
 
   return (
     <div className="page">
@@ -313,13 +314,19 @@ export function ScanBillsPage() {
                   </li>
                 ))}
               </ul>
-              <div className="hint-banner">
-                {uploadResults.filter((r) => r.ok).length} receipt
-                {uploadResults.filter((r) => r.ok).length === 1 ? '' : 's'} accepted
-                for analysis — this can take a few minutes per receipt. Check the
-                status later in <Link to="/bills">Bills &amp; analysis</Link> and
-                review each extracted draft there.
-              </div>
+              {acceptedCount > 0 ? (
+                <div className="hint-banner">
+                  {acceptedCount} receipt{acceptedCount === 1 ? '' : 's'} accepted
+                  for analysis — this can take a few minutes per receipt. Check the
+                  status later in <Link to="/bills">Bills &amp; analysis</Link> and
+                  review each extracted draft there.
+                </div>
+              ) : (
+                <div className="hint-banner">
+                  No receipts were accepted for analysis — see the reasons above
+                  and try again.
+                </div>
+              )}
             </>
           )}
         </Card>
