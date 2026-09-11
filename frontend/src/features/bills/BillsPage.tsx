@@ -69,10 +69,10 @@ export function BillsPage() {
   if (month) filters.month = month;
 
   const bills = useAsync(() => billsApi.list(filters), [month]);
-  const stats = useAsync(() => billsApi.stats(groupBy, statsMonth || undefined), [
-    groupBy,
-    statsMonth,
-  ]);
+  const stats = useAsync(
+    () => billsApi.stats(groupBy, { month: statsMonth || undefined }),
+    [groupBy, statsMonth],
+  );
 
   // The list endpoint omits items; the full bill (with lines) is fetched
   // when a panel is expanded.

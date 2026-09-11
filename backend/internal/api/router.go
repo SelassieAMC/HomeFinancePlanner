@@ -49,7 +49,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("PUT /api/v1/budgets/{id}", budgetH.Update)
 	mux.HandleFunc("DELETE /api/v1/budgets/{id}", budgetH.Delete)
 
-	mux.HandleFunc("GET /api/v1/summary", summaryH.Month)
+	mux.HandleFunc("GET /api/v1/summary", summaryH.Get)
 
 	// Scan flow: drafts live in bill_scans until the user confirms or discards.
 	// POST /scan returns immediately with status "analyzing"; the client polls

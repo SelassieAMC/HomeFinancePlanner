@@ -371,6 +371,53 @@ select:focus,
   background: var(--bg);
 }
 
+/* --- Segmented control (period switcher) ------------------------------------ */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.segmented button {
+  padding: 0.45rem 0.9rem;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segmented button:last-child {
+  border-right: none;
+}
+
+.segmented button:hover:not(.active) {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.segmented button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.period-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 0.75rem;
+  flex-wrap: wrap;
+}
+
+.period-nav-label {
+  font-weight: 600;
+  min-width: 8ch;
+}
+
 /* --- Status badges --------------------------------------------------------- */
 .badge {
   display: inline-block;

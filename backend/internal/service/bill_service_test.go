@@ -235,7 +235,7 @@ func (f *fakeBillStore) GetByFileHash(_ context.Context, hash string) (domain.Bi
 func (f *fakeBillStore) List(context.Context, BillFilters) ([]domain.Bill, error) {
 	return nil, nil
 }
-func (f *fakeBillStore) Stats(context.Context, string, string) ([]domain.BillStatsRow, error) {
+func (f *fakeBillStore) Stats(context.Context, string, string, string, string) ([]domain.BillStatsRow, error) {
 	return f.stats, nil
 }
 func (f *fakeBillStore) ListBrands(context.Context) ([]string, error) { return nil, nil }
@@ -1377,7 +1377,7 @@ func TestStatsMergesCurrenciesIntoBase(t *testing.T) {
 		{Label: "ALDI", Currency: "JPY", BillCount: 1, TotalCents: 500},                // no rate → 1:1
 	}
 
-	stats, err := svc.Stats(context.Background(), "market", "")
+	stats, err := svc.Stats(context.Background(), BillStatsQuery{GroupBy: "market"})
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
@@ -1397,6 +1397,32 @@ func TestStatsMergesCurrenciesIntoBase(t *testing.T) {
 	}
 	if len(stats.ConversionWarnings) != 1 || stats.ConversionWarnings[0] != "JPY" {
 		t.Errorf("ConversionWarnings = %v, want [JPY]", stats.ConversionWarnings)
+	}
+}
+
+func TestStatsQueryValidation(t *testing.T) {
+	svc, _, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, nil
+		})
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		q    BillStatsQuery
+	}{
+		{"month and range are exclusive", BillStatsQuery{GroupBy: "market", Month: "2026-09", From: "2026-09-01"}},
+		{"from without to", BillStatsQuery{GroupBy: "market", From: "2026-09-01"}},
+		{"to without from", BillStatsQuery{GroupBy: "market", To: "2026-09-30"}},
+		{"to before from", BillStatsQuery{GroupBy: "market", From: "2026-09-30", To: "2026-09-01"}},
+		{"bad range date", BillStatsQuery{GroupBy: "market", From: "2026-02-31", To: "2026-03-01"}},
+		{"bad group_by", BillStatsQuery{GroupBy: "quarter", From: "2026-09-01", To: "2026-09-30"}},
+	}
+	for _, tc := range cases {
+		if _, err := svc.Stats(ctx, tc.q); err == nil {
+			t.Errorf("%s: expected validation error, got nil", tc.name)
+		}
 	}
 }
 

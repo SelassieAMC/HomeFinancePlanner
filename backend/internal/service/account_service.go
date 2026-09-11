@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -281,26 +282,51 @@ type SummaryService struct {
 	categories CategoryStore
 }
 
-func (s *SummaryService) MonthSummary(ctx context.Context, month string) (domain.MonthSummary, error) {
+// MonthSummary returns the dashboard aggregate for one calendar month
+// ("YYYY-MM"); it maps the month onto its first/last day and delegates to
+// RangeSummary.
+func (s *SummaryService) MonthSummary(ctx context.Context, month string) (domain.Summary, error) {
 	if err := validateMonth(month, "month"); err != nil {
-		return domain.MonthSummary{}, err
+		return domain.Summary{}, err
+	}
+	first, err := timeParseDate(month + "-01")
+	if err != nil {
+		return domain.Summary{}, validationError("month %q is not a real month", month)
+	}
+	last := time.Date(first.Year(), first.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+	return s.RangeSummary(ctx, first.Format("2006-01-02"), last.Format("2006-01-02"))
+}
+
+// RangeSummary returns the dashboard aggregate for an inclusive date range
+// ("YYYY-MM-DD"). Budgets are reported only when the range falls inside a
+// single calendar month, because budgets are set per month.
+func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (domain.Summary, error) {
+	if err := validateDate(from, "from"); err != nil {
+		return domain.Summary{}, err
+	}
+	if err := validateDate(to, "to"); err != nil {
+		return domain.Summary{}, err
+	}
+	if to < from {
+		return domain.Summary{}, validationError("to %q must not be before from %q", to, from)
 	}
 	base, err := s.settings.BaseCurrency(ctx)
 	if err != nil {
-		return domain.MonthSummary{}, err
+		return domain.Summary{}, err
 	}
 	snap, err := s.rates.Snapshot(ctx)
 	if err != nil {
-		return domain.MonthSummary{}, err
+		return domain.Summary{}, err
 	}
-	raw, err := s.summary.RawMonthSummary(ctx, month)
+	raw, err := s.summary.RawRangeSummary(ctx, from, to)
 	if err != nil {
-		return domain.MonthSummary{}, err
+		return domain.Summary{}, err
 	}
 	conv := newConverter(base, snap)
 
-	out := domain.MonthSummary{
-		Month:              month,
+	out := domain.Summary{
+		From:               from,
+		To:                 to,
 		Currency:           base,
 		ConversionWarnings: []string{},
 	}
@@ -340,7 +366,7 @@ func (s *SummaryService) MonthSummary(ctx context.Context, month string) (domain
 	if len(categorySpend) > 0 {
 		cats, err := s.categories.List(ctx)
 		if err != nil {
-			return domain.MonthSummary{}, fmt.Errorf("summary category names: %w", err)
+			return domain.Summary{}, fmt.Errorf("summary category names: %w", err)
 		}
 		for _, c := range cats {
 			names[c.ID] = c.Name
@@ -360,17 +386,20 @@ func (s *SummaryService) MonthSummary(ctx context.Context, month string) (domain
 	}
 
 	// Budget progress: transaction-category spend plus bill-line spend
-	// attributed to the budget (per-line overrides included).
+	// attributed to the budget (per-line overrides included). Only ranges
+	// inside a single calendar month map onto monthly budgets.
 	billSpend := map[int64]int64{}
 	for _, b := range raw.BillBudgetSpend {
 		billSpend[b.BudgetID] += conv.add(b.Currency, b.Cents)
 	}
-	out.Budgets = make([]domain.BudgetStatus, 0, len(raw.Budgets))
-	for _, b := range raw.Budgets {
-		st := domain.BudgetStatus{Budget: b}
-		st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
-		st.RemainingCents = b.AmountCents - st.SpentCents
-		out.Budgets = append(out.Budgets, st)
+	out.Budgets = []domain.BudgetStatus{}
+	if from[:7] == to[:7] {
+		for _, b := range raw.Budgets {
+			st := domain.BudgetStatus{Budget: b}
+			st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
+			st.RemainingCents = b.AmountCents - st.SpentCents
+			out.Budgets = append(out.Budgets, st)
+		}
 	}
 
 	out.ConversionWarnings = conv.warnings()

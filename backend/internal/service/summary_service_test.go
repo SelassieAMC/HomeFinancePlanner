@@ -8,10 +8,16 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// fakeSummaryStore returns a canned RawMonthSummary.
-type fakeSummaryStore struct{ raw domain.RawMonthSummary }
+// fakeSummaryStore returns a canned RawSummary and records the last range
+// it was queried with.
+type fakeSummaryStore struct {
+	raw  domain.RawSummary
+	from string
+	to   string
+}
 
-func (f fakeSummaryStore) RawMonthSummary(context.Context, string) (domain.RawMonthSummary, error) {
+func (f *fakeSummaryStore) RawRangeSummary(_ context.Context, from, to string) (domain.RawSummary, error) {
+	f.from, f.to = from, to
 	return f.raw, nil
 }
 
@@ -39,22 +45,24 @@ func (s stubRateSource) Snapshot(context.Context) (domain.RateSnapshot, error) {
 	return s.snap, nil
 }
 
-func newTestSummaryService(raw domain.RawMonthSummary, base string, snap domain.RateSnapshot, cats []domain.Category) *SummaryService {
+func newTestSummaryService(raw domain.RawSummary, base string, snap domain.RateSnapshot, cats []domain.Category) (*SummaryService, *fakeSummaryStore) {
 	store := &fakeSettingsStore{data: map[string]string{}}
 	if base != "" {
 		store.data[settingsKeyBaseCurrency] = base
 	}
+	fake := &fakeSummaryStore{raw: raw}
 	return &SummaryService{
-		summary:    fakeSummaryStore{raw: raw},
+		summary:    fake,
 		settings:   NewSettingsService(store, passthroughBox{}, nil),
 		rates:      stubRateSource{snap: snap},
 		categories: fakeCategoryNames{cats: cats},
-	}
+	}, fake
 }
 
-func summaryTestRaw() domain.RawMonthSummary {
-	return domain.RawMonthSummary{
-		Month: "2026-09",
+func summaryTestRaw() domain.RawSummary {
+	return domain.RawSummary{
+		From: "2026-09-01",
+		To:   "2026-09-30",
 		Income: []domain.CurrencyAmount{
 			{Currency: "EUR", Cents: 100_000},
 			{Currency: "USD", Cents: 22_000}, // 220 USD ≈ 200 EUR at 1.1
@@ -92,7 +100,7 @@ func summaryTestSnapshot() domain.RateSnapshot {
 }
 
 func TestMonthSummaryConvertsIntoBaseCurrency(t *testing.T) {
-	svc := newTestSummaryService(summaryTestRaw(), "EUR", summaryTestSnapshot(), []domain.Category{
+	svc, _ := newTestSummaryService(summaryTestRaw(), "EUR", summaryTestSnapshot(), []domain.Category{
 		{ID: 1, Name: "Groceries"},
 		{ID: 2, Name: "Rent"},
 	})
@@ -152,7 +160,7 @@ func TestMonthSummaryConvertsIntoBaseCurrency(t *testing.T) {
 func TestMonthSummaryWarnsOnMissingRate(t *testing.T) {
 	raw := summaryTestRaw()
 	raw.Income = append(raw.Income, domain.CurrencyAmount{Currency: "JPY", Cents: 500})
-	svc := newTestSummaryService(raw, "EUR", summaryTestSnapshot(), nil)
+	svc, _ := newTestSummaryService(raw, "EUR", summaryTestSnapshot(), nil)
 
 	s, err := svc.MonthSummary(context.Background(), "2026-09")
 	if err != nil {
@@ -169,7 +177,7 @@ func TestMonthSummaryWarnsOnMissingRate(t *testing.T) {
 
 func TestMonthSummaryBaseCurrencyConversion(t *testing.T) {
 	// Same data, base USD: EUR amounts convert at 1/1.1.
-	svc := newTestSummaryService(summaryTestRaw(), "USD", summaryTestSnapshot(), nil)
+	svc, _ := newTestSummaryService(summaryTestRaw(), "USD", summaryTestSnapshot(), nil)
 
 	s, err := svc.MonthSummary(context.Background(), "2026-09")
 	if err != nil {
@@ -184,8 +192,65 @@ func TestMonthSummaryBaseCurrencyConversion(t *testing.T) {
 }
 
 func TestMonthSummaryRejectsBadMonth(t *testing.T) {
-	svc := newTestSummaryService(domain.RawMonthSummary{}, "EUR", domain.RateSnapshot{}, nil)
+	svc, _ := newTestSummaryService(domain.RawSummary{}, "EUR", domain.RateSnapshot{}, nil)
 	if _, err := svc.MonthSummary(context.Background(), "2026-13"); err == nil {
 		t.Fatal("expected validation error for month 2026-13")
+	}
+}
+
+func TestMonthSummaryMapsToMonthBounds(t *testing.T) {
+	svc, store := newTestSummaryService(summaryTestRaw(), "EUR", summaryTestSnapshot(), nil)
+	if _, err := svc.MonthSummary(context.Background(), "2026-02"); err != nil {
+		t.Fatal(err)
+	}
+	if store.from != "2026-02-01" || store.to != "2026-02-28" {
+		t.Errorf("store queried %s..%s, want 2026-02-01..2026-02-28", store.from, store.to)
+	}
+}
+
+func TestRangeSummaryValidation(t *testing.T) {
+	svc, _ := newTestSummaryService(domain.RawSummary{}, "EUR", domain.RateSnapshot{}, nil)
+	cases := []struct {
+		name     string
+		from, to string
+	}{
+		{"to before from", "2026-09-30", "2026-09-01"},
+		{"bad from format", "2026-9-1", "2026-09-30"},
+		{"impossible date", "2026-02-30", "2026-03-01"},
+		{"empty from", "", "2026-09-30"},
+	}
+	for _, tc := range cases {
+		if _, err := svc.RangeSummary(context.Background(), tc.from, tc.to); err == nil {
+			t.Errorf("%s: expected validation error, got nil", tc.name)
+		}
+	}
+	// Single-day ranges are valid.
+	if _, err := svc.RangeSummary(context.Background(), "2026-09-11", "2026-09-11"); err != nil {
+		t.Errorf("single-day range rejected: %v", err)
+	}
+}
+
+func TestRangeSummaryBudgetsOnlyInsideSingleMonth(t *testing.T) {
+	// A range spanning two months: raw budgets exist but must not surface.
+	svc, _ := newTestSummaryService(summaryTestRaw(), "EUR", summaryTestSnapshot(), nil)
+	s, err := svc.RangeSummary(context.Background(), "2026-08-31", "2026-09-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Budgets) != 0 {
+		t.Errorf("Budgets = %+v, want empty for a multi-month range", s.Budgets)
+	}
+
+	// The same data inside one month keeps the budget statuses.
+	svc, _ = newTestSummaryService(summaryTestRaw(), "EUR", summaryTestSnapshot(), nil)
+	s, err = svc.RangeSummary(context.Background(), "2026-09-01", "2026-09-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Budgets) != 1 || s.Budgets[0].SpentCents != 60_000 || s.Budgets[0].RemainingCents != 10_000 {
+		t.Errorf("Budgets = %+v, want one budget spent 60000 remaining 10000", s.Budgets)
+	}
+	if s.From != "2026-09-01" || s.To != "2026-09-30" {
+		t.Errorf("From/To = %q/%q, want echoed back", s.From, s.To)
 	}
 }

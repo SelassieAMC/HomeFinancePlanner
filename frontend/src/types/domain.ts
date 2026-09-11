@@ -105,15 +105,16 @@ export interface StoreInput {
   location?: string;
 }
 
-export interface MonthSummary {
-  month: string;
+export interface Summary {
+  from: string; // YYYY-MM-DD, inclusive
+  to: string; // YYYY-MM-DD, inclusive
   currency: string; // base currency of all amounts
   conversion_warnings: string[]; // currencies shown 1:1 (no rate available)
   income_cents: number;
   expense_cents: number;
   net_cents: number;
   total_balance_cents: number;
-  budgets: BudgetStatus[];
+  budgets: BudgetStatus[]; // populated only when the range is inside one calendar month
   top_categories: CategoryTotal[];
   daily_expenses: DayTotal[];
 }

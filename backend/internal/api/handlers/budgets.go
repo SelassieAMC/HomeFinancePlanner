@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"home-finance-planner/backend/internal/domain"
 	"home-finance-planner/backend/internal/service"
 )
 
@@ -80,9 +81,28 @@ func (h *BudgetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // SummaryHandler handles /api/v1/summary.
 type SummaryHandler struct{ Svc *service.SummaryService }
 
-// Month returns the dashboard aggregate for a month (YYYY-MM).
-func (h *SummaryHandler) Month(w http.ResponseWriter, r *http.Request) {
-	s, err := h.Svc.MonthSummary(r.Context(), r.URL.Query().Get("month"))
+// Get returns the dashboard aggregate for an inclusive date range. Either
+// month (YYYY-MM) or both from and to (YYYY-MM-DD) must be given.
+func (h *SummaryHandler) Get(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	month, from, to := q.Get("month"), q.Get("from"), q.Get("to")
+	var (
+		s   domain.Summary
+		err error
+	)
+	switch {
+	case month != "":
+		if from != "" || to != "" {
+			respondError(w, r, http.StatusBadRequest, "month and from/to are mutually exclusive")
+			return
+		}
+		s, err = h.Svc.MonthSummary(r.Context(), month)
+	case from != "" && to != "":
+		s, err = h.Svc.RangeSummary(r.Context(), from, to)
+	default:
+		respondError(w, r, http.StatusBadRequest, "month or from and to query params are required")
+		return
+	}
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

@@ -48,10 +48,10 @@ type BudgetStore interface {
 }
 
 // SummaryStore is the persistence contract for dashboard aggregates. It
-// returns native-currency groups; conversion into the base currency is the
-// service's job.
+// returns native-currency groups for an inclusive date range; conversion into
+// the base currency is the service's job.
 type SummaryStore interface {
-	RawMonthSummary(ctx context.Context, month string) (domain.RawMonthSummary, error)
+	RawRangeSummary(ctx context.Context, from, to string) (domain.RawSummary, error)
 }
 
 // RateSource supplies the freshest cached exchange-rate snapshot

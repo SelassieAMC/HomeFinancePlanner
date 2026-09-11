@@ -252,14 +252,22 @@ func (r *BillRepository) List(ctx context.Context, f BillFilters) ([]domain.Bill
 // Stats aggregates accepted bills, grouped by label AND native currency —
 // the service merges the per-currency rows and converts them into the user's
 // base currency, so no ordering happens here. groupBy is one of
-// "market" | "month" | "week" | "item" | "category"; month optionally narrows
-// the range.
-func (r *BillRepository) Stats(ctx context.Context, groupBy, month string) ([]domain.BillStatsRow, error) {
+// "market" | "month" | "week" | "item" | "category"; month, or the from/to
+// inclusive range, optionally narrows the scope.
+func (r *BillRepository) Stats(ctx context.Context, groupBy, month, from, to string) ([]domain.BillStatsRow, error) {
 	where := []string{"b.status = 'accepted'"}
 	args := []any{}
 	if month != "" {
 		where = append(where, "substr(b.date, 1, 7) = ?")
 		args = append(args, month)
+	}
+	if from != "" {
+		where = append(where, "b.date >= ?")
+		args = append(args, from)
+	}
+	if to != "" {
+		where = append(where, "b.date <= ?")
+		args = append(args, to)
 	}
 	whereSQL := joinAND(where)
 

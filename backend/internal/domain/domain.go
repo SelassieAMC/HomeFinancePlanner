@@ -111,10 +111,12 @@ type Budget struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// MonthSummary is the dashboard aggregate for one month, with every amount
-// converted into the user's base Currency.
-type MonthSummary struct {
-	Month              string          `json:"month"`
+// Summary is the dashboard aggregate for an inclusive date range, with every
+// amount converted into the user's base Currency. Budgets are populated only
+// when the range falls inside a single calendar month (budgets are monthly).
+type Summary struct {
+	From               string          `json:"from"`                // YYYY-MM-DD
+	To                 string          `json:"to"`                  // YYYY-MM-DD
 	Currency           string          `json:"currency"`            // base currency of all amounts
 	ConversionWarnings []string        `json:"conversion_warnings"` // currencies shown 1:1 (no rate available)
 	IncomeCents        int64           `json:"income_cents"`
@@ -174,11 +176,12 @@ type BudgetCurrencySpend struct {
 	Cents    int64  `json:"cents"`
 }
 
-// RawMonthSummary aggregates one month in the NATIVE currency of each row,
-// before conversion into the user's base currency. It is internal to the
-// repository→service seam and never leaves the backend.
-type RawMonthSummary struct {
-	Month           string
+// RawSummary aggregates an inclusive date range in the NATIVE currency of
+// each row, before conversion into the user's base currency. It is internal
+// to the repository→service seam and never leaves the backend.
+type RawSummary struct {
+	From            string
+	To              string
 	Income          []CurrencyAmount
 	Expense         []CurrencyAmount
 	Balances        []CurrencyAmount

@@ -231,10 +231,16 @@ func (h *BillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Stats aggregates accepted bills by market, month, week, item or category,
-// converted into the user's base currency.
+// converted into the user's base currency. Scope is set by month (YYYY-MM)
+// or an inclusive from/to (YYYY-MM-DD) range.
 func (h *BillHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	stats, err := h.Svc.Stats(r.Context(), q.Get("group_by"), q.Get("month"))
+	stats, err := h.Svc.Stats(r.Context(), service.BillStatsQuery{
+		GroupBy: q.Get("group_by"),
+		Month:   q.Get("month"),
+		From:    q.Get("from"),
+		To:      q.Get("to"),
+	})
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

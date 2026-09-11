@@ -11,6 +11,13 @@ const BASE = '/api/v1';
 
 export type BillStatsGroupBy = 'market' | 'month' | 'week' | 'item' | 'category';
 
+/** Stats scope: a whole month (YYYY-MM) or an inclusive from/to range. */
+export interface BillStatsScope {
+  month?: string;
+  from?: string;
+  to?: string;
+}
+
 export interface BillListFilters {
   month?: string;
   market?: string;
@@ -60,9 +67,11 @@ export const billsApi = {
   /** Remove a confirmed bill for good: its lines, the linked expense
    *  transaction, and the stored receipt file. */
   remove: (id: number) => apiClient.delete(`${BASE}/bills/${id}`),
-  stats: (groupBy: BillStatsGroupBy, month?: string) => {
+  stats: (groupBy: BillStatsGroupBy, scope: BillStatsScope = {}) => {
     const params = new URLSearchParams({ group_by: groupBy });
-    if (month) params.set('month', month);
+    if (scope.month) params.set('month', scope.month);
+    if (scope.from) params.set('from', scope.from);
+    if (scope.to) params.set('to', scope.to);
     return apiClient.get<BillStatsResponse>(`${BASE}/bills/stats?${params.toString()}`);
   },
   /** Distinct brands already recorded on bill items (dropdown options). */

@@ -34,7 +34,7 @@ type BillStore interface {
 	GetByID(ctx context.Context, id int64) (domain.Bill, error)
 	GetByFileHash(ctx context.Context, hash string) (domain.Bill, error)
 	List(ctx context.Context, f domain.BillFilters) ([]domain.Bill, error)
-	Stats(ctx context.Context, groupBy, month string) ([]domain.BillStatsRow, error)
+	Stats(ctx context.Context, groupBy, month, from, to string) ([]domain.BillStatsRow, error)
 	ListBrands(ctx context.Context) ([]string, error)
 }
 
@@ -555,17 +555,42 @@ type BillStats struct {
 	Rows               []domain.BillStatsRow `json:"rows"`
 }
 
+// BillStatsQuery narrows a stats request: either a whole Month ("YYYY-MM")
+// or an inclusive From/To date range ("YYYY-MM-DD"), never both.
+type BillStatsQuery struct {
+	GroupBy string
+	Month   string
+	From    string
+	To      string
+}
+
 // Stats aggregates accepted bills by market, month, week, item, or category,
 // merging per-currency rows into the base currency.
-func (s *BillService) Stats(ctx context.Context, groupBy, month string) (BillStats, error) {
-	switch groupBy {
+func (s *BillService) Stats(ctx context.Context, q BillStatsQuery) (BillStats, error) {
+	switch q.GroupBy {
 	case "market", "month", "week", "item", "category":
 	default:
 		return BillStats{}, validationError("group_by must be market, month, week, item or category")
 	}
-	if month != "" {
-		if err := validateMonth(month, "month"); err != nil {
+	if q.Month != "" {
+		if q.From != "" || q.To != "" {
+			return BillStats{}, validationError("month and from/to are mutually exclusive")
+		}
+		if err := validateMonth(q.Month, "month"); err != nil {
 			return BillStats{}, err
+		}
+	} else if q.From != "" || q.To != "" {
+		if q.From == "" || q.To == "" {
+			return BillStats{}, validationError("from and to must be given together (format YYYY-MM-DD)")
+		}
+		if err := validateDate(q.From, "from"); err != nil {
+			return BillStats{}, err
+		}
+		if err := validateDate(q.To, "to"); err != nil {
+			return BillStats{}, err
+		}
+		if q.To < q.From {
+			return BillStats{}, validationError("to %q must not be before from %q", q.To, q.From)
 		}
 	}
 	base, err := s.providers.BaseCurrency(ctx)
@@ -576,7 +601,7 @@ func (s *BillService) Stats(ctx context.Context, groupBy, month string) (BillSta
 	if err != nil {
 		return BillStats{}, err
 	}
-	rows, err := s.bills.Stats(ctx, groupBy, month)
+	rows, err := s.bills.Stats(ctx, q.GroupBy, q.Month, q.From, q.To)
 	if err != nil {
 		return BillStats{}, err
 	}
@@ -598,7 +623,7 @@ func (s *BillService) Stats(ctx context.Context, groupBy, month string) (BillSta
 		out = append(out, *m)
 	}
 	// Time groupings stay chronological (recent first); the rest rank by spend.
-	if groupBy == "month" || groupBy == "week" {
+	if q.GroupBy == "month" || q.GroupBy == "week" {
 		sort.Slice(out, func(i, j int) bool { return out[i].Label > out[j].Label })
 	} else {
 		sort.Slice(out, func(i, j int) bool { return out[i].TotalCents > out[j].TotalCents })
