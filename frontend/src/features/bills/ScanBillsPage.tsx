@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { billsApi } from '../../api/bills';
 import { settingsApi } from '../../api/settings';
 import { accountsApi } from '../../api/accounts';
@@ -11,7 +11,7 @@ import type { Bill, BillDraft, BillScan } from '../../types/domain';
 import { useAsync } from '../../hooks/useAsync';
 import { usePolling } from '../../hooks/usePolling';
 import { formatCents } from '../../lib/money';
-import { Button, Card, Spinner, ErrorMessage } from '../../components/ui';
+import { Button, Card, Spinner, ErrorMessage, Dialog } from '../../components/ui';
 import {
   BillDraftEditor,
   buildConfirmInput,
@@ -57,6 +57,9 @@ export function ScanBillsPage() {
   const [error, setError] = useState<string | null>(null);
   // Summary of the last batch of uploads (capture phase only).
   const [uploadResults, setUploadResults] = useState<UploadOutcome[]>([]);
+  // Shown after a re-read is enqueued: analysis runs in the background.
+  const [rereadSent, setRereadSent] = useState(false);
+  const navigate = useNavigate();
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -193,14 +196,27 @@ export function ScanBillsPage() {
     setBusy('extract');
     setError(null);
     try {
-      const result = await billsApi.reextract(scan.scan_token, firstProvider?.id);
-      setScan(result);
-      setDraft(null); // replaces any in-progress edits
-      setPhase('analyzing');
+      await billsApi.reextract(scan.scan_token, firstProvider?.id);
+      // Analysis continues in the background — confirm via dialog, then the
+      // user goes where the result will be (or stays to upload more).
+      setRereadSent(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Re-read failed.');
     } finally {
       setBusy(null);
+    }
+  }
+
+  // Deep-linked from the bills view (?token=…) → OK returns there; a user in
+  // the middle of an upload session stays on the scan page.
+  const rereadReturnsToBills = searchParams.has('token');
+
+  function dismissReread() {
+    setRereadSent(false);
+    if (rereadReturnsToBills) {
+      navigate('/bills');
+    } else {
+      reset(); // back to capture — the user may want to upload more receipts
     }
   }
 
@@ -374,6 +390,21 @@ export function ScanBillsPage() {
             </Link>
           </div>
         </Card>
+      )}
+
+      {rereadSent && (
+        <Dialog title="Re-read request sent">
+          <p className="hint-text">
+            The receipt has been queued for analysis in the background — this
+            can take a few minutes.{' '}
+            {rereadReturnsToBills
+              ? "The result will appear under Bills & analysis once it's ready."
+              : 'You can keep uploading receipts in the meantime — the result will appear under Bills & analysis.'}
+          </p>
+          <div className="dialog-actions">
+            <Button onClick={dismissReread}>OK</Button>
+          </div>
+        </Dialog>
       )}
     </div>
   );

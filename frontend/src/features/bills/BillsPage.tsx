@@ -7,7 +7,7 @@ import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
 import type { Bill, BillDraft } from '../../types/domain';
 import { formatCents, currentMonth } from '../../lib/money';
-import { Card, Spinner, ErrorMessage, EmptyState, Button, ItemPanels } from '../../components/ui';
+import { Card, Spinner, ErrorMessage, EmptyState, Button, ItemPanels, Dialog } from '../../components/ui';
 import { BillDraftEditor, buildConfirmInput } from './BillDraftEditor';
 import { BillDraftView } from './BillDraftView';
 
@@ -24,6 +24,8 @@ export function BillsPage() {
   const scans = useAsync(() => billsApi.listScans(), []);
   const [scanBusyToken, setScanBusyToken] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  // Dialog: a re-read was enqueued; the result arrives in this list later.
+  const [rereadSent, setRereadSent] = useState(false);
   const hasAnalyzing = (scans.data ?? []).some((s) => s.status === 'analyzing');
 
   useEffect(() => {
@@ -38,6 +40,7 @@ export function BillsPage() {
     setScanError(null);
     try {
       await billsApi.reextract(token);
+      setRereadSent(true);
       scans.reload();
     } catch (err) {
       setScanError(err instanceof Error ? err.message : 'Retry failed.');
@@ -211,7 +214,16 @@ export function BillsPage() {
                   </span>
                 </summary>
                 <div className="item-detail">
-                  {scan.status === 'analyzing' && <Spinner label="Reading the receipt…" />}
+                  {scan.status === 'analyzing' && (
+                    <>
+                      <Spinner label="Reading the receipt…" />
+                      <p className="hint-text">
+                        Analysis runs in the background and can take a few
+                        minutes — you can leave this page and check back later;
+                        the draft appears here once it's ready.
+                      </p>
+                    </>
+                  )}
                   {scan.status === 'failed' && (
                     <>
                       <ErrorMessage message={scan.error || 'Analysis failed.'} />
@@ -330,6 +342,19 @@ export function BillsPage() {
             </details>
           ))}
         </ItemPanels>
+      )}
+
+      {rereadSent && (
+        <Dialog title="Re-read request sent">
+          <p className="hint-text">
+            The receipt has been queued for analysis in the background — this
+            can take a few minutes. The result appears in this list once it's
+            ready.
+          </p>
+          <div className="dialog-actions">
+            <Button onClick={() => setRereadSent(false)}>OK</Button>
+          </div>
+        </Dialog>
       )}
     </div>
   );

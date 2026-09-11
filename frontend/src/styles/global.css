@@ -1033,3 +1033,4 @@ select:focus,
   text-align: center;
   min-width: 0;
 }
+.dialog-backdrop{position:fixed;inset:0;background:rgb(16 24 40/.5);display:flex;align-items:center;justify-content:center;padding:1rem;z-index:100}.dialog{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);max-width:420px;width:100%;padding:1.1rem 1.25rem}.dialog-title{margin:0 0 .4rem;font-size:1.05rem}.dialog-actions{display:flex;justify-content:flex-end;margin-top:1rem}
