@@ -497,6 +497,46 @@ func TestGetScanUnknownTokenIsNotFound(t *testing.T) {
 	}
 }
 
+// --- worker resilience ---------------------------------------------------------
+
+func TestWorkerSurvivesExtractorPanic(t *testing.T) {
+	var calls atomic.Int64
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+		if calls.Add(1) == 1 {
+			panic("boom in extraction")
+		}
+		return domain.BillDraft{MarketName: "M", TotalCents: 1, Currency: "EUR"}, nil
+	})
+	ctx := context.Background()
+
+	first, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan 1: %v", err)
+	}
+	// The panicking extraction must land as a failed scan the user can retry…
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, first.ScanToken)
+		return err == nil && row.Status == domain.BillScanFailed
+	})
+	row, _ := scanStore.GetByToken(ctx, first.ScanToken)
+	if !strings.Contains(row.Error, "internal error") {
+		t.Fatalf("expected the panic to be recorded as an internal error, got %q", row.Error)
+	}
+
+	// …and the worker must survive to process the next upload.
+	second, err := svc.Scan(ctx, "image/jpeg", []byte("another-fake-jpeg"), "")
+	if err != nil {
+		t.Fatalf("Scan 2: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, second.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	if calls.Load() != 2 {
+		t.Fatalf("expected the extractor to run twice, ran %d times", calls.Load())
+	}
+}
+
 // --- store find-or-create on confirm/update ----------------------------------
 
 func TestConfirmFindOrCreatesStore(t *testing.T) {

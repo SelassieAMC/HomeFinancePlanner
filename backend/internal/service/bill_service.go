@@ -153,6 +153,8 @@ func NewBillService(
 		s.wg.Add(1)
 		go s.runWorker(ctx, i)
 	}
+	s.wg.Add(1)
+	go s.runSweeper(ctx)
 	return s
 }
 
@@ -288,7 +290,11 @@ func (s *BillService) Reextract(ctx context.Context, token, providerID string) (
 		return domain.BillScan{}, validationError("scan is currently being analyzed — wait for it to finish")
 	}
 
-	s.enqueue(token)
+	if !s.enqueue(token) {
+		// Queue full: the row stays analyzing and the sweeper re-enqueues it
+		// within minutes — but say so, the retry is not immediate.
+		s.log.Warn("reextract dropped by full queue", "token", token)
+	}
 	return domain.BillScan{
 		ScanToken:  token,
 		Status:     domain.BillScanAnalyzing,
@@ -843,6 +849,23 @@ func (s *BillService) recoverScans(ctx context.Context) {
 	}
 	if len(pending) > 0 {
 		s.log.Info("recovered analyzing scans", "count", len(pending))
+	}
+}
+
+// runSweeper periodically runs the stale-scan maintenance so recovery does not
+// depend on someone uploading a new receipt: a stranded "analyzing" row (lost
+// enqueue, lost worker) is re-enqueued even on a quiet instance.
+func (s *BillService) runSweeper(ctx context.Context) {
+	defer s.wg.Done()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.sweepStaleScans()
+		}
 	}
 }
 
