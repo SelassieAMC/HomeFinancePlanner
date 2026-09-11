@@ -283,7 +283,7 @@ func newTestBillService(t *testing.T, extractFn func(context.Context, []byte, st
 		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
 		passthroughBox{}, extractor)
 	svc := NewBillService(billStore, scanStore, extractor, settings,
-		nil, catStore, storeStore, nil, nil, nil, t.TempDir(), 5*time.Second, nil)
+		newFakeAccountStore(), catStore, storeStore, nil, newFakeTxStore(), nil, t.TempDir(), 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, storeStore, catStore
 }
@@ -961,6 +961,59 @@ func TestBuildBillCurrency(t *testing.T) {
 		if _, err := svc.buildBill(ctx, domain.BillConfirmInput{MarketName: "REWE", Currency: bad}, &billScanSource{}); !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("buildBill(currency=%q) error = %v, want domain.ErrValidation", bad, err)
 		}
+	}
+}
+
+func TestConfirmWithoutAccountRecordsOnWallet(t *testing.T) {
+	accounts := newFakeAccountStore()
+	txs := newFakeTxStore()
+	svc, scanStore, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "REWE"}, nil
+		})
+	ctx := context.Background()
+
+	first := scanUntilDone(t, svc, scanStore)
+	bill, err := svc.Confirm(ctx, first.ScanToken, domain.BillConfirmInput{MarketName: "REWE", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+
+	// The wallet account is created lazily: cash, base currency.
+	wallets, _ := accounts.List(ctx)
+	if len(wallets) != 1 {
+		t.Fatalf("expected one lazily created wallet account, got %d", len(wallets))
+	}
+	w := wallets[0]
+	if w.Name != walletAccountName || w.Type != domain.AccountCash || w.Currency != "EUR" {
+		t.Fatalf("wallet account = %+v, want Wallet/cash/EUR", w)
+	}
+	// The bill's expense is recorded against it, in the bill's currency.
+	tx := txs.items[1]
+	if tx.AccountID != w.ID || tx.Currency != "EUR" || tx.AmountCents != bill.TotalCents {
+		t.Fatalf("wallet transaction = %+v, want account %d EUR %d", tx, w.ID, bill.TotalCents)
+	}
+
+	// A second account-less confirm reuses the wallet, not a new account.
+	secondImage := []byte("another-fake-jpeg")
+	res, err := svc.Scan(ctx, "image/jpeg", secondImage, "")
+	if err != nil {
+		t.Fatalf("Scan 2: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	if _, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{MarketName: "Netto", Currency: "EUR"}); err != nil {
+		t.Fatalf("Confirm 2: %v", err)
+	}
+	wallets, _ = accounts.List(ctx)
+	if len(wallets) != 1 {
+		t.Fatalf("expected the wallet to be reused, got %d accounts", len(wallets))
+	}
+	if len(txs.items) != 2 {
+		t.Fatalf("expected two wallet transactions, got %d", len(txs.items))
 	}
 }
 

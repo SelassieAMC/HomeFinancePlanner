@@ -346,11 +346,11 @@ export function BillDraftEditor({
           <span className="stat-card-label">💳 Account</span>
           <select
             value={accountChoice}
-            aria-label="Account to record the expense (optional)"
+            aria-label="Account to record the expense (wallet by default)"
             onChange={(e) => setAccountChoice(e.target.value)}
             disabled={isBusy}
           >
-            <option value="">No transaction</option>
+            <option value="">👛 Wallet (default)</option>
             {draft.card_last_digits && (
               <option value="__new_card__">New card (•{draft.card_last_digits})</option>
             )}

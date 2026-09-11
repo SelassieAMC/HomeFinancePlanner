@@ -302,9 +302,11 @@ func (s *BillService) Reextract(ctx context.Context, token, providerID string) (
 	}, nil
 }
 
-// Confirm persists the (user-corrected) draft as an accepted bill and, with
-// an AccountID, records one expense transaction for the printed total. The
-// scan row is deleted; the receipt file stays as the permanent record.
+// Confirm persists the (user-corrected) draft as an accepted bill and records
+// one expense transaction for the printed total. A bill confirmed without an
+// account was paid with wallet money: it lands on the default wallet account
+// instead, so it still shows in the dashboard totals. The scan row is deleted;
+// the receipt file stays as the permanent record.
 func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillConfirmInput) (domain.Bill, error) {
 	scan, err := s.scans.GetByToken(ctx, token)
 	if err != nil {
@@ -330,26 +332,33 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 		return domain.Bill{}, err
 	}
 
+	accountID := int64(0)
 	if in.AccountID != nil && *in.AccountID > 0 {
 		if _, err := s.accounts.GetByID(ctx, *in.AccountID); err != nil {
 			return domain.Bill{}, fmt.Errorf("validate account_id: %w", err)
 		}
-		description := billDescription(bill)
-		txRow, err := s.txStore.Create(ctx, domain.Transaction{
-			AccountID:   *in.AccountID,
-			Kind:        domain.TransactionExpense,
-			AmountCents: bill.TotalCents,
-			Currency:    bill.Currency,
-			Description: description,
-			Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
-		})
-		if err != nil {
-			return domain.Bill{}, fmt.Errorf("record bill transaction: %w", err)
-		}
-		// Link the transaction so later bill edits keep it in sync.
-		if err := s.bills.SetTransaction(ctx, created.ID, txRow.ID); err != nil {
-			return domain.Bill{}, err
-		}
+		accountID = *in.AccountID
+	} else if walletID, err := s.ensureWalletAccount(ctx); err != nil {
+		return domain.Bill{}, fmt.Errorf("ensure default wallet account: %w", err)
+	} else {
+		accountID = walletID
+	}
+
+	description := billDescription(bill)
+	txRow, err := s.txStore.Create(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: bill.TotalCents,
+		Currency:    bill.Currency,
+		Description: description,
+		Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
+	})
+	if err != nil {
+		return domain.Bill{}, fmt.Errorf("record bill transaction: %w", err)
+	}
+	// Link the transaction so later bill edits keep it in sync.
+	if err := s.bills.SetTransaction(ctx, created.ID, txRow.ID); err != nil {
+		return domain.Bill{}, err
 	}
 
 	// The bill exists — consume the scan row. (Deleting after Create keeps a
@@ -668,6 +677,37 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		StoreID:            storeID,
 		Items:              items,
 	}, nil
+}
+
+// walletAccountName is the default cash account bills are recorded against
+// when the user doesn't pick one — it represents wallet money.
+const walletAccountName = "Wallet"
+
+// ensureWalletAccount finds the default wallet account (case-insensitive) or
+// lazily creates it as a cash account in the base currency.
+func (s *BillService) ensureWalletAccount(ctx context.Context) (int64, error) {
+	accounts, err := s.accounts.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("load accounts: %w", err)
+	}
+	for _, a := range accounts {
+		if strings.EqualFold(a.Name, walletAccountName) {
+			return a.ID, nil
+		}
+	}
+	base, err := s.providers.BaseCurrency(ctx)
+	if err != nil {
+		return 0, err
+	}
+	created, err := s.accounts.Create(ctx, domain.Account{
+		Name:     walletAccountName,
+		Type:     domain.AccountCash,
+		Currency: base,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("create wallet account: %w", err)
+	}
+	return created.ID, nil
 }
 
 // resolveStore links the bill to a store matched case-insensitively on the
