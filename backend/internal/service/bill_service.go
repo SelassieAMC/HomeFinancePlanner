@@ -30,6 +30,7 @@ type BillStore interface {
 	Create(ctx context.Context, b domain.Bill) (domain.Bill, error)
 	Update(ctx context.Context, b domain.Bill) (domain.Bill, error)
 	SetTransaction(ctx context.Context, billID, txID int64) error
+	Delete(ctx context.Context, id int64) error
 	GetByID(ctx context.Context, id int64) (domain.Bill, error)
 	GetByFileHash(ctx context.Context, hash string) (domain.Bill, error)
 	List(ctx context.Context, f domain.BillFilters) ([]domain.Bill, error)
@@ -505,6 +506,36 @@ func (s *BillService) DiscardScan(ctx context.Context, token string) error {
 
 func (s *BillService) Get(ctx context.Context, id int64) (domain.Bill, error) {
 	return s.bills.GetByID(ctx, id)
+}
+
+// Delete removes a confirmed bill for good: the bill with its item lines, the
+// expense transaction recorded at confirm time, and the stored receipt file.
+// The bill row is deleted first; the transaction and file cleanup afterwards
+// are best-effort (warn on failure) so a retry never hits a 404 on an already
+// deleted bill.
+func (s *BillService) Delete(ctx context.Context, id int64) error {
+	bill, err := s.bills.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.bills.Delete(ctx, id); err != nil {
+		return err
+	}
+
+	if bill.TransactionID != nil {
+		if err := s.txStore.Delete(ctx, *bill.TransactionID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			s.log.Warn("bill deleted but its transaction remains",
+				"bill_id", id, "transaction_id", *bill.TransactionID, "error", err)
+		}
+	}
+
+	if bill.ImagePath != "" {
+		if err := os.Remove(bill.ImagePath); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("bill deleted but its receipt file remains",
+				"bill_id", id, "path", bill.ImagePath, "error", err)
+		}
+	}
+	return nil
 }
 
 func (s *BillService) List(ctx context.Context, f domain.BillFilters) ([]domain.Bill, error) {

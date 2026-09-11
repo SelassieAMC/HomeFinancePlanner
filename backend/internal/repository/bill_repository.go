@@ -141,6 +141,36 @@ func (r *BillRepository) SetTransaction(ctx context.Context, billID, txID int64)
 	return nil
 }
 
+// Delete removes a bill and its item lines in one transaction. The linked
+// expense transaction (if any) is left untouched — the service decides its
+// fate. Returns domain.ErrNotFound when the bill does not exist.
+func (r *BillRepository) Delete(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin bill delete: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bill_items WHERE bill_id = ?`, id); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("delete bill items: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM bills WHERE id = ?`, id)
+	if err != nil {
+		tx.Rollback()
+		return mapWriteError("delete bill", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		tx.Rollback()
+		return domain.ErrNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit bill delete: %w", err)
+	}
+	return nil
+}
+
 // GetByFileHash returns the saved bill carrying this receipt hash (without
 // items), or domain.ErrNotFound. Used to reject re-uploads of a receipt that
 // has already been processed.

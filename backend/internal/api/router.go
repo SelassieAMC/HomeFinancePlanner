@@ -63,6 +63,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("GET /api/v1/bills", billH.List)
 	mux.HandleFunc("GET /api/v1/bills/{id}", billH.Get)
 	mux.HandleFunc("PUT /api/v1/bills/{id}", billH.Update)
+	mux.HandleFunc("DELETE /api/v1/bills/{id}", billH.Delete)
 	// /image/{id} rather than /{id}/image: a 3-segment wildcard route next to
 	// /bills/scan/{token} (e.g. /{id}/image) is ambiguous with it in ServeMux
 	// (".../scan/image" matches both, neither more specific).

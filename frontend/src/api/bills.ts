@@ -57,6 +57,9 @@ export const billsApi = {
   /** Apply corrections to a saved bill (same payload as confirm). */
   update: (id: number, input: BillConfirmInput) =>
     apiClient.put<Bill>(`${BASE}/bills/${id}`, input),
+  /** Remove a confirmed bill for good: its lines, the linked expense
+   *  transaction, and the stored receipt file. */
+  remove: (id: number) => apiClient.delete(`${BASE}/bills/${id}`),
   stats: (groupBy: BillStatsGroupBy, month?: string) => {
     const params = new URLSearchParams({ group_by: groupBy });
     if (month) params.set('month', month);

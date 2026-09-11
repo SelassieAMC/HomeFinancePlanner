@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -194,6 +196,17 @@ func (f *fakeBillStore) SetTransaction(_ context.Context, billID, txID int64) er
 		if f.items[i].ID == billID {
 			id := txID
 			f.items[i].TransactionID = &id
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+func (f *fakeBillStore) Delete(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		if f.items[i].ID == id {
+			f.items = append(f.items[:i], f.items[i+1:]...)
 			return nil
 		}
 	}
@@ -859,6 +872,9 @@ func (f *fakeTxStore) Update(_ context.Context, t domain.Transaction) (domain.Tr
 func (f *fakeTxStore) Delete(_ context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.items[id]; !ok {
+		return domain.ErrNotFound
+	}
 	delete(f.items, id)
 	return nil
 }
@@ -1381,5 +1397,77 @@ func TestStatsMergesCurrenciesIntoBase(t *testing.T) {
 	}
 	if len(stats.ConversionWarnings) != 1 || stats.ConversionWarnings[0] != "JPY" {
 		t.Errorf("ConversionWarnings = %v, want [JPY]", stats.ConversionWarnings)
+	}
+}
+
+func TestDeleteBillRemovesTransactionAndImage(t *testing.T) {
+	accounts := newFakeAccountStore()
+	txs := newFakeTxStore()
+	svc, _, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, nil
+		})
+	ctx := context.Background()
+
+	created, err := txs.Create(ctx, domain.Transaction{Description: "ALDI", Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := filepath.Join(t.TempDir(), "receipt.jpg")
+	if err := os.WriteFile(receipt, []byte("fake jpeg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	billStore.items = []domain.Bill{{
+		ID: 7, MarketName: "ALDI", Currency: "EUR", Status: domain.BillStatusAccepted,
+		TransactionID: &created.ID, ImagePath: receipt,
+	}}
+
+	if err := svc.Delete(ctx, 7); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(billStore.items) != 0 {
+		t.Errorf("billStore.items = %+v, want empty", billStore.items)
+	}
+	if _, err := txs.GetByID(ctx, created.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("linked transaction still present: %v", err)
+	}
+	if _, err := os.Stat(receipt); !os.IsNotExist(err) {
+		t.Errorf("receipt file still present (stat err = %v)", err)
+	}
+}
+
+func TestDeleteMissingBillFails(t *testing.T) {
+	svc, _, _, _ := newTestBillServiceCustom(t, nil, nil, nil, nil,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, nil
+		})
+	if err := svc.Delete(context.Background(), 999); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Delete of unknown bill = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteBillToleratesVanishedTransaction(t *testing.T) {
+	accounts := newFakeAccountStore()
+	txs := newFakeTxStore()
+	svc, _, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, nil
+		})
+	ctx := context.Background()
+
+	// Linked to a transaction that was already deleted by hand.
+	txID := int64(42)
+	billStore.items = []domain.Bill{{
+		ID: 3, MarketName: "ALDI", Currency: "EUR", Status: domain.BillStatusAccepted,
+		TransactionID: &txID,
+	}}
+
+	if err := svc.Delete(ctx, 3); err != nil {
+		t.Fatalf("Delete with vanished transaction: %v", err)
+	}
+	if len(billStore.items) != 0 {
+		t.Errorf("billStore.items = %+v, want empty", billStore.items)
 	}
 }

@@ -215,6 +215,21 @@ func (h *BillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, bill)
 }
 
+// Delete removes a confirmed bill for good: the bill with its item lines,
+// the linked expense transaction, and the stored receipt file.
+func (h *BillHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.Svc.Delete(r.Context(), id); err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Stats aggregates accepted bills by market, month, week, item or category,
 // converted into the user's base currency.
 func (h *BillHandler) Stats(w http.ResponseWriter, r *http.Request) {

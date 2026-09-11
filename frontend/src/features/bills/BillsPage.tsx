@@ -84,6 +84,10 @@ export function BillsPage() {
   const [editDraft, setEditDraft] = useState<BillDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Delete flow: the dialog asks for confirmation before the destructive call.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const detailMonth = detail?.date ? detail.date.slice(0, 7) : '';
   const budgets = useAsync(
@@ -120,6 +124,24 @@ export function BillsPage() {
       setEditError(err instanceof Error ? err.message : 'Failed to save the bill.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function confirmDeleteBill() {
+    if (confirmDeleteId === null) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await billsApi.remove(confirmDeleteId);
+      setConfirmDeleteId(null);
+      setExpandedId(null);
+      setDetail(null);
+      bills.reload();
+      stats.reload();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete the bill.');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -291,6 +313,8 @@ export function BillsPage() {
                   setExpandedId(null);
                   setDetail(null);
                   setDetailError(null);
+                  setConfirmDeleteId(null);
+                  setDeleteError(null);
                 }
               }}
             >
@@ -343,6 +367,15 @@ export function BillsPage() {
                           >
                             ✏️ Edit bill
                           </Button>
+                          <Button
+                            variant="danger"
+                            onClick={() => {
+                              setDeleteError(null);
+                              setConfirmDeleteId(bill.id);
+                            }}
+                          >
+                            🗑️ Delete bill
+                          </Button>
                         </div>
                       </>
                     )
@@ -362,6 +395,26 @@ export function BillsPage() {
           </p>
           <div className="dialog-actions">
             <Button onClick={() => setRereadSent(false)}>OK</Button>
+          </div>
+        </Dialog>
+      )}
+
+      {confirmDeleteId !== null && detail && detail.id === confirmDeleteId && (
+        <Dialog title="Delete bill?">
+          <p className="hint-text">
+            This permanently removes “{detail.market_name || 'Unknown market'}” (
+            {formatCents(detail.total_cents, detail.currency)}) — its articles,
+            the recorded expense transaction, and the stored receipt image. This
+            cannot be undone.
+          </p>
+          {deleteError && <ErrorMessage message={deleteError} />}
+          <div className="dialog-actions">
+            <Button variant="secondary" disabled={deleting} onClick={() => setConfirmDeleteId(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" disabled={deleting} onClick={confirmDeleteBill}>
+              {deleting ? 'Deleting…' : '🗑️ Delete'}
+            </Button>
           </div>
         </Dialog>
       )}
