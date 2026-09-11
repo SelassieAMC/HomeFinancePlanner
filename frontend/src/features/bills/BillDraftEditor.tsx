@@ -162,6 +162,9 @@ export function BillDraftEditor({
   const [accountChoice, setAccountChoice] = useState<string | null>(null);
   // Item id currently typing a brand-new brand ('__custom__' selected).
   const [customBrandItem, setCustomBrandItem] = useState<number | null>(null);
+  // Item id of a just-added line — its panel renders open with the name
+  // field focused, so the user can correct a missed article immediately.
+  const [addedItemId, setAddedItemId] = useState<number | null>(null);
   // True while typing a market name that is not an existing store.
   const [customMarket, setCustomMarket] = useState(false);
 
@@ -287,6 +290,35 @@ export function BillDraftEditor({
   /** Drops a line from the draft (wrong extraction, duplicated, …). */
   function removeItem(id: number) {
     onChange({ ...draft, items: draft.items.filter((it) => it.id !== id) });
+    if (addedItemId === id) setAddedItemId(null);
+  }
+
+  /**
+   * Appends an empty line so the user can restore an article the extraction
+   * missed or misread. Draft line ids are session-local, so the next free
+   * number never collides with extracted lines (or saved-bill row ids).
+   */
+  function addItem() {
+    const id = draft.items.reduce((max, it) => Math.max(max, it.id), 0) + 1;
+    onChange({
+      ...draft,
+      items: [
+        ...draft.items,
+        {
+          id,
+          name: '',
+          category_id: null,
+          quantity: 1,
+          unit_price_cents: 0,
+          discount_cents: 0,
+          line_total_cents: 0,
+          budget_id: null,
+        },
+      ],
+    });
+    // Drop any active search so the new line is immediately visible.
+    setSearch('');
+    setAddedItemId(id);
   }
 
   function confirm() {
@@ -468,16 +500,26 @@ export function BillDraftEditor({
         aria-label="Filter articles"
       />
 
+      <div className="bill-actions">
+        <Button variant="secondary" onClick={addItem} disabled={isBusy}>
+          ＋ Add article
+        </Button>
+      </div>
+
       {busy === 'extract' ? (
         <Spinner label="Re-reading the receipt…" />
       ) : draft.items.length === 0 ? (
-        <EmptyState message="No articles were extracted from this receipt — correct the VAT below and confirm." />
+        <EmptyState message="No articles were extracted from this receipt — add missing ones with “Add article”, correct the VAT below, or re-read." />
       ) : visibleItems.length === 0 ? (
         <EmptyState message={`No articles match “${search}”.`} />
       ) : (
         <div className="item-panels">
           {visibleItems.map((it) => (
-            <details className="item-panel" key={it.id}>
+            <details
+              className="item-panel"
+              key={it.id}
+              open={addedItemId === it.id ? true : undefined}
+            >
               <summary>
                 <span
                   className="item-icon"
@@ -492,7 +534,7 @@ export function BillDraftEditor({
                   {it.is_return ? '♻️' : itemIcon(it.category_id, categories)}
                 </span>
                 <span className="item-title">
-                  <span className="item-name">{it.name}</span>
+                  <span className="item-name">{it.name || 'New article'}</span>
                   {it.is_return ? (
                     <span className="item-brand">♻️ deposit return</span>
                   ) : (
@@ -520,6 +562,8 @@ export function BillDraftEditor({
                   <input
                     className="cell-input cell-input-name"
                     defaultValue={it.name}
+                    autoFocus={addedItemId === it.id}
+                    placeholder="Article name"
                     aria-label="Article name"
                     onBlur={(e) =>
                       e.target.value.trim() !== it.name &&
