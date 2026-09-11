@@ -5,6 +5,7 @@ import { summaryApi } from '../../api/summary';
 import { categoriesApi } from '../../api/categories';
 import type { Budget } from '../../types/domain';
 import { formatCents, currentMonth } from '../../lib/money';
+import { categoriesBySection } from '../../lib/categories';
 import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
 export function BudgetsPage() {
@@ -79,13 +80,15 @@ export function BudgetsPage() {
           />
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
             <option value="">Category…</option>
-            {(categories.data ?? [])
-              .filter((c) => (c.kind ?? 'expense') === 'expense')
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.icon ? `${c.icon} ${c.name}` : c.name}
-                </option>
-              ))}
+            {categoriesBySection(categories.data ?? [], 'expense').map(([section, cats]) => (
+              <optgroup key={section} label={section}>
+                {cats.map((c) => (
+                  <option key={c.id} value={c.id} title={c.description}>
+                    {c.icon ? `${c.icon} ${c.name}` : c.name}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
           </select>
           <input
             placeholder={`Monthly limit (${currency})`}

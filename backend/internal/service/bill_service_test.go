@@ -258,9 +258,12 @@ func (f *fakeBillExtractor) TestConnection(context.Context, domain.AIProvider) e
 // only needs List (returning an empty taxonomy).
 // fakeCategoryStore is a CategoryStore stub seeded from a map (nil = empty
 // taxonomy; GetByID then misses for every id).
-type fakeCategoryStore struct{ cats map[int64]domain.Category }
+type fakeCategoryStore struct {
+	cats map[int64]domain.Category
+	list []domain.Category // returned by List (nil = empty taxonomy)
+}
 
-func (f fakeCategoryStore) List(context.Context) ([]domain.Category, error) { return nil, nil }
+func (f fakeCategoryStore) List(context.Context) ([]domain.Category, error) { return f.list, nil }
 func (f fakeCategoryStore) GetByID(_ context.Context, id int64) (domain.Category, error) {
 	if c, ok := f.cats[id]; ok {
 		return c, nil
@@ -823,6 +826,40 @@ func TestBuildBillRejectsNegativeForNormalCategory(t *testing.T) {
 }
 
 func ptrInt64(v int64) *int64 { return &v }
+
+func TestResolveDraftCategoriesNewTaxonomyAliases(t *testing.T) {
+	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	catStore.list = []domain.Category{
+		{ID: 1, Name: "Fuel & Gasoline", Kind: "product"},
+		{ID: 2, Name: "Car Oils & Fluids", Kind: "product"},
+		{ID: 3, Name: "Oils & Vinegars", Kind: "product"},
+	}
+	ctx := context.Background()
+
+	draft := domain.BillDraft{Items: []domain.BillItemDraft{
+		{Name: "Super E10", CategoryName: "Petrol"},
+		{Name: "Motor oil 5W30", CategoryName: "Motor Oil"},
+		{Name: "Olive oil", CategoryName: "oil"}, // cooking oil: 'oil' is NOT a car alias
+		{Name: "Mystery line", CategoryName: "Unmapped Thing"},
+	}}
+	if err := svc.resolveDraftCategories(ctx, &draft); err != nil {
+		t.Fatalf("resolveDraftCategories: %v", err)
+	}
+	if got := draft.Items[0].CategoryID; got == nil || *got != 1 {
+		t.Fatalf("expected alias 'Petrol' to resolve to Fuel & Gasoline (1), got %v", got)
+	}
+	if got := draft.Items[1].CategoryID; got == nil || *got != 2 {
+		t.Fatalf("expected alias 'Motor Oil' to resolve to Car Oils & Fluids (2), got %v", got)
+	}
+	if draft.Items[2].CategoryID != nil {
+		t.Fatalf("expected bare 'oil' to stay unmatched (cooking oil), got %v", *draft.Items[2].CategoryID)
+	}
+	if draft.Items[3].CategoryID != nil {
+		t.Fatalf("expected unknown category to stay unmatched, got %v", *draft.Items[3].CategoryID)
+	}
+}
 
 // --- currency handling --------------------------------------------------------
 

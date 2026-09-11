@@ -5,6 +5,7 @@ import { accountsApi } from '../../api/accounts';
 import { categoriesApi } from '../../api/categories';
 import type { Transaction, TransactionKind } from '../../types/domain';
 import { formatCents, currentMonth } from '../../lib/money';
+import { categoriesBySection } from '../../lib/categories';
 import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
 export function TransactionsPage() {
@@ -108,10 +109,14 @@ export function TransactionsPage() {
           </select>
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
             <option value="">Category…</option>
-            {(categories.data ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
+            {categoriesBySection(categories.data ?? [], 'expense').map(([section, cats]) => (
+              <optgroup key={section} label={section}>
+                {cats.map((c) => (
+                  <option key={c.id} value={c.id} title={c.description}>
+                    {c.icon ? `${c.icon} ${c.name}` : c.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
           <input

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Store } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
+import { categoriesBySection } from '../../lib/categories';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
@@ -182,17 +183,7 @@ export function BillDraftEditor({
 
   // Product storage categories grouped by section for the <select> optgroups
   // (general expense categories are budget-level and stay out of item picks).
-  const sections = useMemo(() => {
-    const map = new Map<string, Category[]>();
-    for (const c of categories) {
-      if ((c.kind ?? 'product') !== 'product') continue;
-      const key = c.section || 'Other';
-      const list = map.get(key) ?? [];
-      if (!map.has(key)) map.set(key, list);
-      list.push(c);
-    }
-    return [...map.entries()];
-  }, [categories]);
+  const sections = useMemo(() => categoriesBySection(categories, 'product'), [categories]);
 
   // Brand dropdown options: known brands from saved bills plus every brand
   // already typed in this draft.
