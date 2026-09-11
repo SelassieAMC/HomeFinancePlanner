@@ -322,6 +322,12 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 		return domain.Bill{}, validationError("analysis failed — retry or discard the scan")
 	}
 
+	account, err := s.resolveBillAccount(ctx, in)
+	if err != nil {
+		return domain.Bill{}, err
+	}
+	applyAccountPaymentRules(&in, account)
+
 	bill, err := s.buildBill(ctx, in, &billScanSource{imagePath: scan.ImagePath, providerID: scan.ProviderID, fileHash: scan.FileHash})
 	if err != nil {
 		return domain.Bill{}, err
@@ -332,32 +338,7 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 		return domain.Bill{}, err
 	}
 
-	accountID := int64(0)
-	if in.AccountID != nil && *in.AccountID > 0 {
-		if _, err := s.accounts.GetByID(ctx, *in.AccountID); err != nil {
-			return domain.Bill{}, fmt.Errorf("validate account_id: %w", err)
-		}
-		accountID = *in.AccountID
-	} else if walletID, err := s.ensureWalletAccount(ctx); err != nil {
-		return domain.Bill{}, fmt.Errorf("ensure default wallet account: %w", err)
-	} else {
-		accountID = walletID
-	}
-
-	description := billDescription(bill)
-	txRow, err := s.txStore.Create(ctx, domain.Transaction{
-		AccountID:   accountID,
-		Kind:        domain.TransactionExpense,
-		AmountCents: bill.TotalCents,
-		Currency:    bill.Currency,
-		Description: description,
-		Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
-	})
-	if err != nil {
-		return domain.Bill{}, fmt.Errorf("record bill transaction: %w", err)
-	}
-	// Link the transaction so later bill edits keep it in sync.
-	if err := s.bills.SetTransaction(ctx, created.ID, txRow.ID); err != nil {
+	if err := s.recordBillTransaction(ctx, created.ID, bill, account.ID); err != nil {
 		return domain.Bill{}, err
 	}
 
@@ -371,11 +352,24 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 
 // Update applies user corrections to an already-saved bill. The total is
 // recomputed from the edited lines exactly as at confirm time, and the linked
-// expense transaction (if any) is kept in sync.
+// expense transaction (if any) is kept in sync — including re-pointing it when
+// the request carries a new account_id. A bill that never got a transaction
+// (e.g. confirmed before accounts existed) gets one created here as soon as an
+// account is given.
 func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfirmInput) (domain.Bill, error) {
 	existing, err := s.bills.GetByID(ctx, id)
 	if err != nil {
 		return domain.Bill{}, err
+	}
+
+	// nil account_id = "leave the account as it is" (older payloads); an
+	// explicit id re-points the expense transaction.
+	var account domain.Account
+	if in.AccountID != nil && *in.AccountID > 0 {
+		if account, err = s.accounts.GetByID(ctx, *in.AccountID); err != nil {
+			return domain.Bill{}, fmt.Errorf("validate account_id: %w", err)
+		}
+		applyAccountPaymentRules(&in, account)
 	}
 
 	source := &billScanSource{imagePath: existing.ImagePath, providerID: existing.ExtractedBy, fileHash: existing.FileHash}
@@ -387,17 +381,73 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 	bill.CreatedAt = existing.CreatedAt
 	bill.TransactionID = existing.TransactionID
 
-	updated, err := s.bills.Update(ctx, bill)
-	if err != nil {
+	if _, err := s.bills.Update(ctx, bill); err != nil {
 		return domain.Bill{}, err
 	}
 
 	if existing.TransactionID != nil {
-		if err := s.syncBillTransaction(ctx, *existing.TransactionID, bill); err != nil {
+		if err := s.syncBillTransaction(ctx, *existing.TransactionID, bill, account.ID); err != nil {
+			return domain.Bill{}, err
+		}
+	} else if account.ID > 0 {
+		// Pre-account bill now knows where the money came from — record the
+		// missing expense transaction and link it.
+		if err := s.recordBillTransaction(ctx, id, bill, account.ID); err != nil {
 			return domain.Bill{}, err
 		}
 	}
-	return updated, nil
+	// Re-read so the response reflects the (possibly re-pointed or newly
+	// linked) transaction's account.
+	return s.bills.GetByID(ctx, id)
+}
+
+// resolveBillAccount picks the expense target for a bill: the requested
+// account, or the default wallet when the request leaves it open (wallet money
+// by convention).
+func (s *BillService) resolveBillAccount(ctx context.Context, in domain.BillConfirmInput) (domain.Account, error) {
+	if in.AccountID != nil && *in.AccountID > 0 {
+		account, err := s.accounts.GetByID(ctx, *in.AccountID)
+		if err != nil {
+			return domain.Account{}, fmt.Errorf("validate account_id: %w", err)
+		}
+		return account, nil
+	}
+	walletID, err := s.ensureWalletAccount(ctx)
+	if err != nil {
+		return domain.Account{}, fmt.Errorf("ensure default wallet account: %w", err)
+	}
+	return s.accounts.GetByID(ctx, walletID)
+}
+
+// applyAccountPaymentRules couples payment metadata to the account: money that
+// left a cash-type account (the wallet) is a cash payment — card digits have no
+// business there and would flip the payment back to "card" in buildBill.
+func applyAccountPaymentRules(in *domain.BillConfirmInput, account domain.Account) {
+	if account.Type != domain.AccountCash {
+		return
+	}
+	in.PaymentMethod = "cash"
+	in.CardLastDigits = ""
+}
+
+// recordBillTransaction writes the expense transaction for a bill and links it,
+// so later bill edits keep it in sync.
+func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, bill domain.Bill, accountID int64) error {
+	txRow, err := s.txStore.Create(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: bill.TotalCents,
+		Currency:    bill.Currency,
+		Description: billDescription(bill),
+		Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
+	})
+	if err != nil {
+		return fmt.Errorf("record bill transaction: %w", err)
+	}
+	if err := s.bills.SetTransaction(ctx, billID, txRow.ID); err != nil {
+		return err
+	}
+	return nil
 }
 
 // billDescription is the description used for the expense transaction a bill
@@ -411,8 +461,9 @@ func billDescription(b domain.Bill) string {
 }
 
 // syncBillTransaction refreshes the expense transaction recorded at confirm
-// time so reports reflect the edited bill.
-func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill domain.Bill) error {
+// time so reports reflect the edited bill. accountID > 0 re-points the
+// transaction to another account (a bill whose account was edited).
+func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill domain.Bill, accountID int64) error {
 	tx, err := s.txStore.GetByID(ctx, txID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil // transaction was deleted — nothing to sync
@@ -425,6 +476,9 @@ func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill 
 	tx.Description = billDescription(bill)
 	if bill.Date != "" {
 		tx.Date = bill.Date
+	}
+	if accountID > 0 {
+		tx.AccountID = accountID
 	}
 	if _, err := s.txStore.Update(ctx, tx); err != nil {
 		return fmt.Errorf("sync bill transaction: %w", err)

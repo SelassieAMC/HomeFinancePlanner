@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
 import { billsApi, type BillStatsGroupBy } from '../../api/bills';
+import { accountsApi } from '../../api/accounts';
 import { budgetsApi } from '../../api/budgets';
 import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
@@ -19,6 +20,7 @@ export function BillsPage() {
   const categories = useAsync(() => categoriesApi.list(), []);
   const brands = useAsync(() => billsApi.brands(), []);
   const stores = useAsync(() => storesApi.list(), []);
+  const accounts = useAsync(() => accountsApi.list(), []);
 
   // Scans waiting for AI analysis or review — polled while any is analyzing.
   const scans = useAsync(() => billsApi.listScans(), []);
@@ -104,12 +106,12 @@ export function BillsPage() {
     }
   }
 
-  async function saveEdit() {
+  async function saveEdit(accountId?: number) {
     if (!detail || !editDraft) return;
     setSaving(true);
     setEditError(null);
     try {
-      const updated = await billsApi.update(detail.id, buildConfirmInput(editDraft));
+      const updated = await billsApi.update(detail.id, buildConfirmInput(editDraft, accountId));
       setDetail(updated);
       setEditing(false);
       setEditDraft(null);
@@ -315,6 +317,13 @@ export function BillsPage() {
                         onConfirm={saveEdit}
                         busy={saving ? 'confirm' : null}
                         error={editError}
+                        accounts={(accounts.data ?? []).map((a) => ({
+                          id: a.id,
+                          name: a.name,
+                          type: a.type,
+                          card_last_digits: a.card_last_digits,
+                        }))}
+                        initialAccountId={detail.account_id ?? null}
                         categories={categories.data ?? []}
                         brands={brands.data ?? []}
                         budgets={budgets.data ?? []}

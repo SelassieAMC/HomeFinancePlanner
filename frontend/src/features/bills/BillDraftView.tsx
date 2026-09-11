@@ -64,6 +64,19 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
           </span>
         </div>
         <div className="stat-card stat-account">
+          <span className="stat-card-label">Account</span>
+          <span className="stat-card-value stat-card-text">
+            {bill.account_name || '—'}
+          </span>
+          <span className="stat-card-sub">
+            {bill.account_name
+              ? bill.payment_method === 'cash'
+                ? 'wallet money'
+                : 'expense recorded here'
+              : 'no account yet'}
+          </span>
+        </div>
+        <div className="stat-card stat-account">
           <span className="stat-card-label">Payment</span>
           <span className="stat-card-value stat-card-text">
             {bill.payment_method || '—'}

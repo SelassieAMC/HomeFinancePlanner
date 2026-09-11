@@ -373,6 +373,7 @@ export function ScanBillsPage() {
             accounts={(accounts.data ?? []).map((a) => ({
               id: a.id,
               name: a.name,
+              type: a.type,
               card_last_digits: a.card_last_digits,
             }))}
             categories={categories.data ?? []}

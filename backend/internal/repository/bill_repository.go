@@ -15,16 +15,21 @@ import (
 type BillFilters = domain.BillFilters
 
 // billColumns + billFrom read a bill together with its budget's display name
-// (joined through the budget's category; NULL when no budget is linked).
+// (joined through the budget's category; NULL when no budget is linked) and
+// the account of the expense transaction recorded for it (NULL when the bill
+// has no linked transaction).
 const billColumns = `
 	b.id, b.market_name, b.date, b.payment_method, b.card_last_digits, b.currency,
 	b.items_subtotal_cents, b.discount_cents, b.vat_cents, b.total_cents, b.printed_total_cents,
-	b.status, b.image_path, b.extracted_by, b.created_at, b.updated_at, b.budget_id, b.transaction_id, b.store_id, bg.name`
+	b.status, b.image_path, b.extracted_by, b.created_at, b.updated_at, b.budget_id, b.transaction_id, b.store_id, bg.name,
+	t.account_id, a.name`
 
 const billFrom = `
 	FROM bills b
 	LEFT JOIN budgets g ON g.id = b.budget_id
-	LEFT JOIN categories bg ON bg.id = g.category_id`
+	LEFT JOIN categories bg ON bg.id = g.category_id
+	LEFT JOIN transactions t ON t.id = b.transaction_id
+	LEFT JOIN accounts a ON a.id = t.account_id`
 
 // BillRepository is the SQLite-backed implementation of the bill store.
 type BillRepository struct{ db *sql.DB }
@@ -341,12 +346,20 @@ func scanBill(row interface{ Scan(dest ...any) error }) (domain.Bill, error) {
 		createdAt, upd int64
 	)
 	var budgetName sql.NullString
+	var accountID sql.NullInt64
+	var accountName sql.NullString
 	if err := row.Scan(&b.ID, &b.MarketName, &b.Date, &b.PaymentMethod, &b.CardLastDigits, &b.Currency,
 		&b.ItemsSubtotalCents, &b.DiscountCents, &b.VATCents, &b.TotalCents, &b.PrintedTotalCents,
-		&status, &b.ImagePath, &b.ExtractedBy, &createdAt, &upd, &b.BudgetID, &b.TransactionID, &b.StoreID, &budgetName); err != nil {
+		&status, &b.ImagePath, &b.ExtractedBy, &createdAt, &upd, &b.BudgetID, &b.TransactionID, &b.StoreID, &budgetName,
+		&accountID, &accountName); err != nil {
 		return domain.Bill{}, err
 	}
 	b.BudgetName = budgetName.String
+	if accountID.Valid {
+		id := accountID.Int64
+		b.AccountID = &id
+	}
+	b.AccountName = accountName.String
 	b.Status = domain.BillStatus(status)
 	b.CreatedAt = time.Unix(createdAt, 0).UTC()
 	b.UpdatedAt = time.Unix(upd, 0).UTC()

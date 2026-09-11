@@ -45,13 +45,15 @@ type Bill struct {
 	TotalCents         int64      `json:"total_cents"`         // computed: sum of lines (VAT already included in prices)
 	PrintedTotalCents  int64      `json:"printed_total_cents"` // as printed on the receipt (warning when ≠ TotalCents)
 	Status             BillStatus `json:"status"`
-	ImagePath          string     `json:"image_path,omitempty"`  // server-side path; not exposed
-	FileHash           string     `json:"-"`                     // sha256 of the receipt bytes; dedup only
-	ExtractedBy        string     `json:"extracted_by"`          // provider id that produced the draft
-	BudgetID           *int64     `json:"budget_id"`             // optional budget this bill counts toward
-	BudgetName         string     `json:"budget_name,omitempty"` // display-only, joined from budgets
-	TransactionID      *int64     `json:"transaction_id"`        // expense transaction recorded at confirm
-	StoreID            *int64     `json:"store_id"`              // store resolved from market_name (nil for empty names; ON DELETE SET NULL)
+	ImagePath          string     `json:"image_path,omitempty"`   // server-side path; not exposed
+	FileHash           string     `json:"-"`                      // sha256 of the receipt bytes; dedup only
+	ExtractedBy        string     `json:"extracted_by"`           // provider id that produced the draft
+	BudgetID           *int64     `json:"budget_id"`              // optional budget this bill counts toward
+	BudgetName         string     `json:"budget_name,omitempty"`  // display-only, joined from budgets
+	TransactionID      *int64     `json:"transaction_id"`         // expense transaction recorded at confirm
+	AccountID          *int64     `json:"account_id"`             // account of that transaction (display-only, joined; nil when unlinked)
+	AccountName        string     `json:"account_name,omitempty"` // display-only, joined from accounts
+	StoreID            *int64     `json:"store_id"`               // store resolved from market_name (nil for empty names; ON DELETE SET NULL)
 	Items              []BillItem `json:"items,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`

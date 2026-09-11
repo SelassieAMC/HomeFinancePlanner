@@ -166,6 +166,8 @@ export interface Bill {
   budget_id?: number | null; // budget the bill counts toward
   budget_name?: string; // display-only, joined from budgets
   transaction_id?: number | null; // expense transaction recorded at confirm
+  account_id?: number | null; // account of that transaction (display-only, joined)
+  account_name?: string; // display-only, joined from accounts
   store_id?: number | null; // store resolved from market_name (nullable)
   items?: BillItem[];
   created_at: string;

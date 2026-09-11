@@ -187,7 +187,18 @@ func (f *fakeBillStore) Update(_ context.Context, b domain.Bill) (domain.Bill, e
 	}
 	return domain.Bill{}, domain.ErrNotFound
 }
-func (f *fakeBillStore) SetTransaction(context.Context, int64, int64) error { return nil }
+func (f *fakeBillStore) SetTransaction(_ context.Context, billID, txID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.items {
+		if f.items[i].ID == billID {
+			id := txID
+			f.items[i].TransactionID = &id
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
 func (f *fakeBillStore) GetByID(_ context.Context, id int64) (domain.Bill, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1082,12 +1093,258 @@ func TestSyncBillTransactionUpdatesCurrency(t *testing.T) {
 		})
 
 	bill := domain.Bill{MarketName: "REWE", TotalCents: 300, Currency: "EUR"}
-	if err := svc.syncBillTransaction(context.Background(), created.ID, bill); err != nil {
+	if err := svc.syncBillTransaction(context.Background(), created.ID, bill, 0); err != nil {
 		t.Fatalf("syncBillTransaction: %v", err)
 	}
 	tx, _ := txs.GetByID(context.Background(), created.ID)
 	if tx.Currency != "EUR" || tx.AmountCents != 300 {
 		t.Errorf("synced transaction = %+v, want EUR/300", tx)
+	}
+}
+
+func TestSyncBillTransactionRepointsAccount(t *testing.T) {
+	txs := newFakeTxStore()
+	created, err := txs.Create(context.Background(), domain.Transaction{
+		AccountID: 1, Kind: domain.TransactionExpense, AmountCents: 250, Currency: "EUR",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, _, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, errors.New("not called")
+		})
+
+	bill := domain.Bill{MarketName: "REWE", TotalCents: 250, Currency: "EUR"}
+	if err := svc.syncBillTransaction(context.Background(), created.ID, bill, 7); err != nil {
+		t.Fatalf("syncBillTransaction: %v", err)
+	}
+	tx, _ := txs.GetByID(context.Background(), created.ID)
+	if tx.AccountID != 7 {
+		t.Errorf("transaction account = %d, want 7", tx.AccountID)
+	}
+}
+
+func TestConfirmCashAccountForcesCashPayment(t *testing.T) {
+	accounts := newFakeAccountStore()
+	txs := newFakeTxStore()
+	svc, scanStore, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "ALDI"}, nil
+		})
+	ctx := context.Background()
+
+	res := scanUntilDone(t, svc, scanStore)
+	// Wallet money, but the extracted draft claims card payment with digits.
+	_, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{
+		MarketName:     "ALDI",
+		Currency:       "EUR",
+		PaymentMethod:  "card",
+		CardLastDigits: "9746",
+		Items:          []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+
+	stored := billStore.items[0]
+	if stored.PaymentMethod != "cash" {
+		t.Errorf("payment_method = %q, want cash (wallet money)", stored.PaymentMethod)
+	}
+	if stored.CardLastDigits != "" {
+		t.Errorf("card_last_digits = %q, want cleared for a cash account", stored.CardLastDigits)
+	}
+	wallets, _ := accounts.List(ctx)
+	if len(wallets) != 1 {
+		t.Fatalf("expected one wallet account, got %d", len(wallets))
+	}
+	if txs.items[1].AccountID != wallets[0].ID {
+		t.Errorf("transaction account = %d, want wallet %d", txs.items[1].AccountID, wallets[0].ID)
+	}
+}
+
+func TestConfirmCardAccountKeepsCardPayment(t *testing.T) {
+	accounts := newFakeAccountStore()
+	card, err := accounts.Create(context.Background(), domain.Account{Name: "Card •9746", Type: domain.AccountCredit, Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	txs := newFakeTxStore()
+	svc, scanStore, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "ALDI"}, nil
+		})
+	ctx := context.Background()
+
+	res := scanUntilDone(t, svc, scanStore)
+	_, err = svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{
+		MarketName:     "ALDI",
+		Currency:       "EUR",
+		PaymentMethod:  "card",
+		CardLastDigits: "9746",
+		AccountID:      &card.ID,
+		Items:          []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+
+	stored := billStore.items[0]
+	if stored.PaymentMethod != "card" || stored.CardLastDigits != "9746" {
+		t.Errorf("bill = %+v, want card payment with digits kept", stored)
+	}
+	if txs.items[1].AccountID != card.ID {
+		t.Errorf("transaction account = %d, want card account %d", txs.items[1].AccountID, card.ID)
+	}
+}
+
+func TestUpdateRepointsTransactionToCashAccount(t *testing.T) {
+	accounts := newFakeAccountStore()
+	card, err := accounts.Create(context.Background(), domain.Account{Name: "Card •9746", Type: domain.AccountCredit, Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := accounts.Create(context.Background(), domain.Account{Name: walletAccountName, Type: domain.AccountCash, Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	txs := newFakeTxStore()
+	existing, err := txs.Create(context.Background(), domain.Transaction{
+		AccountID: card.ID, Kind: domain.TransactionExpense, AmountCents: 250, Currency: "EUR",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, _, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, errors.New("not called")
+		})
+	// A confirmed bill whose expense sits on the card account.
+	confirmed, err := billStore.Create(context.Background(), domain.Bill{
+		MarketName: "ALDI", Currency: "EUR", TotalCents: 250, Status: domain.BillStatusAccepted,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := billStore.SetTransaction(context.Background(), confirmed.ID, existing.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// User edits the saved bill and moves it to the wallet.
+	_, err = svc.Update(context.Background(), confirmed.ID, domain.BillConfirmInput{
+		MarketName:     "ALDI",
+		Currency:       "EUR",
+		PaymentMethod:  "card",
+		CardLastDigits: "9746",
+		AccountID:      &wallet.ID,
+		Items:          []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	tx, _ := txs.GetByID(context.Background(), existing.ID)
+	if tx.AccountID != wallet.ID {
+		t.Errorf("transaction account = %d, want wallet %d", tx.AccountID, wallet.ID)
+	}
+	stored, _ := billStore.GetByID(context.Background(), confirmed.ID)
+	if stored.PaymentMethod != "cash" || stored.CardLastDigits != "" {
+		t.Errorf("updated bill = %+v, want cash payment with digits cleared", stored)
+	}
+}
+
+func TestUpdateWithoutTransactionCreatesOne(t *testing.T) {
+	accounts := newFakeAccountStore()
+	card, err := accounts.Create(context.Background(), domain.Account{Name: "Card •9746", Type: domain.AccountCredit, Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	txs := newFakeTxStore()
+	svc, _, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, errors.New("not called")
+		})
+	// A pre-account bill: no transaction ever recorded.
+	orphan, err := billStore.Create(context.Background(), domain.Bill{
+		MarketName: "ALDI", Currency: "EUR", TotalCents: 250, Status: domain.BillStatusAccepted,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.Update(context.Background(), orphan.ID, domain.BillConfirmInput{
+		MarketName:    "ALDI",
+		Currency:      "EUR",
+		PaymentMethod: "card",
+		AccountID:     &card.ID,
+		Items:         []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if len(txs.items) != 1 {
+		t.Fatalf("expected one created transaction, got %d", len(txs.items))
+	}
+	tx := txs.items[1]
+	if tx.AccountID != card.ID || tx.AmountCents != 250 || tx.Kind != domain.TransactionExpense {
+		t.Errorf("created transaction = %+v, want expense 250 on account %d", tx, card.ID)
+	}
+	stored, _ := billStore.GetByID(context.Background(), orphan.ID)
+	if stored.TransactionID == nil || *stored.TransactionID != tx.ID {
+		t.Errorf("bill transaction_id = %v, want link to new transaction %d", stored.TransactionID, tx.ID)
+	}
+}
+
+func TestUpdateNilAccountKeepsTransactionAccount(t *testing.T) {
+	accounts := newFakeAccountStore()
+	card, err := accounts.Create(context.Background(), domain.Account{Name: "Card •9746", Type: domain.AccountCredit, Currency: "EUR"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	txs := newFakeTxStore()
+	existing, err := txs.Create(context.Background(), domain.Transaction{
+		AccountID: card.ID, Kind: domain.TransactionExpense, AmountCents: 250, Currency: "EUR",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, _, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{}, errors.New("not called")
+		})
+	confirmed, err := billStore.Create(context.Background(), domain.Bill{
+		MarketName: "ALDI", Currency: "EUR", TotalCents: 250, Status: domain.BillStatusAccepted,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := billStore.SetTransaction(context.Background(), confirmed.ID, existing.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// No account_id in the payload — the transaction must stay on the card.
+	_, err = svc.Update(context.Background(), confirmed.ID, domain.BillConfirmInput{
+		MarketName: "ALDI",
+		Currency:   "EUR",
+		Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 300, LineTotalCents: 300}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	tx, _ := txs.GetByID(context.Background(), existing.ID)
+	if tx.AccountID != card.ID {
+		t.Errorf("transaction account = %d, want unchanged card %d", tx.AccountID, card.ID)
+	}
+	if tx.AmountCents != 300 {
+		t.Errorf("transaction amount = %d, want synced 300", tx.AmountCents)
 	}
 }
 

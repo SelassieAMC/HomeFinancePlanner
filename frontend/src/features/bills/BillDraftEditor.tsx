@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import type { BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Store } from '../../types/domain';
+import { useEffect, useMemo, useState } from 'react';
+import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Store } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { useAsync } from '../../hooks/useAsync';
@@ -31,7 +31,13 @@ export interface BillDraftEditorProps {
   busy?: BillBusyAction;
   error?: string | null;
   /** Account options for the confirm flow (omit to hide the picker). */
-  accounts?: { id: number; name: string; card_last_digits?: string }[];
+  accounts?: { id: number; name: string; type: AccountType; card_last_digits?: string }[];
+  /**
+   * Account the bill is currently recorded on (saved mode). Preselects the
+   * picker; null/undefined = wallet default. Used to edit a saved bill's
+   * account.
+   */
+  initialAccountId?: number | null;
   /** Fixed storage taxonomy used for classification. */
   categories?: Category[];
   /** Brands already recorded on bill items — dropdown options. */
@@ -134,6 +140,7 @@ export function BillDraftEditor({
   busy = null,
   error = null,
   accounts,
+  initialAccountId = null,
   categories = [],
   brands = [],
   budgets = [],
@@ -147,8 +154,11 @@ export function BillDraftEditor({
   const baseCurrency = useAsync(() => settingsApi.getBaseCurrency(), []);
 
   const [search, setSearch] = useState('');
-  // '' = no transaction, '__new_card__' = create a card account, else id.
-  const [accountChoice, setAccountChoice] = useState('');
+  // '' = wallet default, '__new_card__' = create a card account, else id.
+  // null until the accounts load: the picker preselects the card account
+  // matching the receipt digits (fresh scan) or the bill's current account
+  // (saved bill) once they arrive.
+  const [accountChoice, setAccountChoice] = useState<string | null>(null);
   // Item id currently typing a brand-new brand ('__custom__' selected).
   const [customBrandItem, setCustomBrandItem] = useState<number | null>(null);
   // True while typing a market name that is not an existing store.
@@ -206,6 +216,55 @@ export function BillDraftEditor({
     onChange({ ...draft, ...patch });
   }
 
+  // The default wallet account, matched like the backend's wallet convention:
+  // a cash account named "Wallet" (case-insensitive). Seeded by migration, so
+  // normally present; undefined just skips the client-side coupling.
+  const walletAccount = accounts?.find(
+    (a) => a.type === 'cash' && a.name.toLowerCase() === 'wallet',
+  );
+
+  /** The account behind a picker choice ('' = wallet default). */
+  function accountForChoice(
+    value: string | null,
+  ): { id: number; name: string; type: AccountType; card_last_digits?: string } | undefined {
+    if (value === null || value === '__new_card__') return undefined;
+    if (value === '') return walletAccount;
+    return accounts?.find((a) => String(a.id) === value);
+  }
+
+  // Preselect once the account options arrive: the saved bill's current
+  // account, or (fresh scan) the card account matching the receipt's digits.
+  useEffect(() => {
+    if (accountChoice !== null || !accounts) return;
+    let initial = '';
+    if (isSaved) {
+      initial = initialAccountId != null ? String(initialAccountId) : '';
+    } else if (draft.card_last_digits) {
+      initial = String(
+        accounts.find((a) => a.card_last_digits === draft.card_last_digits)?.id ?? '',
+      );
+    }
+    setAccountChoice(initial);
+    if (accountForChoice(initial)?.type === 'cash') {
+      // Wallet money: legacy rows may still carry card digits — align the
+      // payment metadata with the account from the start.
+      updateHeader({ payment_method: 'cash', card_last_digits: '' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts, accountChoice]);
+
+  // Wallet money is a cash payment without card digits, so the payment fields
+  // follow the selected account.
+  const cashAccountSelected = accountForChoice(accountChoice)?.type === 'cash';
+
+  /** Picks an account: switching to wallet money forces a cash payment. */
+  function handleAccountChange(value: string) {
+    setAccountChoice(value);
+    if (accountForChoice(value)?.type === 'cash') {
+      updateHeader({ payment_method: 'cash', card_last_digits: '' });
+    }
+  }
+
   // Deposit returns ("Leergut") and lines filed under a negative-allowed
   // category (the "Deposit & Returns" / Pfand family) are money back or
   // refund-like: their amounts may go negative and reduce the total.
@@ -244,6 +303,11 @@ export function BillDraftEditor({
       onConfirm(undefined, true);
     } else if (accountChoice) {
       onConfirm(Number(accountChoice));
+    } else if (isSaved) {
+      // Saved edits always send an explicit account: an omitted account_id
+      // would tell the backend to keep the current one, and the wallet is
+      // the default choice here.
+      onConfirm(walletAccount?.id);
     } else {
       onConfirm();
     }
@@ -341,17 +405,17 @@ export function BillDraftEditor({
             {mismatch ? `Printed: ${formatCents(printed, currency)}` : 'VAT included'}
           </span>
         </div>
-        {!isSaved && (
+        {accounts && accountChoice !== null && (
         <div className="stat-card stat-account">
           <span className="stat-card-label">💳 Account</span>
           <select
             value={accountChoice}
             aria-label="Account to record the expense (wallet by default)"
-            onChange={(e) => setAccountChoice(e.target.value)}
+            onChange={(e) => handleAccountChange(e.target.value)}
             disabled={isBusy}
           >
             <option value="">👛 Wallet (default)</option>
-            {draft.card_last_digits && (
+            {!isSaved && draft.card_last_digits && (
               <option value="__new_card__">New card (•{draft.card_last_digits})</option>
             )}
             {sortedAccounts.map((a) => {
@@ -702,18 +766,23 @@ export function BillDraftEditor({
         <div className="item-field">
           <span>Payment</span>
           <select
-            value={paymentLocked ? 'card' : draft.payment_method}
-            disabled={paymentLocked}
+            value={cashAccountSelected ? 'cash' : paymentLocked ? 'card' : draft.payment_method}
+            disabled={cashAccountSelected || paymentLocked}
             aria-label="Payment method"
             onChange={(e) => updateHeader({ payment_method: e.target.value })}
           >
             {paymentOptions.map((p) => (
               <option key={p || 'none'} value={p}>
-                {paymentLocked && p === 'card' ? 'card (by card digits)' : p || '—'}
+                {paymentLocked && p === 'card'
+                  ? 'card (by card digits)'
+                  : cashAccountSelected && p === 'cash'
+                    ? 'cash (wallet)'
+                    : p || '—'}
               </option>
             ))}
           </select>
         </div>
+        {!cashAccountSelected && (
         <div className="item-field">
           <span>Card digits</span>
           <input
@@ -730,6 +799,7 @@ export function BillDraftEditor({
             }}
           />
         </div>
+        )}
         <div className="item-field">
           <span>Budget</span>
           <select
