@@ -40,7 +40,6 @@ export function DashboardPage() {
   if (error) return <ErrorMessage message={error.message} />;
   if (!data) return <EmptyState message="No summary data yet." />;
 
-  const isMonthView = type === 'month';
   const hasTopCategories = data.top_categories.length > 0;
   const productRows = productStats.data?.rows ?? [];
   const productCurrency = productStats.data?.currency ?? data.currency;
@@ -126,30 +125,46 @@ export function DashboardPage() {
         )}
       </Card>
 
-      <div className={isMonthView ? 'two-col' : undefined}>
-        {isMonthView && (
-          <Card title="Budget progress">
+      <div className="two-col">
+        {/*
+          Budget envelopes are open-ended, so progress is meaningful for any
+          period: in-period spend plus the lifetime envelope balance.
+        */}
+        <Card title="Budget progress">
             {data.budgets.length === 0 ? (
-              <EmptyState message="No budgets set for this month." />
+              <EmptyState message="No open budgets — create one on the Budgets page." />
             ) : (
               <ul className="budget-list">
                 {data.budgets.map((b) => {
                   const cat = (categories.data ?? []).find((c) => c.id === b.category_id);
+                  const pct =
+                    b.amount_cents > 0 ? (b.lifetime_spent_cents / b.amount_cents) * 100 : 0;
                   return (
                     <li key={b.id} className="budget-item">
                       <div className="budget-row">
                         <span>
                           {cat?.icon ? `${cat.icon} ` : ''}
                           {cat?.name ?? `Category #${b.category_id}`}
+                          {b.status === 'closed' ? ' · closed' : ''}
                         </span>
                         <span>
-                          {formatCents(b.spent_cents, data.currency)} / {formatCents(b.amount_cents, data.currency)}
+                          {formatCents(b.spent_cents, data.currency)} this period
+                        </span>
+                      </div>
+                      <div className="budget-row">
+                        <span>
+                          Lifetime {formatCents(b.lifetime_spent_cents, data.currency)} /{' '}
+                          {formatCents(b.amount_cents, data.currency)}
+                        </span>
+                        <span className={b.remaining_cents < 0 ? 'stat-negative' : ''}>
+                          {b.remaining_cents < 0 ? 'overspent ' : 'left '}
+                          {formatCents(Math.abs(b.remaining_cents), data.currency)}
                         </span>
                       </div>
                       <div className="progress-track">
                         <div
                           className={b.remaining_cents < 0 ? 'progress-fill over' : 'progress-fill'}
-                          style={{ width: `${Math.min(100, (b.spent_cents / b.amount_cents) * 100)}%` }}
+                          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
                         />
                       </div>
                     </li>
@@ -158,7 +173,6 @@ export function DashboardPage() {
               </ul>
             )}
           </Card>
-        )}
 
         <Card title="Top spending categories">
           {!hasTopCategories ? (

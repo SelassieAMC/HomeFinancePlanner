@@ -43,7 +43,7 @@ export interface BillDraftEditorProps {
   categories?: Category[];
   /** Brands already recorded on bill items — dropdown options. */
   brands?: string[];
-  /** Budgets for the bill's month — correlation options. */
+  /** Open budget envelopes — correlation options (no month scoping). */
   budgets?: Budget[];
   /** Known stores for the market picker (omit to fall back to a plain input). */
   stores?: Store[];

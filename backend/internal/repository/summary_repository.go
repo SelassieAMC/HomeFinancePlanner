@@ -40,7 +40,13 @@ func (r *SummaryRepository) RawRangeSummary(ctx context.Context, from, to string
 	if raw.BillBudgetSpend, err = r.billSpendByBudget(ctx, from, to); err != nil {
 		return raw, err
 	}
-	if raw.Budgets, err = r.budgetsInRange(ctx, from, to); err != nil {
+	if raw.LifetimeCategorySpend, err = r.spendByCategoryAllTime(ctx); err != nil {
+		return raw, err
+	}
+	if raw.LifetimeBillBudgetSpend, err = r.billSpendByBudgetAllTime(ctx); err != nil {
+		return raw, err
+	}
+	if raw.Budgets, err = r.budgets(ctx); err != nil {
 		return raw, err
 	}
 	return raw, nil
@@ -139,16 +145,40 @@ func (r *SummaryRepository) spendByCategory(ctx context.Context, from, to string
 	return out, rows.Err()
 }
 
-// budgetsInRange reads budget rows for the months overlapped by the range
-// (amounts are in the base currency; the service compares them against
-// converted spend and only reports budgets for single-month ranges).
-func (r *SummaryRepository) budgetsInRange(ctx context.Context, from, to string) ([]domain.Budget, error) {
+// spendByCategoryAllTime sums expense transactions per category and currency
+// with no date filter — the lifetime view for envelope progress.
+func (r *SummaryRepository) spendByCategoryAllTime(ctx context.Context) ([]domain.CategoryCurrencyTotal, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, category_id, month, amount_cents, created_at, updated_at
-		FROM budgets WHERE month >= substr(?, 1, 7) AND month <= substr(?, 1, 7)
-		ORDER BY category_id`, from, to)
+		SELECT category_id, currency, SUM(amount_cents)
+		FROM transactions
+		WHERE kind = 'expense' AND category_id IS NOT NULL
+		GROUP BY category_id, currency`)
 	if err != nil {
-		return nil, fmt.Errorf("summary budgets %s..%s: %w", from, to, err)
+		return nil, fmt.Errorf("summary lifetime spend by category: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.CategoryCurrencyTotal{}
+	for rows.Next() {
+		var c domain.CategoryCurrencyTotal
+		if err := rows.Scan(&c.CategoryID, &c.Currency, &c.TotalCents); err != nil {
+			return nil, fmt.Errorf("scan lifetime category spend: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// budgets reads every budget envelope (amounts are in the base currency;
+// the service compares them against converted spend and decides which ones
+// are relevant for the requested range — open ones always, closed ones when
+// they had attributed spend inside the range).
+func (r *SummaryRepository) budgets(ctx context.Context) ([]domain.Budget, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, category_id, amount_cents, status, closed_at, created_at, updated_at
+		FROM budgets ORDER BY category_id`)
+	if err != nil {
+		return nil, fmt.Errorf("summary budgets: %w", err)
 	}
 	defer rows.Close()
 
@@ -185,6 +215,33 @@ func (r *SummaryRepository) billSpendByBudget(ctx context.Context, from, to stri
 		var s domain.BudgetCurrencySpend
 		if err := rows.Scan(&s.BudgetID, &s.Currency, &s.Cents); err != nil {
 			return nil, fmt.Errorf("scan bill budget spend: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// billSpendByBudgetAllTime sums accepted bill line amounts attributed to
+// budgets with no date filter — the lifetime envelope view. Same attribution
+// rule as billSpendByBudget.
+func (r *SummaryRepository) billSpendByBudgetAllTime(ctx context.Context) ([]domain.BudgetCurrencySpend, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT COALESCE(bi.budget_id, b.budget_id), b.currency, SUM(bi.line_total_cents)
+		FROM bill_items bi
+		JOIN bills b ON b.id = bi.bill_id
+		WHERE b.status = 'accepted'
+		  AND COALESCE(bi.budget_id, b.budget_id) IS NOT NULL
+		GROUP BY COALESCE(bi.budget_id, b.budget_id), b.currency`)
+	if err != nil {
+		return nil, fmt.Errorf("summary lifetime bill spend by budget: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.BudgetCurrencySpend{}
+	for rows.Next() {
+		var s domain.BudgetCurrencySpend
+		if err := rows.Scan(&s.BudgetID, &s.Currency, &s.Cents); err != nil {
+			return nil, fmt.Errorf("scan lifetime bill budget spend: %w", err)
 		}
 		out = append(out, s)
 	}

@@ -4,18 +4,24 @@ import { budgetsApi } from '../../api/budgets';
 import { summaryApi } from '../../api/summary';
 import { categoriesApi } from '../../api/categories';
 import type { Budget } from '../../types/domain';
-import { formatCents, currentMonth } from '../../lib/money';
+import { formatCents } from '../../lib/money';
 import { categoriesBySection } from '../../lib/categories';
 import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
+// Budgets are open-ended envelopes: they stay open — accumulating attributed
+// spend — until they are marked finished and closed. Progress is lifetime,
+// not monthly: the point is to see how much was spent, saved or overspent on
+// e.g. a vacations budget once it is closed.
 export function BudgetsPage() {
-  const [month, setMonth] = useState(currentMonth());
-  const { data, loading, error, reload } = useAsync(
-    () => budgetsApi.listByMonth(month),
-    [month],
-  );
-  const summary = useAsync(() => summaryApi.month(month), [month]);
+  const { data, loading, error, reload } = useAsync(() => budgetsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
+  // Lifetime spend per budget. The summary's lifetime fields are
+  // range-independent, and a range covering all time makes every envelope
+  // with any attributed spend show up (closed ones included).
+  const summary = useAsync(
+    () => summaryApi.range('1970-01-01', '2999-12-31'),
+    [],
+  );
 
   const [categoryId, setCategoryId] = useState('');
   const [amount, setAmount] = useState('');
@@ -37,13 +43,21 @@ export function BudgetsPage() {
     try {
       await budgetsApi.create({
         category_id: Number(categoryId),
-        month,
         amount_cents: cents,
       });
       setAmount('');
       reload();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to create budget.');
+    }
+  }
+
+  async function handleStatus(id: number, status: 'open' | 'closed') {
+    try {
+      await budgetsApi.setStatus(id, status);
+      reload();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to update budget.');
     }
   }
 
@@ -59,25 +73,24 @@ export function BudgetsPage() {
   if (loading) return <Spinner />;
   if (error) return <ErrorMessage message={error.message} />;
 
-  const spentByCategory = new Map(
-    (summary.data?.budgets ?? []).map((b) => [b.id, b.spent_cents]),
+  const lifetimeSpentByBudget = new Map(
+    (summary.data?.budgets ?? []).map((b) => [b.id, b.lifetime_spent_cents]),
   );
   const categoryNames = new Map((categories.data ?? []).map((c) => [c.id, c.name]));
   // Budget amounts and spend are denominated in the base currency.
   const currency = summary.data?.currency ?? 'USD';
 
+  // Open envelopes first — the ones still accepting spend.
+  const budgets = [...(data ?? [])].sort(
+    (a, b) => (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1),
+  );
+
   return (
     <div className="page">
-      <h2 className="page-title">Budgets — {month}</h2>
+      <h2 className="page-title">Budgets</h2>
 
       <Card title="Add budget">
         <form className="form-row" onSubmit={handleCreate}>
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            aria-label="Budget month"
-          />
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
             <option value="">Category…</option>
             {categoriesBySection(categories.data ?? [], 'expense').map(([section, cats]) => (
@@ -91,7 +104,7 @@ export function BudgetsPage() {
             ))}
           </select>
           <input
-            placeholder={`Monthly limit (${currency})`}
+            placeholder={`Budget amount (${currency})`}
             inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -102,12 +115,12 @@ export function BudgetsPage() {
         {formError && <ErrorMessage message={formError} />}
       </Card>
 
-      {data?.length === 0 ? (
-        <EmptyState message={`No budgets set for ${month}.`} />
+      {budgets.length === 0 ? (
+        <EmptyState message="No budgets yet — add your first one above." />
       ) : (
         <ItemPanels>
-          {(data ?? []).map((b) => {
-            const spent = spentByCategory.get(b.id) ?? 0;
+          {budgets.map((b) => {
+            const lifetime = lifetimeSpentByBudget.get(b.id) ?? 0;
             return (
               <BudgetPanel
                 key={b.id}
@@ -116,8 +129,9 @@ export function BudgetsPage() {
                 categoryIcon={
                   (categories.data ?? []).find((c) => c.id === b.category_id)?.icon
                 }
-                spent={spent}
+                lifetimeSpent={lifetime}
                 currency={currency}
+                onSetStatus={(status) => handleStatus(b.id, status)}
                 onDelete={() => handleDelete(b.id)}
               />
             );
@@ -127,30 +141,35 @@ export function BudgetsPage() {
     </div>
   );
 }
-// BudgetPanel renders one budget as a collapsible panel: summary shows the
-// category and the spent/limit; expanding reveals progress and actions.
+
+// BudgetPanel renders one envelope as a collapsible panel: the summary shows
+// the category and lifetime spent/amount; expanding reveals progress and the
+// close/reopen/delete actions.
 function BudgetPanel({
   budget,
   categoryName,
   categoryIcon,
-  spent,
+  lifetimeSpent,
   currency,
+  onSetStatus,
   onDelete,
 }: {
   budget: Budget;
   categoryName: string;
   categoryIcon?: string;
-  spent: number;
+  lifetimeSpent: number;
   currency: string;
+  onSetStatus: (status: 'open' | 'closed') => void;
   onDelete: () => void;
 }) {
-  const remaining = budget.amount_cents - spent;
-  const pct = budget.amount_cents > 0 ? (spent / budget.amount_cents) * 100 : 0;
+  const isClosed = budget.status === 'closed';
+  const remaining = budget.amount_cents - lifetimeSpent;
+  const pct = budget.amount_cents > 0 ? (lifetimeSpent / budget.amount_cents) * 100 : 0;
   return (
     <ItemPanel
       icon={categoryIcon ?? '🎯'}
       title={categoryName}
-      subtitle={`${formatCents(spent, currency)} of ${formatCents(budget.amount_cents, currency)}`}
+      subtitle={isClosed ? 'closed' : `${formatCents(lifetimeSpent, currency)} of ${formatCents(budget.amount_cents, currency)}`}
       value={formatCents(remaining, currency)}
       valueClass={remaining < 0 ? 'stat-negative' : ''}
     >
@@ -162,21 +181,30 @@ function BudgetPanel({
       </div>
       <div className="item-field-grid">
         <div className="item-field">
-          <span>Limit</span>
+          <span>Amount</span>
           <strong>{formatCents(budget.amount_cents, currency)}</strong>
         </div>
         <div className="item-field">
-          <span>Spent</span>
-          <span>{formatCents(spent, currency)}</span>
+          <span>Spent (all time)</span>
+          <span>{formatCents(lifetimeSpent, currency)}</span>
         </div>
         <div className="item-field">
-          <span>Remaining</span>
+          <span>{remaining < 0 ? 'Overspent' : 'Left'}</span>
           <span className={remaining < 0 ? 'stat-negative' : ''}>
             {formatCents(remaining, currency)}
           </span>
         </div>
+        <div className="item-field">
+          <span>Status</span>
+          <span>{isClosed ? 'closed' : 'open'}</span>
+        </div>
       </div>
       <div className="camera-row">
+        {isClosed ? (
+          <Button onClick={() => onSetStatus('open')}>Reopen</Button>
+        ) : (
+          <Button onClick={() => onSetStatus('closed')}>Mark finished</Button>
+        )}
         <Button variant="danger" onClick={onDelete}>
           Delete budget
         </Button>

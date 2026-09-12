@@ -40,7 +40,7 @@ type TransactionStore interface {
 
 // BudgetStore is the persistence contract for budgets.
 type BudgetStore interface {
-	ListByMonth(ctx context.Context, month string) ([]domain.Budget, error)
+	List(ctx context.Context) ([]domain.Budget, error)
 	GetByID(ctx context.Context, id int64) (domain.Budget, error)
 	Create(ctx context.Context, b domain.Budget) (domain.Budget, error)
 	Update(ctx context.Context, b domain.Budget) (domain.Budget, error)

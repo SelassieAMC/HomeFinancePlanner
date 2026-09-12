@@ -84,8 +84,16 @@ func summaryTestRaw() domain.RawSummary {
 		BillBudgetSpend: []domain.BudgetCurrencySpend{
 			{BudgetID: 10, Currency: "USD", Cents: 22_000}, // → 20_000 EUR
 		},
+		LifetimeCategorySpend: []domain.CategoryCurrencyTotal{
+			{CategoryID: 1, Currency: "EUR", TotalCents: 30_000},
+			{CategoryID: 1, Currency: "USD", TotalCents: 11_000}, // → 10_000 EUR
+			{CategoryID: 2, Currency: "EUR", TotalCents: 20_000},
+		},
+		LifetimeBillBudgetSpend: []domain.BudgetCurrencySpend{
+			{BudgetID: 10, Currency: "USD", Cents: 22_000}, // → 20_000 EUR
+		},
 		Budgets: []domain.Budget{
-			{ID: 10, CategoryID: 1, Month: "2026-09", AmountCents: 70_000},
+			{ID: 10, CategoryID: 1, AmountCents: 70_000, Status: domain.BudgetOpen},
 		},
 	}
 }
@@ -141,12 +149,16 @@ func TestMonthSummaryConvertsIntoBaseCurrency(t *testing.T) {
 		t.Errorf("Groceries total = %d, want 40000 (30000 + 11000 USD→10000)", s.TopCategories[0].TotalCents)
 	}
 
-	// Budget: category spend (40000) + converted bill spend (20000).
+	// Budget: category spend (40000) + converted bill spend (20000); lifetime
+	// spend matches the range here, so the envelope keeps 10000 of headroom.
 	if len(s.Budgets) != 1 {
 		t.Fatalf("Budgets = %+v, want one", s.Budgets)
 	}
 	if s.Budgets[0].SpentCents != 60_000 {
 		t.Errorf("SpentCents = %d, want 60000", s.Budgets[0].SpentCents)
+	}
+	if s.Budgets[0].LifetimeSpentCents != 60_000 {
+		t.Errorf("LifetimeSpentCents = %d, want 60000", s.Budgets[0].LifetimeSpentCents)
 	}
 	if s.Budgets[0].RemainingCents != 10_000 {
 		t.Errorf("RemainingCents = %d, want 10000", s.Budgets[0].RemainingCents)
@@ -230,27 +242,46 @@ func TestRangeSummaryValidation(t *testing.T) {
 	}
 }
 
-func TestRangeSummaryBudgetsOnlyInsideSingleMonth(t *testing.T) {
-	// A range spanning two months: raw budgets exist but must not surface.
-	svc, _ := newTestSummaryService(summaryTestRaw(), "EUR", summaryTestSnapshot(), nil)
+func TestRangeSummaryBudgetsForAnyRange(t *testing.T) {
+	// Open envelopes are reported for any range — the old
+	// single-calendar-month gate is gone (budgets are open-ended).
+	raw := summaryTestRaw()
+	// A closed envelope with no in-range activity must stay hidden. Category 3
+	// has no spend anywhere, so nothing attributes to it.
+	raw.Budgets = append(raw.Budgets, domain.Budget{
+		ID: 11, CategoryID: 3, AmountCents: 50_000, Status: domain.BudgetClosed,
+	})
+	svc, _ := newTestSummaryService(raw, "EUR", summaryTestSnapshot(), nil)
 	s, err := svc.RangeSummary(context.Background(), "2026-08-31", "2026-09-30")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Budgets) != 0 {
-		t.Errorf("Budgets = %+v, want empty for a multi-month range", s.Budgets)
+	if len(s.Budgets) != 1 || s.Budgets[0].ID != 10 {
+		t.Fatalf("Budgets = %+v, want only open budget 10", s.Budgets)
+	}
+	if s.Budgets[0].SpentCents != 60_000 || s.Budgets[0].LifetimeSpentCents != 60_000 || s.Budgets[0].RemainingCents != 10_000 {
+		t.Errorf("BudgetStatus = %+v, want spent 60000 lifetime 60000 remaining 10000", s.Budgets[0])
+	}
+	if s.From != "2026-08-31" || s.To != "2026-09-30" {
+		t.Errorf("From/To = %q/%q, want echoed back", s.From, s.To)
 	}
 
-	// The same data inside one month keeps the budget statuses.
-	svc, _ = newTestSummaryService(summaryTestRaw(), "EUR", summaryTestSnapshot(), nil)
+	// A closed envelope WITH in-range activity stays visible so its final
+	// spend can be evaluated.
+	raw.BillBudgetSpend = append(raw.BillBudgetSpend,
+		domain.BudgetCurrencySpend{BudgetID: 11, Currency: "EUR", Cents: 5_000})
+	raw.LifetimeBillBudgetSpend = append(raw.LifetimeBillBudgetSpend,
+		domain.BudgetCurrencySpend{BudgetID: 11, Currency: "EUR", Cents: 45_000})
+	svc, _ = newTestSummaryService(raw, "EUR", summaryTestSnapshot(), nil)
 	s, err = svc.RangeSummary(context.Background(), "2026-09-01", "2026-09-30")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Budgets) != 1 || s.Budgets[0].SpentCents != 60_000 || s.Budgets[0].RemainingCents != 10_000 {
-		t.Errorf("Budgets = %+v, want one budget spent 60000 remaining 10000", s.Budgets)
+	if len(s.Budgets) != 2 {
+		t.Fatalf("Budgets = %+v, want both budgets", s.Budgets)
 	}
-	if s.From != "2026-09-01" || s.To != "2026-09-30" {
-		t.Errorf("From/To = %q/%q, want echoed back", s.From, s.To)
+	closed := s.Budgets[1]
+	if closed.ID != 11 || closed.SpentCents != 5_000 || closed.LifetimeSpentCents != 45_000 || closed.RemainingCents != 5_000 {
+		t.Errorf("closed budget status = %+v, want spent 5000 lifetime 45000 remaining 5000", closed)
 	}
 }

@@ -101,19 +101,35 @@ type Category struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// Budget is a monthly spending cap for one category. Month is "YYYY-MM".
+// BudgetLifecycle is the state of an open-ended budget envelope.
+type BudgetLifecycle string
+
+const (
+	BudgetOpen   BudgetLifecycle = "open"
+	BudgetClosed BudgetLifecycle = "closed"
+)
+
+func (s BudgetLifecycle) Valid() bool {
+	return s == BudgetOpen || s == BudgetClosed
+}
+
+// Budget is an open-ended spending envelope for one category. It has no
+// period: it stays open — accumulating attributed spend — until it is marked
+// finished and closed, so total spend, savings and overspend can be evaluated
+// over its whole lifetime (e.g. a vacations budget).
 type Budget struct {
-	ID          int64     `json:"id"`
-	CategoryID  int64     `json:"category_id"`
-	Month       string    `json:"month"`
-	AmountCents int64     `json:"amount_cents"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          int64           `json:"id"`
+	CategoryID  int64           `json:"category_id"`
+	AmountCents int64           `json:"amount_cents"`
+	Status      BudgetLifecycle `json:"status"`
+	ClosedAt    *time.Time      `json:"closed_at,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // Summary is the dashboard aggregate for an inclusive date range, with every
-// amount converted into the user's base Currency. Budgets are populated only
-// when the range falls inside a single calendar month (budgets are monthly).
+// amount converted into the user's base Currency. Budgets lists every open
+// envelope plus any closed one that had attributed spend inside the range.
 type Summary struct {
 	From               string          `json:"from"`                // YYYY-MM-DD
 	To                 string          `json:"to"`                  // YYYY-MM-DD
@@ -134,11 +150,16 @@ type DayTotal struct {
 	ExpenseCents int64  `json:"expense_cents"`
 }
 
-// BudgetStatus compares a budget against actual spending.
+// BudgetStatus compares a budget against actual spending. SpentCents is the
+// spend attributed inside the reported range (the monthly view);
+// LifetimeSpentCents is every-accepted-spend attributed to the envelope since
+// it was created. RemainingCents is the envelope balance: amount minus
+// lifetime spend — negative means overspent.
 type BudgetStatus struct {
 	Budget
-	SpentCents     int64 `json:"spent_cents"`
-	RemainingCents int64 `json:"remaining_cents"`
+	SpentCents         int64 `json:"spent_cents"`
+	LifetimeSpentCents int64 `json:"lifetime_spent_cents"`
+	RemainingCents     int64 `json:"remaining_cents"`
 }
 
 // CategoryTotal aggregates spending per category for a month.
@@ -188,7 +209,11 @@ type RawSummary struct {
 	DailyExpenses   []DayCurrencyTotal
 	CategorySpend   []CategoryCurrencyTotal
 	BillBudgetSpend []BudgetCurrencySpend
-	Budgets         []Budget // base-currency amounts; compared against converted spend
+	// Lifetime counterparts without any date filter: all-time spend per
+	// category (transactions) and per budget (accepted bill lines).
+	LifetimeCategorySpend   []CategoryCurrencyTotal
+	LifetimeBillBudgetSpend []BudgetCurrencySpend
+	Budgets                 []Budget // base-currency amounts; compared against converted spend
 }
 
 // RateSnapshot is a set of reference exchange rates quoted against a pivot

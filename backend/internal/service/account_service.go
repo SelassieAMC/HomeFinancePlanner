@@ -209,7 +209,8 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	}, nil
 }
 
-// BudgetService implements budget business rules.
+// BudgetService implements budget business rules. Budgets are open-ended
+// envelopes: no period, open until manually closed.
 type BudgetService struct {
 	budgets    BudgetStore
 	categories CategoryStore
@@ -218,15 +219,30 @@ type BudgetService struct {
 // BudgetInput is the user-facing payload for create/update.
 type BudgetInput struct {
 	CategoryID  int64
-	Month       string
 	AmountCents int64
 }
 
-func (s *BudgetService) ListByMonth(ctx context.Context, month string) ([]domain.Budget, error) {
-	if err := validateMonth(month, "month"); err != nil {
+// List returns budgets, optionally filtered by lifecycle status
+// ("" = all, "open", "closed").
+func (s *BudgetService) List(ctx context.Context, status string) ([]domain.Budget, error) {
+	budgets, err := s.budgets.List(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return s.budgets.ListByMonth(ctx, month)
+	if status == "" {
+		return budgets, nil
+	}
+	lc := domain.BudgetLifecycle(status)
+	if !lc.Valid() {
+		return nil, validationError("status %q must be open or closed", status)
+	}
+	out := make([]domain.Budget, 0, len(budgets))
+	for _, b := range budgets {
+		if b.Status == lc {
+			out = append(out, b)
+		}
+	}
+	return out, nil
 }
 
 func (s *BudgetService) Create(ctx context.Context, in BudgetInput) (domain.Budget, error) {
@@ -234,9 +250,14 @@ func (s *BudgetService) Create(ctx context.Context, in BudgetInput) (domain.Budg
 	if err != nil {
 		return domain.Budget{}, err
 	}
-	return s.budgets.Create(ctx, b)
+	out, err := s.budgets.Create(ctx, b)
+	if err != nil {
+		return domain.Budget{}, err
+	}
+	return out, nil
 }
 
+// Update changes only a budget's amount (category is immutable).
 func (s *BudgetService) Update(ctx context.Context, id int64, amountCents int64) (domain.Budget, error) {
 	if err := validatePositiveCents(amountCents, "amount_cents"); err != nil {
 		return domain.Budget{}, err
@@ -249,6 +270,26 @@ func (s *BudgetService) Update(ctx context.Context, id int64, amountCents int64)
 	return s.budgets.Update(ctx, existing)
 }
 
+// SetStatus marks an envelope finished (closed) or reopens it. Closing
+// stamps closed_at; reopening clears it.
+func (s *BudgetService) SetStatus(ctx context.Context, id int64, status domain.BudgetLifecycle) (domain.Budget, error) {
+	if !status.Valid() {
+		return domain.Budget{}, validationError("status %q must be open or closed", status)
+	}
+	existing, err := s.budgets.GetByID(ctx, id)
+	if err != nil {
+		return domain.Budget{}, err
+	}
+	existing.Status = status
+	if status == domain.BudgetClosed {
+		now := time.Now().UTC()
+		existing.ClosedAt = &now
+	} else {
+		existing.ClosedAt = nil
+	}
+	return s.budgets.Update(ctx, existing)
+}
+
 func (s *BudgetService) Delete(ctx context.Context, id int64) error {
 	return s.budgets.Delete(ctx, id)
 }
@@ -256,9 +297,6 @@ func (s *BudgetService) Delete(ctx context.Context, id int64) error {
 func (s *BudgetService) build(ctx context.Context, in BudgetInput) (domain.Budget, error) {
 	if in.CategoryID <= 0 {
 		return domain.Budget{}, validationError("category_id must be a positive id")
-	}
-	if err := validateMonth(in.Month, "month"); err != nil {
-		return domain.Budget{}, err
 	}
 	if err := validatePositiveCents(in.AmountCents, "amount_cents"); err != nil {
 		return domain.Budget{}, err
@@ -268,8 +306,8 @@ func (s *BudgetService) build(ctx context.Context, in BudgetInput) (domain.Budge
 	}
 	return domain.Budget{
 		CategoryID:  in.CategoryID,
-		Month:       in.Month,
 		AmountCents: in.AmountCents,
+		Status:      domain.BudgetOpen,
 	}, nil
 }
 
@@ -298,8 +336,8 @@ func (s *SummaryService) MonthSummary(ctx context.Context, month string) (domain
 }
 
 // RangeSummary returns the dashboard aggregate for an inclusive date range
-// ("YYYY-MM-DD"). Budgets are reported only when the range falls inside a
-// single calendar month, because budgets are set per month.
+// ("YYYY-MM-DD"). Budget progress covers open envelopes plus any closed one
+// with attributed spend inside the range.
 func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (domain.Summary, error) {
 	if err := validateDate(from, "from"); err != nil {
 		return domain.Summary{}, err
@@ -385,19 +423,30 @@ func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (dom
 		out.TopCategories = out.TopCategories[:5]
 	}
 
-	// Budget progress: transaction-category spend plus bill-line spend
-	// attributed to the budget (per-line overrides included). Only ranges
-	// inside a single calendar month map onto monthly budgets.
+	// Budget progress: in-range spend is transaction-category spend plus
+	// bill-line spend attributed to the budget (per-line overrides included);
+	// the envelope balance is lifetime spend against the amount. Open
+	// envelopes are always reported; closed ones only when they had
+	// attributed activity inside the range.
 	billSpend := map[int64]int64{}
 	for _, b := range raw.BillBudgetSpend {
 		billSpend[b.BudgetID] += conv.add(b.Currency, b.Cents)
 	}
+	lifetimeBillSpend := map[int64]int64{}
+	for _, b := range raw.LifetimeBillBudgetSpend {
+		lifetimeBillSpend[b.BudgetID] += conv.add(b.Currency, b.Cents)
+	}
+	lifetimeCategorySpend := map[int64]int64{}
+	for _, c := range raw.LifetimeCategorySpend {
+		lifetimeCategorySpend[c.CategoryID] += conv.add(c.Currency, c.TotalCents)
+	}
 	out.Budgets = []domain.BudgetStatus{}
-	if from[:7] == to[:7] {
-		for _, b := range raw.Budgets {
-			st := domain.BudgetStatus{Budget: b}
-			st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
-			st.RemainingCents = b.AmountCents - st.SpentCents
+	for _, b := range raw.Budgets {
+		st := domain.BudgetStatus{Budget: b}
+		st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
+		st.LifetimeSpentCents = lifetimeCategorySpend[b.CategoryID] + lifetimeBillSpend[b.ID]
+		st.RemainingCents = b.AmountCents - st.LifetimeSpentCents
+		if b.Status == domain.BudgetOpen || st.SpentCents != 0 {
 			out.Budgets = append(out.Budgets, st)
 		}
 	}

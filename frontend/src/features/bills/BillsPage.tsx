@@ -89,11 +89,9 @@ export function BillsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const detailMonth = detail?.date ? detail.date.slice(0, 7) : '';
-  const budgets = useAsync(
-    () => (detailMonth ? budgetsApi.listByMonth(detailMonth) : Promise.resolve([])),
-    [detailMonth],
-  );
+  // Budget envelopes are open-ended — any of them can be attached to a bill
+  // regardless of the bill's date, so no month filtering here.
+  const budgets = useAsync(() => budgetsApi.list('open'), []);
 
   async function loadDetail(id: number) {
     setDetail(null);

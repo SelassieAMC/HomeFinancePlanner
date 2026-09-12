@@ -66,24 +66,32 @@ export interface Category {
   created_at: string;
 }
 
+export type BudgetLifecycle = 'open' | 'closed';
+
+/**
+ * An open-ended spending envelope for one category: no period. It stays open
+ * — accumulating attributed spend — until it is marked finished and closed,
+ * so total spend, savings and overspend can be evaluated over its lifetime.
+ */
 export interface Budget {
   id: number;
   category_id: number;
-  month: string; // YYYY-MM
   amount_cents: number;
+  status: BudgetLifecycle;
+  closed_at?: string; // set when closed, cleared on reopen
   created_at: string;
   updated_at: string;
 }
 
 export interface BudgetInput {
   category_id: number;
-  month: string;
   amount_cents: number;
 }
 
 export interface BudgetStatus extends Budget {
-  spent_cents: number;
-  remaining_cents: number;
+  spent_cents: number; // spend attributed inside the reported range
+  lifetime_spent_cents: number; // all spend attributed since creation
+  remaining_cents: number; // amount − lifetime spend (negative = overspent)
 }
 
 // --- Stores (recurring markets bills link to) --------------------------------
@@ -114,7 +122,7 @@ export interface Summary {
   expense_cents: number;
   net_cents: number;
   total_balance_cents: number;
-  budgets: BudgetStatus[]; // populated only when the range is inside one calendar month
+  budgets: BudgetStatus[]; // open envelopes plus closed ones with in-range spend
   top_categories: CategoryTotal[];
   daily_expenses: DayTotal[];
 }

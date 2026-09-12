@@ -47,6 +47,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("GET /api/v1/budgets", budgetH.List)
 	mux.HandleFunc("POST /api/v1/budgets", budgetH.Create)
 	mux.HandleFunc("PUT /api/v1/budgets/{id}", budgetH.Update)
+	mux.HandleFunc("PUT /api/v1/budgets/{id}/status", budgetH.SetStatus)
 	mux.HandleFunc("DELETE /api/v1/budgets/{id}", budgetH.Delete)
 
 	mux.HandleFunc("GET /api/v1/summary", summaryH.Get)

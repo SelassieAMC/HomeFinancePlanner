@@ -11,15 +11,18 @@ import (
 type BudgetHandler struct{ Svc *service.BudgetService }
 
 type budgetRequest struct {
-	CategoryID  int64  `json:"category_id"`
-	Month       string `json:"month"`
-	AmountCents int64  `json:"amount_cents"`
+	CategoryID  int64 `json:"category_id"`
+	AmountCents int64 `json:"amount_cents"`
 }
 
-// List returns budgets for a month (month query param required, YYYY-MM).
+type budgetStatusRequest struct {
+	Status domain.BudgetLifecycle `json:"status"`
+}
+
+// List returns budget envelopes; the optional status query param filters by
+// lifecycle ("open" / "closed", default all).
 func (h *BudgetHandler) List(w http.ResponseWriter, r *http.Request) {
-	month := r.URL.Query().Get("month")
-	budgets, err := h.Svc.ListByMonth(r.Context(), month)
+	budgets, err := h.Svc.List(r.Context(), r.URL.Query().Get("status"))
 	if err != nil {
 		respondServiceError(w, r, err)
 		return
@@ -27,7 +30,7 @@ func (h *BudgetHandler) List(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, budgets)
 }
 
-// Create creates a budget for a category+month.
+// Create opens a new budget envelope for a category.
 func (h *BudgetHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req budgetRequest
 	if !decodeJSON(w, r, &req) {
@@ -35,7 +38,6 @@ func (h *BudgetHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	b, err := h.Svc.Create(r.Context(), service.BudgetInput{
 		CategoryID:  req.CategoryID,
-		Month:       req.Month,
 		AmountCents: req.AmountCents,
 	})
 	if err != nil {
@@ -45,7 +47,7 @@ func (h *BudgetHandler) Create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusCreated, b)
 }
 
-// Update changes only a budget's amount (month/category are immutable).
+// Update changes only a budget's amount (category is immutable).
 func (h *BudgetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -57,6 +59,25 @@ func (h *BudgetHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, err := h.Svc.Update(r.Context(), id, req.AmountCents)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, b)
+}
+
+// SetStatus marks an envelope finished (closed) or reopens it.
+func (h *BudgetHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req budgetStatusRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	b, err := h.Svc.SetStatus(r.Context(), id, req.Status)
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

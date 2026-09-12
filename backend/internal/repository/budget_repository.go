@@ -15,12 +15,12 @@ type BudgetRepository struct{ db *sql.DB }
 
 func NewBudgetRepository(db *sql.DB) *BudgetRepository { return &BudgetRepository{db: db} }
 
-func (r *BudgetRepository) ListByMonth(ctx context.Context, month string) ([]domain.Budget, error) {
+func (r *BudgetRepository) List(ctx context.Context) ([]domain.Budget, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, category_id, month, amount_cents, created_at, updated_at
-		FROM budgets WHERE month = ? ORDER BY category_id`, month)
+		SELECT id, category_id, amount_cents, status, closed_at, created_at, updated_at
+		FROM budgets ORDER BY status DESC, category_id`)
 	if err != nil {
-		return nil, fmt.Errorf("list budgets %s: %w", month, err)
+		return nil, fmt.Errorf("list budgets: %w", err)
 	}
 	defer rows.Close()
 
@@ -37,7 +37,7 @@ func (r *BudgetRepository) ListByMonth(ctx context.Context, month string) ([]dom
 
 func (r *BudgetRepository) GetByID(ctx context.Context, id int64) (domain.Budget, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, category_id, month, amount_cents, created_at, updated_at
+		SELECT id, category_id, amount_cents, status, closed_at, created_at, updated_at
 		FROM budgets WHERE id = ?`, id)
 
 	b, err := scanBudget(row)
@@ -53,9 +53,9 @@ func (r *BudgetRepository) GetByID(ctx context.Context, id int64) (domain.Budget
 func (r *BudgetRepository) Create(ctx context.Context, b domain.Budget) (domain.Budget, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO budgets (category_id, month, amount_cents, created_at, updated_at)
+		INSERT INTO budgets (category_id, amount_cents, status, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?)`,
-		b.CategoryID, b.Month, b.AmountCents, now, now)
+		b.CategoryID, b.AmountCents, domain.BudgetOpen, now, now)
 	if err != nil {
 		return domain.Budget{}, mapWriteError("create budget", err)
 	}
@@ -66,12 +66,18 @@ func (r *BudgetRepository) Create(ctx context.Context, b domain.Budget) (domain.
 	return r.GetByID(ctx, id)
 }
 
+// Update persists amount and lifecycle state. closed_at is owned by the
+// service: it is set when a budget closes and cleared when it reopens.
 func (r *BudgetRepository) Update(ctx context.Context, b domain.Budget) (domain.Budget, error) {
+	var closedAt any
+	if b.ClosedAt != nil {
+		closedAt = b.ClosedAt.Unix()
+	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE budgets
-		SET amount_cents = ?, updated_at = ?
+		SET amount_cents = ?, status = ?, closed_at = ?, updated_at = ?
 		WHERE id = ?`,
-		b.AmountCents, time.Now().Unix(), b.ID)
+		b.AmountCents, b.Status, closedAt, time.Now().Unix(), b.ID)
 	if err != nil {
 		return domain.Budget{}, mapWriteError("update budget", err)
 	}
@@ -95,10 +101,17 @@ func (r *BudgetRepository) Delete(ctx context.Context, id int64) error {
 func scanBudget(row interface{ Scan(dest ...any) error }) (domain.Budget, error) {
 	var (
 		b              domain.Budget
+		status         string
+		closedAt       sql.NullInt64
 		createdAt, upd int64
 	)
-	if err := row.Scan(&b.ID, &b.CategoryID, &b.Month, &b.AmountCents, &createdAt, &upd); err != nil {
+	if err := row.Scan(&b.ID, &b.CategoryID, &b.AmountCents, &status, &closedAt, &createdAt, &upd); err != nil {
 		return domain.Budget{}, err
+	}
+	b.Status = domain.BudgetLifecycle(status)
+	if closedAt.Valid {
+		t := time.Unix(closedAt.Int64, 0).UTC()
+		b.ClosedAt = &t
 	}
 	b.CreatedAt = time.Unix(createdAt, 0).UTC()
 	b.UpdatedAt = time.Unix(upd, 0).UTC()

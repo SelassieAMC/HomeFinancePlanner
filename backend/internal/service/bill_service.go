@@ -694,10 +694,15 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 
 	cardDigits := normalizeDigits(in.CardLastDigits)
 	// The bill-level budget is the default attribution for every line; items
-	// may override it per line (nil = inherit).
+	// may override it per line (nil = inherit). Closed envelopes no longer
+	// accept spend.
 	if in.BudgetID != nil {
-		if _, err := s.budgets.GetByID(ctx, *in.BudgetID); err != nil {
+		b, err := s.budgets.GetByID(ctx, *in.BudgetID)
+		if err != nil {
 			return domain.Bill{}, fmt.Errorf("validate budget_id: %w", err)
+		}
+		if b.Status == domain.BudgetClosed {
+			return domain.Bill{}, validationError("budget %d is closed and no longer accepts spend", b.ID)
 		}
 	}
 	items := make([]domain.BillItem, 0, len(in.Items))
@@ -727,8 +732,12 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 			return domain.Bill{}, validationError("prices for %q must not be negative", name)
 		}
 		if it.BudgetID != nil && (in.BudgetID == nil || *it.BudgetID != *in.BudgetID) {
-			if _, err := s.budgets.GetByID(ctx, *it.BudgetID); err != nil {
+			b, err := s.budgets.GetByID(ctx, *it.BudgetID)
+			if err != nil {
 				return domain.Bill{}, fmt.Errorf("validate budget for %q: %w", name, err)
+			}
+			if b.Status == domain.BudgetClosed {
+				return domain.Bill{}, validationError("budget %d is closed and no longer accepts spend", b.ID)
 			}
 		}
 		line := it.Quantity*float64(it.UnitPriceCents) - float64(it.DiscountCents)
@@ -747,6 +756,7 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 			DiscountCents:  it.DiscountCents,
 			LineTotalCents: lineCents,
 			IsReturn:       isReturn,
+			BudgetID:       it.BudgetID,
 		})
 	}
 

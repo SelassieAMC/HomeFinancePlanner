@@ -47,12 +47,9 @@ export function ScanBillsPage() {
   // Bumped whenever a fresh draft arrives, so cell inputs remount with the
   // new values (draft line ids restart at 1 on every extraction).
   const [draftKey, setDraftKey] = useState(0);
-  // Budgets for the draft's month — refetched when the bill date changes.
-  const budgetMonth = draft?.date ? draft.date.slice(0, 7) : '';
-  const budgets = useAsync(
-    () => (budgetMonth ? budgetsApi.listByMonth(budgetMonth) : Promise.resolve([])),
-    [budgetMonth],
-  );
+  // Budget envelopes are open-ended — any of them can be attached to a bill
+  // regardless of the bill's date, so no month filtering here.
+  const budgets = useAsync(() => budgetsApi.list('open'), []);
   const [accepted, setAccepted] = useState<Bill | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Summary of the last batch of uploads (capture phase only).
