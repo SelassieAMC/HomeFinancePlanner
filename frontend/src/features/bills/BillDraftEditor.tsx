@@ -639,9 +639,8 @@ export function BillDraftEditor({
                   <div className="item-field">
                     <span>Qty</span>
                     <input
-                      type="number"
-                      min="0"
-                      step="any"
+                      type="text"
+                      inputMode="decimal"
                       defaultValue={it.quantity}
                       aria-label={`Quantity for ${it.name}`}
                       onBlur={(e) =>

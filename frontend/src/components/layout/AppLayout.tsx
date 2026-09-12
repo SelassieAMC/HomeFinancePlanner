@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
@@ -13,8 +13,25 @@ const NAV_ITEMS = [
 ];
 
 export function AppLayout() {
-  // Mobile: the nav collapses behind a hamburger toggle.
+  // Mobile: the nav collapses behind a hamburger toggle into an overlay
+  // drawer that floats above the content.
   const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+
+  // Any navigation closes the drawer.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location]);
+
+  // Escape closes the open drawer.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
 
   return (
     <div className="app-layout">
@@ -48,6 +65,14 @@ export function AppLayout() {
           </ul>
         </nav>
       </aside>
+      {menuOpen && (
+        // Transparent layer behind the drawer: tapping outside closes it.
+        <div
+          className="nav-backdrop"
+          aria-hidden="true"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
       <main className="app-main">
         <Outlet />
       </main>

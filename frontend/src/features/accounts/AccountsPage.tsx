@@ -187,7 +187,7 @@ export function AccountsPage() {
               value={formatCents(a.balance_cents, a.currency)}
             >
               {editingId === a.id ? (
-                <form className="form-row" onSubmit={handleUpdate}>
+                <form className="form-stack" onSubmit={handleUpdate}>
                   <input
                     placeholder="Name"
                     value={editName}
@@ -230,10 +230,12 @@ export function AccountsPage() {
                     value={editCardDigits}
                     onChange={(e) => setEditCardDigits(e.target.value.replace(/\D/g, ''))}
                   />
-                  <Button type="submit">Save</Button>
-                  <Button type="button" variant="secondary" onClick={cancelEdit}>
-                    Cancel
-                  </Button>
+                  <div className="camera-row">
+                    <Button type="submit">Save</Button>
+                    <Button type="button" variant="secondary" onClick={cancelEdit}>
+                      Cancel
+                    </Button>
+                  </div>
                 </form>
               ) : (
                 <>

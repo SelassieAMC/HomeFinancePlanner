@@ -1,5 +1,6 @@
 /* Design tokens — light is the default, dark adapts via prefers-color-scheme. */
 :root {
+  color-scheme: light dark;
   --bg: #f6f7f9;
   --surface: #ffffff;
   --text: #1c2430;
@@ -32,6 +33,12 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   font-family:
@@ -46,10 +53,25 @@ body {
   line-height: 1.5;
 }
 
+/* --- Page primitives ------------------------------------------------------- */
+/* Vertical rhythm for every feature page; replaces ad-hoc margin stacks.
+   Direct children surrender their own block margins so the gap is the only
+   source of spacing. */
+.page {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.page > * {
+  margin-block: 0;
+}
+
 /* --- Layout ---------------------------------------------------------------- */
 .app-layout {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -84,9 +106,11 @@ body {
   text-decoration: none;
 }
 
-.nav-link:hover {
-  background: var(--bg);
-  color: var(--text);
+@media (hover: hover) {
+  .nav-link:hover {
+    background: var(--bg);
+    color: var(--text);
+  }
 }
 
 .nav-link.active {
@@ -99,12 +123,13 @@ body {
   flex: 1;
   padding: 1.5rem 2rem;
   max-width: 1100px;
+  margin-inline: auto;
 }
 
 /* --- Page primitives ------------------------------------------------------- */
 .page-title {
-  margin: 0 0 1rem;
-  font-size: 1.4rem;
+  margin: 0;
+  font-size: clamp(1.2rem, 4vw, 1.4rem);
 }
 
 .card {
@@ -154,6 +179,11 @@ body {
   color: var(--negative);
 }
 
+/* Currency-tile tint (amber family, matching the 4-card dashboard rhythm). */
+.stat-currency {
+  background: rgba(217, 119, 6, 0.12);
+}
+
 .two-col {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -173,20 +203,41 @@ body {
   flex: 1;
 }
 
+/* Edit-in-place forms (inside collapsible panels): always stack vertically —
+   the panel body is narrow even on desktop, so a wrapping row never fits. */
+.form-stack {
+  display: grid;
+  gap: 0.6rem;
+}
+
 .filter-row {
   display: flex;
   gap: 0.5rem;
   margin: 1rem 0 0.75rem;
 }
 
+/* 16px (1rem — body's 15px lives on body, not html) so iOS never auto-zooms
+   a focused control. */
 input,
-select {
-  padding: 0.5rem 0.65rem;
+select,
+textarea {
+  padding: 0.6rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
+  font-size: 1rem;
+}
+
+/* 44px touch targets on touch devices and narrow viewports only — desktop
+   keeps compact inline controls (see the cell-input split below). */
+@media (pointer: coarse), (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+  }
 }
 
 input:focus,
@@ -198,12 +249,22 @@ select:focus,
 
 /* --- Buttons --------------------------------------------------------------- */
 .btn {
-  padding: 0.5rem 1rem;
+  padding: 0.6rem 1.1rem;
+  min-height: 44px;
   border-radius: 8px;
   border: 1px solid transparent;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Pressed feedback for every tappable control (no transform jump). */
+.btn:active,
+.segmented button:active,
+.nav-link:active,
+.hamburger:active,
+.item-remove:active {
+  filter: brightness(0.92);
 }
 
 .btn:disabled {
@@ -216,8 +277,10 @@ select:focus,
   color: #fff;
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
 }
 
 .btn-secondary {
@@ -230,12 +293,13 @@ select:focus,
   background: transparent;
   color: var(--negative);
   border-color: var(--negative);
-  padding: 0.3rem 0.7rem;
 }
 
-.btn-danger:hover:not(:disabled) {
-  background: var(--negative);
-  color: #fff;
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    background: var(--negative);
+    color: #fff;
+  }
 }
 
 /* --- Tables & lists -------------------------------------------------------- */
@@ -280,6 +344,8 @@ select:focus,
 .simple-list li {
   display: flex;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
   padding: 0.4rem 0;
   border-bottom: 1px solid var(--border);
   font-variant-numeric: tabular-nums;
@@ -301,8 +367,17 @@ select:focus,
 .budget-row {
   display: flex;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
   margin-bottom: 0.3rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* One envelope in the dashboard budget card / budget page list. */
+.budget-item {
+  display: grid;
+  gap: 0.35rem;
+  padding-bottom: 0.4rem;
 }
 
 .progress-track {
@@ -366,9 +441,11 @@ select:focus,
   color: var(--text-muted);
 }
 
-.btn-ghost:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--bg);
+@media (hover: hover) {
+  .btn-ghost:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--bg);
+  }
 }
 
 /* --- Segmented control (period switcher) ------------------------------------ */
@@ -382,6 +459,7 @@ select:focus,
 
 .segmented button {
   padding: 0.45rem 0.9rem;
+  min-height: 44px;
   border: none;
   border-right: 1px solid var(--border);
   background: transparent;
@@ -395,9 +473,11 @@ select:focus,
   border-right: none;
 }
 
-.segmented button:hover:not(.active) {
-  color: var(--text);
-  background: var(--bg);
+@media (hover: hover) {
+  .segmented button:hover:not(.active) {
+    color: var(--text);
+    background: var(--bg);
+  }
 }
 
 .segmented button.active {
@@ -463,10 +543,20 @@ select:focus,
 .table-scroll {
   overflow-x: auto;
   max-width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table-scroll .data-table {
   min-width: 480px;
+}
+
+/* Long labels (article names in the analysis table) ellipsize instead of
+   blowing the first column out — full text is available by scrolling. */
+.table-scroll .data-table td:first-child {
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- Bill scanning --------------------------------------------------------- */
@@ -557,27 +647,11 @@ select:focus,
   font-weight: 600;
 }
 
-.bill-total-row td {
-  font-weight: 700;
-  border-top: 2px solid var(--border);
-}
-
 .bill-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-}
-
-.accept-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.row-expanded td {
-  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
 }
 
 /* --- Settings form grid ---------------------------------------------------- */
@@ -609,21 +683,28 @@ select:focus,
   background: none;
   font-size: 1.35rem;
   line-height: 1;
-  padding: 0.2rem 0.4rem;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
   color: var(--text);
   cursor: pointer;
 }
 
-/* --- Mobile: brand bar + hamburger nav drawer ------------------------------- */
+/* --- Mobile: sticky brand bar + hamburger overlay drawer -------------------- */
 @media (max-width: 768px) {
   .app-layout {
     flex-direction: column;
   }
 
+  /* The brand bar stays pinned while the page scrolls. */
   .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--border);
+    background: var(--surface);
     padding: 0.5rem 0.75rem;
   }
 
@@ -637,14 +718,20 @@ select:focus,
 
   .sidebar-nav {
     display: none;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
   }
 
+  /* Open drawer floats above the content, anchored below the brand bar. */
   .sidebar.open .sidebar-nav {
     display: flex;
     flex-direction: column;
-    padding-top: 0.5rem;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    padding: 0.5rem 0.75rem 0.75rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 8px 20px rgb(16 24 40 / 0.18);
   }
 
   .sidebar.open .sidebar-nav li {
@@ -671,6 +758,34 @@ select:focus,
   .data-table th,
   .data-table td {
     padding: 0.45rem 0.6rem;
+  }
+}
+
+/* Tap-catcher behind the open drawer (mobile only; desktop has no drawer). */
+.nav-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: transparent;
+  }
+}
+
+/* Phones: tighter cards, edge-to-edge padding that respects notches. */
+@media (max-width: 480px) {
+  .app-main {
+    padding: 1rem 0.75rem;
+    padding-left: calc(env(safe-area-inset-left) + 0.75rem);
+    padding-right: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  .card {
+    padding: 0.9rem;
   }
 }
 
@@ -716,6 +831,12 @@ select:focus,
   padding: 0.7rem 0.8rem;
   border-radius: var(--radius);
   min-width: 0;
+}
+
+/* Odd card count (5 stat tiles in the bill editor): the leftover card spans
+   the full row instead of leaving a half-width cell. */
+.stat-card:last-child:nth-child(odd) {
+  grid-column: span 2;
 }
 
 .stat-market  { background: rgba(37, 99, 235, 0.12); }
@@ -832,24 +953,28 @@ select:focus,
   transform: rotate(180deg);
 }
 
-/* Small ✕ on a draft item summary — removes the line from the bill. */
+/* Small ✕ on a draft item summary — removes the line from the bill.
+   44px tap target, negative margin so the summary row height is unchanged. */
 .item-remove {
   flex: none;
-  width: 1.4rem;
-  height: 1.4rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: -0.4rem;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 50%;
   background: transparent;
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   line-height: 1;
   cursor: pointer;
 }
 
-.item-remove:hover {
-  color: var(--negative);
-  border-color: var(--negative);
+@media (hover: hover) {
+  .item-remove:hover {
+    color: var(--negative);
+    border-color: var(--negative);
+  }
 }
 
 .item-icon {
@@ -915,6 +1040,17 @@ select:focus,
   font-size: 0.95rem;
   width: 100%;
   min-width: 0;
+}
+
+/* Inline editor cells stay compact on desktop but get the 16px touch-safe
+   size on touch devices and narrow viewports (no iOS zoom); the 44px floor
+   comes from the base media rule above. */
+@media (pointer: coarse), (max-width: 768px) {
+  .cell-input,
+  .item-detail input,
+  .item-detail select {
+    font-size: 1rem;
+  }
 }
 
 .item-line-total {
@@ -994,13 +1130,16 @@ select:focus,
 }
 
 /* --- Bill card adjustments ----------------------------------------------------
-   Editable controls inside the summary cards stay visually quiet: smaller
-   font than the card value so the cards don't feel convoluted. */
-.stat-card-input,
-.stat-card select {
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.3rem 0.45rem;
+   Editable controls inside the summary cards stay visually quiet on fine
+   pointers: smaller font than the card value so the cards don't feel
+   convoluted. Touch keeps the 16px zoom-proof size from the base rule. */
+@media (hover: hover) and (pointer: fine) {
+  .stat-card-input,
+  .stat-card select {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.3rem 0.45rem;
+  }
 }
 
 /* Bottom blocks (totals + meta row) share identical input sizing so the
@@ -1011,8 +1150,8 @@ select:focus,
   width: 100%;
   min-width: 0;
   padding: 0.4rem 0.5rem;
-  font-size: 0.95rem;
-  height: 2.3rem;
+  font-size: 1rem;
+  min-height: 44px;
   box-sizing: border-box;
 }
 
@@ -1027,6 +1166,23 @@ select:focus,
   .bill-totals .item-field-grid,
   .bill-meta-edit {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Primary actions become full-width tappable rows on phones. */
+  .bill-actions .btn,
+  .camera-row .btn {
+    flex: 1 1 auto;
+  }
+
+  /* Create forms stack: one full-width field per row, buttons stretch. */
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .form-row input,
+  .form-row select {
+    min-width: 0;
   }
 }
 
@@ -1064,14 +1220,16 @@ select:focus,
   transition: height 0.2s ease;
 }
 
-.bar-chart-bar:hover {
-  background: var(--accent-hover);
+@media (hover: hover) {
+  .bar-chart-bar:hover {
+    background: var(--accent-hover);
+  }
 }
 
 .bar-chart-axis {
   display: flex;
   gap: 2px;
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
 }
 
@@ -1080,4 +1238,40 @@ select:focus,
   text-align: center;
   min-width: 0;
 }
-.dialog-backdrop{position:fixed;inset:0;background:rgb(16 24 40/.5);display:flex;align-items:center;justify-content:center;padding:1rem;z-index:100}.dialog{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);max-width:420px;width:100%;padding:1.1rem 1.25rem}.dialog-title{margin:0 0 .4rem;font-size:1.05rem}.dialog-actions{display:flex;justify-content:flex-end;margin-top:1rem}
+
+/* --- Dialogs ----------------------------------------------------------------- */
+/* Tall dialogs scroll inside the backdrop instead of clipping (the on-screen
+   keyboard can easily push a dialog past the viewport on a phone). */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(16 24 40 / 0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 1rem;
+  z-index: 100;
+}
+
+.dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-width: 420px;
+  width: 100%;
+  margin-block: 10vh;
+  padding: 1.1rem 1.25rem;
+}
+
+.dialog-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
