@@ -1,40 +1,23 @@
-/* Design tokens — light is the default, dark adapts via prefers-color-scheme.
-   Warm cream ground, white cards, ink accent and a gold highlight, following
-   the mobile reference design. */
+/* Design tokens — GitHub-dark style single theme (dark-native palette).
+   Canvas #0d1117, card slate #161b22, borders #30363d; primary metric blue,
+   emerald/coral status, violet for fixed costs, amber for flexible spend. */
 :root {
-  color-scheme: light dark;
-  --bg: #f3efe6;
-  --surface: #ffffff;
-  --text: #26221b;
-  --text-muted: #857d6c;
-  --border: #e6dfd0;
-  --accent: #26221b; /* ink — primary buttons, active pills */
-  --accent-hover: #3d372c;
-  --accent-contrast: #ffffff;
-  --gold: #d99e2e; /* progress, FAB, chart bars */
-  --gold-hover: #c4891d;
-  --positive: #1f7a3d;
-  --negative: #c23b2e;
-  --shadow: 0 1px 2px rgb(70 58 35 / 0.06), 0 4px 14px rgb(70 58 35 / 0.07);
+  color-scheme: dark;
+  --bg: #0d1117; /* base canvas */
+  --surface: #161b22; /* card container */
+  --text: #f0f6fc; /* primary text */
+  --text-muted: #8b949e; /* secondary text */
+  --border: #30363d; /* borders & dividers */
+  --accent: #58a6ff; /* primary metric blue — buttons, active pills, focus */
+  --accent-hover: #79c0ff;
+  --accent-contrast: #0d1117;
+  --gold: #d29922; /* warm amber — progress, FAB, bars, flexible spend */
+  --gold-hover: #e3b341;
+  --positive: #3fb950; /* emerald — safety, savings, underspending */
+  --negative: #f85149; /* coral — over budget, warnings */
+  --violet: #8957e5; /* fixed expenses, recurring bills */
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.35);
   --radius: 16px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17140f;
-    --surface: #211d16;
-    --text: #ece7db;
-    --text-muted: #9c9382;
-    --border: #353025;
-    --accent: #ece7db;
-    --accent-hover: #fffdf6;
-    --accent-contrast: #201c14;
-    --gold: #d9a53f;
-    --gold-hover: #e6b455;
-    --positive: #4ade80;
-    --negative: #f87171;
-    --shadow: 0 1px 3px rgb(0 0 0 / 0.4);
-  }
 }
 
 * {
@@ -190,7 +173,7 @@ body {
 
 /* Currency-tile tint (amber family, matching the 4-card dashboard rhythm). */
 .stat-currency {
-  background: rgba(217, 119, 6, 0.12);
+  background: rgba(210, 153, 34, 0.12);
 }
 
 .two-col {
@@ -283,7 +266,7 @@ select:focus,
 
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 
 @media (hover: hover) {
@@ -486,6 +469,10 @@ select:focus,
   font-size: 0.9rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.budget-status.ok {
+  color: var(--positive);
 }
 
 .budget-status.over {
@@ -866,7 +853,7 @@ select:focus,
   }
 
   .tab-link.active {
-    color: var(--text);
+    color: var(--accent);
   }
 
   /* Center quick-action button, lifted over the bar's top edge. */
@@ -885,12 +872,12 @@ select:focus,
     margin-top: -1.5rem;
     border: none;
     border-radius: 50%;
-    background: var(--gold);
-    color: #201c14;
+    background: var(--accent);
+    color: var(--accent-contrast);
     font-size: 1.8rem;
     font-weight: 400;
     line-height: 1;
-    box-shadow: 0 6px 16px rgb(150 110 20 / 0.4);
+    box-shadow: 0 6px 16px rgb(56 139 253 / 0.35);
     cursor: pointer;
     transition: transform 0.15s ease;
   }
@@ -950,7 +937,7 @@ select:focus,
     position: fixed;
     inset: 0;
     z-index: 75;
-    background: rgb(20 16 8 / 0.4);
+    background: rgb(1 4 9 / 0.6);
   }
 
   .more-sheet {
@@ -990,7 +977,8 @@ select:focus,
   }
 
   .more-link.active {
-    background: var(--bg);
+    background: rgba(88, 166, 255, 0.12);
+    color: var(--accent);
   }
 
   .more-icon {
@@ -1074,10 +1062,10 @@ select:focus,
   grid-column: span 2;
 }
 
-.stat-market  { background: rgba(37, 99, 235, 0.12); }
-.stat-total   { background: rgba(21, 128, 61, 0.14); }
-.stat-account { background: rgba(147, 51, 234, 0.12); }
-.stat-savings { background: rgba(217, 119, 6, 0.15); }
+.stat-market  { background: rgba(88, 166, 255, 0.14); }
+.stat-total   { background: rgba(46, 160, 67, 0.16); }
+.stat-account { background: rgba(137, 87, 229, 0.16); }
+.stat-savings { background: rgba(210, 153, 34, 0.16); }
 
 .stat-card-label {
   font-size: 0.72rem;
@@ -1125,8 +1113,8 @@ select:focus,
 .bill-warning {
   padding: 0.6rem 0.75rem;
   border-radius: var(--radius);
-  background: rgba(220, 38, 38, 0.12);
-  border: 1px solid rgba(220, 38, 38, 0.4);
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.45);
   color: var(--negative);
   font-size: 0.88rem;
   margin-bottom: 0.75rem;
@@ -1481,7 +1469,7 @@ select:focus,
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgb(16 24 40 / 0.5);
+  background: rgb(1 4 9 / 0.6);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1513,45 +1501,28 @@ select:focus,
 }
 
 /* --- Analytics charts -------------------------------------------------------- */
-/* Categorical ramp for chart series + a one-hue sequential ramp for the
-   heatmap. Both modes are defined explicitly (dark is not a flip): hues are
-   re-tuned for the dark surfaces rather than inverted. All text stays on
-   --text tokens; series color is never the only cue (legend + tooltips). */
+/* Categorical ramp for chart series + the 4-step green heatmap scale from the
+   palette spec (no-activity → #39d353). Single dark theme: the primary metric
+   accents lead the ramp — blue (run rate), violet (fixed), green (positive),
+   amber (discretionary) — then color-blind-safe extensions. Series color is
+   never the only cue (legend + tooltips). */
 :root {
-  --chart-1: #2a78d6;
-  --chart-2: #e06a2e;
-  --chart-3: #199e70;
-  --chart-4: #c07d00;
-  --chart-5: #cf5f8d;
-  --chart-6: #4a7d2c;
-  --chart-7: #6a5cc7;
-  --chart-8: #c44242;
-  --seq-0: var(--surface);
-  --seq-1: #dbe8f9;
-  --seq-2: #b3cff2;
-  --seq-3: #84b0e9;
-  --seq-4: #5490de;
-  --seq-5: #2a70c8;
+  --chart-1: #58a6ff;
+  --chart-2: #d29922;
+  --chart-3: #3fb950;
+  --chart-4: #8957e5;
+  --chart-5: #db61a2;
+  --chart-6: #39c5cf;
+  --chart-7: #f0883e;
+  --chart-8: #a371f7;
+  --seq-0: #161b22;
+  --seq-1: #033a16;
+  --seq-2: #0e4429;
+  --seq-3: #006d32;
+  --seq-4: #26a148;
+  --seq-5: #39d353;
   --chart-grid: var(--border);
   --chart-axis: var(--text-muted);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --chart-1: #5b9be8;
-    --chart-2: #e8895a;
-    --chart-3: #3cb98c;
-    --chart-4: #d9a03e;
-    --chart-5: #dd85ab;
-    --chart-6: #86b565;
-    --chart-7: #9a8ee0;
-    --chart-8: #e07a7a;
-    --seq-1: #24384f;
-    --seq-2: #2d4a6b;
-    --seq-3: #3a618e;
-    --seq-4: #4d80b8;
-    --seq-5: #6ba3d9;
-  }
 }
 
 /* Chart layout. Two large charts, then a row of four cards (single column

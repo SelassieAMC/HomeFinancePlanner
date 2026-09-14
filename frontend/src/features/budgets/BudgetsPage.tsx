@@ -191,7 +191,11 @@ function BudgetCard({
           style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
         />
       </div>
-      <div className={over && !isClosed ? 'budget-status over' : 'budget-status'}>
+      <div
+        className={
+          isClosed ? 'budget-status' : over ? 'budget-status over' : 'budget-status ok'
+        }
+      >
         {isClosed
           ? `Closed · spent ${formatCents(lifetimeSpent, currency)} of ${formatCents(
               budget.amount_cents,
