@@ -83,6 +83,7 @@ type Services struct {
 	Summary      *SummaryService
 	Settings     *SettingsService
 	Bills        *BillService
+	Analytics    *AnalyticsService
 }
 
 // New wires services onto their stores.
@@ -96,6 +97,7 @@ func New(
 	settings *SettingsService,
 	bills *BillService,
 	fx *FXService,
+	analytics *AnalyticsService,
 ) *Services {
 	return &Services{
 		Accounts:     &AccountService{accounts: accounts},
@@ -106,5 +108,6 @@ func New(
 		Summary:      &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},
 		Settings:     settings,
 		Bills:        bills,
+		Analytics:    analytics,
 	}
 }

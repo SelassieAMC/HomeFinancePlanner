@@ -24,3 +24,5 @@ frontend/.vite/
 # Editors
 .idea/
 .vscode/
+
+**/node_modules/

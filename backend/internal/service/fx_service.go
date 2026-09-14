@@ -135,6 +135,17 @@ func (c *converter) add(currency string, cents int64) int64 {
 	return fx.ConvertCents(cents, rate)
 }
 
+// addFloat converts a non-integer amount (e.g. a per-base-unit price) into
+// the base currency, same 1:1-with-warning convention as add.
+func (c *converter) addFloat(currency string, v float64) float64 {
+	rate, ok := c.snap.Rate(currency, c.base)
+	if !ok {
+		rate = 1
+		c.missing[currency] = true
+	}
+	return v * rate
+}
+
 // warnings returns the sorted currencies that were shown 1:1.
 func (c *converter) warnings() []string {
 	out := make([]string, 0, len(c.missing))

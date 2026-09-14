@@ -24,6 +24,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	billH := &handlers.BillHandler{Svc: svc.Bills}
 	storeH := &handlers.StoreHandler{Svc: svc.Stores}
 	settingsH := &handlers.SettingsHandler{Svc: svc.Settings}
+	analyticsH := &handlers.AnalyticsHandler{Svc: svc.Analytics}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -51,6 +52,15 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("DELETE /api/v1/budgets/{id}", budgetH.Delete)
 
 	mux.HandleFunc("GET /api/v1/summary", summaryH.Get)
+
+	// Analytics: dashboard chart aggregates. All literal routes — no wildcard
+	// interactions with the {id} routes above.
+	mux.HandleFunc("GET /api/v1/analytics/store-price-index", analyticsH.StorePriceIndex)
+	mux.HandleFunc("GET /api/v1/analytics/category-sunburst", analyticsH.CategorySunburst)
+	mux.HandleFunc("GET /api/v1/analytics/run-rate", analyticsH.RunRate)
+	mux.HandleFunc("GET /api/v1/analytics/price-index", analyticsH.PriceIndex)
+	mux.HandleFunc("GET /api/v1/analytics/spend-heatmap", analyticsH.SpendHeatmap)
+	mux.HandleFunc("GET /api/v1/analytics/fixed-split", analyticsH.FixedSplit)
 
 	// Scan flow: drafts live in bill_scans until the user confirms or discards.
 	// POST /scan returns immediately with status "analyzing"; the client polls

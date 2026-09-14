@@ -34,6 +34,26 @@ export function monthBounds(month: string): { from: string; to: string } {
   };
 }
 
+/** The month (YYYY-MM) containing the given date. */
+export function monthOf(iso: string): string {
+  return iso.slice(0, 7);
+}
+
+/** Shift a YYYY-MM month by whole months. */
+export function shiftMonth(month: string, delta: number): string {
+  const parts = month.split('-').map(Number);
+  const d = new Date(parts[0] ?? 2000, (parts[1] ?? 1) - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Inclusive range covering the last `monthsBack` calendar months plus the
+ *  month containing `anchorISO` itself (e.g. anchor Sep 14, 6 → Apr 1–Sep 30).
+ *  Anchored on the period end so past periods stay self-consistent. */
+export function monthWindow(anchorISO: string, monthsBack: number): { from: string; to: string } {
+  const end = monthOf(anchorISO);
+  return { from: monthBounds(shiftMonth(end, -monthsBack)).from, to: monthBounds(end).to };
+}
+
 /** Today as YYYY-MM-DD in local time. */
 export function todayISO(): string {
   return toISO(new Date());
@@ -127,48 +147,3 @@ export function periodLabel(period: Period): string {
   }
 }
 
-const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
-const MONTH_LABELS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-] as const;
-
-/** One chart bar: a display label plus the (already base-currency) cents. */
-export interface ChartBucket {
-  label: string;
-  title: string;
-  cents: number;
-}
-
-/** Turn the API's per-day expense rows into chart buckets for the period:
- *  weekly/monthly periods get one bar per day, yearly periods get one bar
- *  per month. Days/months without spending render as zero buckets. */
-export function expenseBuckets(period: Period, daily: { date: string; expense_cents: number }[]): ChartBucket[] {
-  const byDate = new Map(daily.map((d) => [d.date, d.expense_cents]));
-  const buckets: ChartBucket[] = [];
-
-  if (period.type === 'year') {
-    const year = Number(period.start.slice(0, 4));
-    for (let m = 0; m < 12; m++) {
-      const monthKey = `${year}-${String(m + 1).padStart(2, '0')}`;
-      let cents = 0;
-      for (const [date, amount] of byDate) {
-        if (date.startsWith(monthKey)) cents += amount;
-      }
-      buckets.push({ label: MONTH_LABELS[m] ?? '', title: monthKey, cents });
-    }
-    return buckets;
-  }
-
-  // Day/week/month periods: one bucket per day between start and end.
-  for (let d = fromISO(period.start); toISO(d) <= period.end; d.setDate(d.getDate() + 1)) {
-    const iso = toISO(d);
-    const weekday = WEEKDAY_LABELS[(d.getDay() + 6) % 7] ?? '';
-    buckets.push({
-      label: period.type === 'week' ? weekday : String(d.getDate()),
-      title: iso,
-      cents: byDate.get(iso) ?? 0,
-    });
-  }
-  return buckets;
-}

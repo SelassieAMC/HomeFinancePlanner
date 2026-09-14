@@ -72,8 +72,10 @@ func run() error {
 	storeSvc := service.NewStoreService(stores, cfg.StoresPath)
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
 		accounts, categories, stores, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
+	analyticsRepo := repository.NewAnalyticsRepository(db)
+	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
-	svc := service.New(accounts, categories, storeSvc, transactions, budgets, summary, settingsSvc, billSvc, fxSvc)
+	svc := service.New(accounts, categories, storeSvc, transactions, budgets, summary, settingsSvc, billSvc, fxSvc, analyticsSvc)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

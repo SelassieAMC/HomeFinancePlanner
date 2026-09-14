@@ -98,6 +98,7 @@ type Category struct {
 	Kind           string    `json:"kind"`                  // 'product' (bill items) vs 'expense' (budgets)
 	IsSystem       bool      `json:"is_system"`             // seeded taxonomy row
 	AllowsNegative bool      `json:"allows_negative"`       // deposit/refund lines (Pfand, Leergut) may carry negative prices
+	IsFixed        bool      `json:"is_fixed"`              // recurring commitment (rent, utilities, insurance) vs discretionary
 	CreatedAt      time.Time `json:"created_at"`
 }
 

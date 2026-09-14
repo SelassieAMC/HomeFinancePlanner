@@ -123,7 +123,6 @@ body {
   flex: 1;
   padding: 1.5rem 2rem;
   max-width: 1100px;
-  margin-inline: auto;
 }
 
 /* --- Page primitives ------------------------------------------------------- */
@@ -1274,4 +1273,203 @@ select:focus,
   display: flex;
   justify-content: flex-end;
   margin-top: 1rem;
+}
+
+/* --- Analytics charts -------------------------------------------------------- */
+/* Categorical ramp for chart series + a one-hue sequential ramp for the
+   heatmap. Both modes are defined explicitly (dark is not a flip): hues are
+   re-tuned for the dark surfaces rather than inverted. All text stays on
+   --text tokens; series color is never the only cue (legend + tooltips). */
+:root {
+  --chart-1: #2a78d6;
+  --chart-2: #e06a2e;
+  --chart-3: #199e70;
+  --chart-4: #c07d00;
+  --chart-5: #cf5f8d;
+  --chart-6: #4a7d2c;
+  --chart-7: #6a5cc7;
+  --chart-8: #c44242;
+  --seq-0: var(--surface);
+  --seq-1: #dbe8f9;
+  --seq-2: #b3cff2;
+  --seq-3: #84b0e9;
+  --seq-4: #5490de;
+  --seq-5: #2a70c8;
+  --chart-grid: var(--border);
+  --chart-axis: var(--text-muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-1: #5b9be8;
+    --chart-2: #e8895a;
+    --chart-3: #3cb98c;
+    --chart-4: #d9a03e;
+    --chart-5: #dd85ab;
+    --chart-6: #86b565;
+    --chart-7: #9a8ee0;
+    --chart-8: #e07a7a;
+    --seq-1: #24384f;
+    --seq-2: #2d4a6b;
+    --seq-3: #3a618e;
+    --seq-4: #4d80b8;
+    --seq-5: #6ba3d9;
+  }
+}
+
+/* Chart layout. Two large charts, then a row of four cards (single column
+   under 900px). min-width: 0 is required or recharts' SVG overflows the
+   grid track. */
+.chart-grid-2 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+}
+
+.chart-grid-4 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+@media (max-width: 900px) {
+  .chart-grid-2,
+  .chart-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chart-card {
+  min-width: 0;
+}
+
+.chart-card .card-title {
+  margin-bottom: 0.75rem;
+}
+
+.chart-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: -0.5rem 0 0.75rem;
+}
+
+/* ResponsiveContainer needs a sized parent. */
+.chart-body {
+  height: 280px;
+}
+
+.chart-body-tall {
+  height: 300px;
+}
+
+/* Recessive recharts chrome: grid hairlines, muted tick text. */
+.recharts-cartesian-axis-tick text {
+  fill: var(--chart-axis);
+  font-size: 11px;
+}
+
+.recharts-cartesian-grid line {
+  stroke: var(--chart-grid);
+}
+
+.recharts-surface {
+  overflow: visible;
+}
+
+.recharts-wrapper {
+  font-size: 0.8rem;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.6rem;
+}
+
+.chart-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+/* Custom recharts tooltip (the default one is hardcoded white). */
+.chart-tooltip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.78rem;
+  min-width: 140px;
+}
+
+.chart-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: var(--text);
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text);
+}
+
+.chart-tooltip-row + .chart-tooltip-row {
+  margin-top: 0.15rem;
+}
+
+/* Sunburst */
+.sunburst-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.sunburst-segment {
+  stroke: var(--surface);
+  stroke-width: 1;
+  transition: opacity 0.12s ease;
+  cursor: default;
+}
+
+.sunburst-segment.dim {
+  opacity: 0.35;
+}
+
+/* Heatmap: row label column + 7 day columns. */
+.heatmap {
+  display: grid;
+  grid-template-columns: auto repeat(7, 1fr);
+  gap: 3px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.heatmap-corner {
+  visibility: hidden;
+}
+
+.heatmap-day {
+  text-align: center;
+  padding-block: 2px;
+}
+
+.heatmap-label {
+  align-self: center;
+  padding-right: 0.4rem;
+  white-space: nowrap;
+}
+
+.heatmap-cell {
+  aspect-ratio: 1.6;
+  border-radius: 4px;
+  background: var(--seq-0);
+  border: 1px solid var(--border);
 }
