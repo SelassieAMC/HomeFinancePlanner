@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"home-finance-planner/backend/internal/crypto"
@@ -48,12 +49,15 @@ func NewSettingsService(settings SettingsStore, box SecretBox, tester ProviderTe
 	return &SettingsService{settings: settings, box: box, tester: tester}
 }
 
-// ListAIProviders returns configured providers with masked API keys.
+// ListAIProviders returns configured providers with masked API keys. The
+// default flag is normalized in memory so legacy stored lists (saved before
+// is_default existed) already show a default without waiting for a save.
 func (s *SettingsService) ListAIProviders(ctx context.Context) ([]domain.AIProvider, error) {
 	stored, err := s.storedProviders(ctx)
 	if err != nil {
 		return nil, err
 	}
+	normalizeDefaults(stored)
 
 	out := make([]domain.AIProvider, 0, len(stored))
 	for _, p := range stored {
@@ -70,31 +74,49 @@ func (s *SettingsService) ListAIProviders(ctx context.Context) ([]domain.AIProvi
 
 // ProviderInput is what the UI sends when saving provider configuration.
 type ProviderInput struct {
-	ID      string
-	Type    domain.AIProviderType
-	BaseURL string
-	APIKey  string // plaintext from the user; empty = keep stored key
-	Model   string
+	ID        string
+	Type      domain.AIProviderType
+	BaseURL   string
+	APIKey    string // plaintext from the user; empty = keep stored key
+	Model     string
+	IsDefault bool
 }
 
 // SaveAIProviders persists the provider list, encrypting API keys. An empty
-// APIKey in the input means "keep the previously stored key".
+// APIKey in the input means "keep the previously stored key". IDs are fully
+// independent per connector: an empty ID always generates a fresh one that
+// cannot collide with a stored connector (so a new connector never inherits
+// another one's stored key or config), and duplicate IDs within a request are
+// rejected. Exactly one connector ends up flagged as the default.
 func (s *SettingsService) SaveAIProviders(ctx context.Context, inputs []ProviderInput) ([]domain.AIProvider, error) {
 	stored, err := s.storedProviders(ctx)
 	if err != nil {
 		return nil, err
 	}
 	storedByKey := make(map[string]domain.AIProvider, len(stored))
+	maxN := 0
 	for _, p := range stored {
 		storedByKey[p.ID] = p
+		if n, ok := providerNumber(p.ID); ok && n > maxN {
+			maxN = n
+		}
 	}
 
+	used := make(map[string]bool, len(stored)+len(inputs))
 	out := make([]domain.AIProvider, 0, len(inputs))
-	for i, in := range inputs {
+	for _, in := range inputs {
 		id := strings.TrimSpace(in.ID)
 		if id == "" {
-			id = fmt.Sprintf("provider-%d", i+1)
+			// Generate past every stored and already-assigned id so a new
+			// connector can never merge into an existing one.
+			maxN++
+			id = fmt.Sprintf("provider-%d", maxN)
 		}
+		if used[id] {
+			return nil, validationError("duplicate provider id %q", id)
+		}
+		used[id] = true
+
 		if err := s.validateProvider(in, storedByKey[id]); err != nil {
 			return nil, err
 		}
@@ -109,13 +131,15 @@ func (s *SettingsService) SaveAIProviders(ctx context.Context, inputs []Provider
 		}
 
 		out = append(out, domain.AIProvider{
-			ID:      id,
-			Type:    in.Type,
-			BaseURL: strings.TrimSpace(in.BaseURL),
-			APIKey:  apiKey,
-			Model:   strings.TrimSpace(in.Model),
+			ID:        id,
+			Type:      in.Type,
+			BaseURL:   strings.TrimSpace(in.BaseURL),
+			APIKey:    apiKey,
+			Model:     strings.TrimSpace(in.Model),
+			IsDefault: in.IsDefault,
 		})
 	}
+	normalizeDefaults(out)
 
 	if err := s.persistProviders(ctx, out); err != nil {
 		return nil, err
@@ -150,15 +174,21 @@ func (s *SettingsService) GetProvider(ctx context.Context, id string) (domain.AI
 	return domain.AIProvider{}, fmt.Errorf("%w: provider %q", domain.ErrNotFound, id)
 }
 
-// FirstProvider returns the first configured provider, used when the client
-// does not pin one for extraction.
-func (s *SettingsService) FirstProvider(ctx context.Context) (domain.AIProvider, error) {
+// DefaultProvider returns the connector flagged as default, falling back to
+// the first configured one (also for legacy stored lists without any flag).
+// Used when the client does not pin a provider for extraction.
+func (s *SettingsService) DefaultProvider(ctx context.Context) (domain.AIProvider, error) {
 	stored, err := s.storedProviders(ctx)
 	if err != nil {
 		return domain.AIProvider{}, err
 	}
 	if len(stored) == 0 {
 		return domain.AIProvider{}, fmt.Errorf("%w: no AI provider configured", domain.ErrNotFound)
+	}
+	for _, p := range stored {
+		if p.IsDefault {
+			return s.GetProvider(ctx, p.ID)
+		}
 	}
 	return s.GetProvider(ctx, stored[0].ID)
 }
@@ -243,4 +273,40 @@ func decodeStoredProviders(raw string) ([]domain.AIProvider, error) {
 		return nil, fmt.Errorf("decode stored providers: %w", err)
 	}
 	return stored, nil
+}
+
+// normalizeDefaults enforces the default-connector invariant in place: with a
+// single provider it is always the default; with none flagged the first is;
+// with several flagged the first in list order wins. Deterministic so the
+// read path and the write path agree even for legacy stored lists.
+func normalizeDefaults(providers []domain.AIProvider) {
+	if len(providers) == 0 {
+		return
+	}
+	marked := false
+	for i := range providers {
+		if providers[i].IsDefault {
+			if marked {
+				providers[i].IsDefault = false
+			} else {
+				marked = true
+			}
+		}
+	}
+	if !marked {
+		providers[0].IsDefault = true
+	}
+}
+
+// providerNumber extracts the numeric suffix of a generated "provider-N" id.
+func providerNumber(id string) (int, bool) {
+	rest, ok := strings.CutPrefix(id, "provider-")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }

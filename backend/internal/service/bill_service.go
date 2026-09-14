@@ -656,12 +656,13 @@ func (s *BillService) ReceiptImagePath(ctx context.Context, billID int64) (strin
 	return bill.ImagePath, detectMime(bill.ImagePath), nil
 }
 
-// resolveProvider picks the requested provider or falls back to the first.
+// resolveProvider picks the requested provider or falls back to the default
+// connector (first configured one when none is flagged).
 func (s *BillService) resolveProvider(ctx context.Context, providerID string) (domain.AIProvider, error) {
 	if strings.TrimSpace(providerID) != "" {
 		return s.providers.GetProvider(ctx, providerID)
 	}
-	return s.providers.FirstProvider(ctx)
+	return s.providers.DefaultProvider(ctx)
 }
 
 // buildBill validates the confirmed draft and turns it into a Bill ready for

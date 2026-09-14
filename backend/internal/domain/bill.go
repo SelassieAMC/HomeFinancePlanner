@@ -201,13 +201,16 @@ func (t AIProviderType) Valid() bool {
 }
 
 // AIProvider is a configured AI connector used for bill extraction.
-// APIKey is stored encrypted at rest and masked in API responses.
+// APIKey is stored encrypted at rest and masked in API responses. IsDefault
+// marks the connector used when a scan does not pin one; the settings service
+// normalizes the list so at most one provider is flagged.
 type AIProvider struct {
-	ID      string         `json:"id"`
-	Type    AIProviderType `json:"type"`
-	BaseURL string         `json:"base_url,omitempty"`
-	APIKey  string         `json:"api_key,omitempty"` // masked in responses; empty = keep existing
-	Model   string         `json:"model"`
+	ID        string         `json:"id"`
+	Type      AIProviderType `json:"type"`
+	BaseURL   string         `json:"base_url,omitempty"`
+	APIKey    string         `json:"api_key,omitempty"` // masked in responses; empty = keep existing
+	Model     string         `json:"model"`
+	IsDefault bool           `json:"is_default"`
 }
 
 var ErrKeyNotConfigured = errors.New("no encryption key configured")

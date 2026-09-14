@@ -61,7 +61,9 @@ export function ScanBillsPage() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const firstProvider = providers.data?.[0];
+  // The connector used when the user doesn't pick one: the settings' default
+  // connector, falling back to the first configured.
+  const firstProvider = providers.data?.find((p) => p.is_default) ?? providers.data?.[0];
 
   // Deep link from the bills view: /scan?token=… resumes an existing scan.
   const [searchParams] = useSearchParams();

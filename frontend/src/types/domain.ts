@@ -197,6 +197,8 @@ export interface AIProvider {
   base_url?: string;
   api_key?: string; // masked (••••abcd) in responses
   model: string;
+  /** The connector used when a scan does not pin one. */
+  is_default: boolean;
 }
 
 export interface BillStatsRow {

@@ -629,6 +629,18 @@ select:focus,
   color: var(--text);
 }
 
+/* Default-connector marker in the settings list. */
+.default-badge {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.default-radio {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 /* --- Bill draft view ------------------------------------------------------- */
 .bill-draft {
   display: grid;

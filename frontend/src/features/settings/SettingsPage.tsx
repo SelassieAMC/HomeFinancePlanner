@@ -43,6 +43,7 @@ interface DraftProvider {
   api_key: string; // what the user has typed this session (never echoed back)
   stored_key_mask: string; // masked key from the server, e.g. ••••abcd
   model: string;
+  is_default: boolean;
 }
 
 function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
@@ -54,6 +55,7 @@ function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
     api_key: '',
     stored_key_mask: p.api_key ?? '',
     model: p.model,
+    is_default: p.is_default ?? false,
   };
 }
 
@@ -88,7 +90,6 @@ export function SettingsPage() {
   }
 
   const [drafts, setDrafts] = useState<DraftProvider[] | null>(null);
-  const [nextKey, setNextKey] = useState<DraftKey>(1);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
@@ -99,6 +100,13 @@ export function SettingsPage() {
     drafts ??
     (saved.data ?? []).map((p, i) => toDraft(p, i + 1));
 
+  // Editing keys must be unique against whatever is on screen right now —
+  // derived at mutation time, never from a stale counter (a new connector's
+  // edits used to collide with the first configured one).
+  function nextDraftKey(): DraftKey {
+    return current.reduce((m, d) => Math.max(m, d.key), 0) + 1;
+  }
+
   function update(key: DraftKey, patch: Partial<DraftProvider>) {
     setDrafts(current.map((d) => (d.key === key ? { ...d, ...patch } : d)));
   }
@@ -107,19 +115,26 @@ export function SettingsPage() {
     setDrafts([
       ...current,
       {
-        key: nextKey,
+        key: nextDraftKey(),
         type: 'ollama',
         base_url: '',
         api_key: '',
         stored_key_mask: '',
         model: '',
+        is_default: false,
       },
     ]);
-    setNextKey(nextKey + 1);
   }
 
   function removeProvider(key: DraftKey) {
     setDrafts(current.filter((d) => d.key !== key));
+  }
+
+  // Radio semantics for the default connector: only the clicked one is set.
+  // Exactly-one is enforced server-side on save, and the save response
+  // re-derives the drafts with the authoritative flag.
+  function setDefault(key: DraftKey) {
+    setDrafts(current.map((d) => ({ ...d, is_default: d.key === key })));
   }
 
   async function handleSave() {
@@ -133,11 +148,11 @@ export function SettingsPage() {
         // Empty api_key means "keep the stored one" server-side.
         api_key: d.api_key.trim() || undefined,
         model: d.model.trim(),
+        is_default: d.is_default,
       }));
       const savedList = await settingsApi.saveAIProviders(payload);
       setTestResults({});
       setDrafts(savedList.map((p, i) => toDraft(p, i + 1)));
-      setNextKey(savedList.length + 1);
       saved.reload();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save settings.');
@@ -212,10 +227,11 @@ export function SettingsPage() {
       <h2 className="page-title">AI connectors</h2>
 
       <p className="hint-text">
-        These connectors read receipt photos during bill scanning. Keys are
-        encrypted server-side and never returned in full — the masked value
-        (••••abcd) only shows the last four characters. Leave the key field
-        empty to keep the stored key.
+        These connectors read receipt photos during bill scanning; the one
+        marked default is used unless a scan pins another. Keys are encrypted
+        server-side and never returned in full — the masked value (••••abcd)
+        only shows the last four characters. Leave the key field empty to keep
+        the stored key.
       </p>
 
       {current.length === 0 ? (
@@ -224,10 +240,15 @@ export function SettingsPage() {
         <ItemPanels>
           {current.map((d) => (
             <ItemPanel
-              key={d.key}
+              key={d.id ?? d.key}
               icon="🔌"
               title={providerTypes.find((t) => t.value === d.type)?.label ?? d.type}
-              subtitle={d.model || 'model not set'}
+              subtitle={
+                <>
+                  {d.model || 'model not set'}
+                  {d.is_default && <span className="default-badge"> ★ default</span>}
+                </>
+              }
               value={testResults[d.id as string]?.ok ? '✓' : d.id ? undefined : 'new'}
             >
               <div className="form-grid">
@@ -271,6 +292,15 @@ export function SettingsPage() {
                   value={d.model}
                   placeholder={modelPlaceholder[d.type]}
                   onChange={(e) => update(d.key, { model: e.target.value })}
+                />
+              </label>
+              <label className="default-radio">
+                Default connector
+                <input
+                  type="radio"
+                  name="default-connector"
+                  checked={d.is_default}
+                  onChange={() => setDefault(d.key)}
                 />
               </label>
             </div>
