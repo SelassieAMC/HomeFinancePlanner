@@ -6,7 +6,7 @@ import { categoriesApi } from '../../api/categories';
 import type { Budget } from '../../types/domain';
 import { formatCents } from '../../lib/money';
 import { categoriesBySection } from '../../lib/categories';
-import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
+import { Button, Card, Spinner, ErrorMessage, EmptyState } from '../../components/ui';
 
 // Budgets are open-ended envelopes: they stay open — accumulating attributed
 // spend — until they are marked finished and closed. Progress is lifetime,
@@ -118,11 +118,11 @@ export function BudgetsPage() {
       {budgets.length === 0 ? (
         <EmptyState message="No budgets yet — add your first one above." />
       ) : (
-        <ItemPanels>
+        <div className="budget-list">
           {budgets.map((b) => {
             const lifetime = lifetimeSpentByBudget.get(b.id) ?? 0;
             return (
-              <BudgetPanel
+              <BudgetCard
                 key={b.id}
                 budget={b}
                 categoryName={categoryNames.get(b.category_id) ?? `#${b.category_id}`}
@@ -136,16 +136,16 @@ export function BudgetsPage() {
               />
             );
           })}
-        </ItemPanels>
+        </div>
       )}
     </div>
   );
 }
 
-// BudgetPanel renders one envelope as a collapsible panel: the summary shows
-// the category and lifetime spent/amount; expanding reveals progress and the
-// close/reopen/delete actions.
-function BudgetPanel({
+// BudgetCard renders one envelope in the always-visible progress-card style of
+// the reference design: dot + category + spent/amount up top, the bar, a
+// "left"/"over by" line, and the status/delete actions underneath.
+function BudgetCard({
   budget,
   categoryName,
   categoryIcon,
@@ -163,52 +163,56 @@ function BudgetPanel({
   onDelete: () => void;
 }) {
   const isClosed = budget.status === 'closed';
+  const over = lifetimeSpent > budget.amount_cents;
   const remaining = budget.amount_cents - lifetimeSpent;
   const pct = budget.amount_cents > 0 ? (lifetimeSpent / budget.amount_cents) * 100 : 0;
   return (
-    <ItemPanel
-      icon={categoryIcon ?? '🎯'}
-      title={categoryName}
-      subtitle={isClosed ? 'closed' : `${formatCents(lifetimeSpent, currency)} of ${formatCents(budget.amount_cents, currency)}`}
-      value={formatCents(remaining, currency)}
-      valueClass={remaining < 0 ? 'stat-negative' : ''}
-    >
+    <Card className="budget-card">
+      <div className="budget-head">
+        <span
+          className={
+            isClosed ? 'budget-dot closed' : over ? 'budget-dot over' : 'budget-dot'
+          }
+          aria-hidden="true"
+        />
+        <span className="budget-name">
+          {categoryIcon && <span aria-hidden="true">{categoryIcon} </span>}
+          {categoryName}
+        </span>
+        <span className="budget-amounts">
+          <strong>{formatCents(lifetimeSpent, currency)}</strong>
+          {' / '}
+          {formatCents(budget.amount_cents, currency)}
+        </span>
+      </div>
       <div className="progress-track">
         <div
-          className={remaining < 0 ? 'progress-fill over' : 'progress-fill'}
+          className={over ? 'progress-fill over' : 'progress-fill'}
           style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
         />
       </div>
-      <div className="item-field-grid">
-        <div className="item-field">
-          <span>Amount</span>
-          <strong>{formatCents(budget.amount_cents, currency)}</strong>
-        </div>
-        <div className="item-field">
-          <span>Spent (all time)</span>
-          <span>{formatCents(lifetimeSpent, currency)}</span>
-        </div>
-        <div className="item-field">
-          <span>{remaining < 0 ? 'Overspent' : 'Left'}</span>
-          <span className={remaining < 0 ? 'stat-negative' : ''}>
-            {formatCents(remaining, currency)}
-          </span>
-        </div>
-        <div className="item-field">
-          <span>Status</span>
-          <span>{isClosed ? 'closed' : 'open'}</span>
-        </div>
+      <div className={over && !isClosed ? 'budget-status over' : 'budget-status'}>
+        {isClosed
+          ? `Closed · spent ${formatCents(lifetimeSpent, currency)} of ${formatCents(
+              budget.amount_cents,
+              currency,
+            )}`
+          : over
+            ? `Over by ${formatCents(-remaining, currency)}`
+            : `${formatCents(remaining, currency)} left`}
       </div>
-      <div className="camera-row">
+      <div className="budget-actions">
         {isClosed ? (
           <Button onClick={() => onSetStatus('open')}>Reopen</Button>
         ) : (
-          <Button onClick={() => onSetStatus('closed')}>Mark finished</Button>
+          <Button variant="secondary" onClick={() => onSetStatus('closed')}>
+            Mark finished
+          </Button>
         )}
         <Button variant="danger" onClick={onDelete}>
-          Delete budget
+          Delete
         </Button>
       </div>
-    </ItemPanel>
+    </Card>
   );
 }

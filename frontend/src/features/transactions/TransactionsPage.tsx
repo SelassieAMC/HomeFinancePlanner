@@ -4,7 +4,7 @@ import { transactionsApi, type TransactionFilters } from '../../api/transactions
 import { accountsApi } from '../../api/accounts';
 import { categoriesApi } from '../../api/categories';
 import type { Transaction, TransactionKind } from '../../types/domain';
-import { formatCents, currentMonth } from '../../lib/money';
+import { formatCents, formatSignedCents, currentMonth } from '../../lib/money';
 import { categoriesBySection } from '../../lib/categories';
 import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
@@ -76,6 +76,26 @@ export function TransactionsPage() {
   const categoryNames = new Map((categories.data ?? []).map((c) => [c.id, c.name]));
   const accountNames = new Map((accounts.data ?? []).map((a) => [a.id, a.name]));
 
+  // Group consecutive transactions sharing a date (the list arrives sorted by
+  // date desc) into "TODAY −$60.15"-style sections, like the reference design.
+  const dayGroups: { date: string; label: string; total: number; currency: string; items: Transaction[] }[] = [];
+  for (const t of transactions) {
+    const last = dayGroups[dayGroups.length - 1];
+    const signed = t.kind === 'income' ? t.amount_cents : -t.amount_cents;
+    if (last && last.date === t.date) {
+      last.total += signed;
+      last.items.push(t);
+    } else {
+      dayGroups.push({
+        date: t.date,
+        label: dayLabel(t.date),
+        total: signed,
+        currency: t.currency,
+        items: [t],
+      });
+    }
+  }
+
   return (
     <div className="page">
       <h2 className="page-title">Transactions</h2>
@@ -136,64 +156,103 @@ export function TransactionsPage() {
           onChange={(e) => setMonth(e.target.value)}
           aria-label="Filter by month"
         />
-        <select value={kind} onChange={(e) => setKind(e.target.value as TransactionKind | '')}>
-          <option value="">All kinds</option>
-          <option value="expense">Expenses only</option>
-          <option value="income">Income only</option>
-        </select>
+      </div>
+      <div className="segmented" role="group" aria-label="Filter by kind">
+        {(
+          [
+            ['', 'All'],
+            ['expense', 'Expenses'],
+            ['income', 'Income'],
+          ] as [TransactionKind | '', string][]
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            className={kind === value ? 'active' : ''}
+            aria-pressed={kind === value}
+            onClick={() => setKind(value)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {transactions.length === 0 ? (
         <EmptyState message={`No transactions for ${month}.`} />
       ) : (
-        <ItemPanels>
-          {transactions.map((t) => {
-            const isIncome = t.kind === 'income';
-            const cat = t.category_id ? categoryNames.get(t.category_id) : undefined;
-            const account = accountNames.get(t.account_id);
-            return (
-              <ItemPanel
-                key={t.id}
-                icon={isIncome ? '💰' : '🛒'}
-                title={t.description || '(no description)'}
-                subtitle={`${t.date}${cat ? ` • ${cat}` : ''}`}
-                value={`${isIncome ? '+' : '−'}${formatCents(t.amount_cents, t.currency)}`}
-                valueClass={isIncome ? 'stat-positive' : 'stat-negative'}
-              >
-                <div className="item-field-grid">
-                  <div className="item-field">
-                    <span>Date</span>
-                    <span>{t.date}</span>
-                  </div>
-                  <div className="item-field">
-                    <span>Kind</span>
-                    <span>{t.kind}</span>
-                  </div>
-                  <div className="item-field">
-                    <span>Amount</span>
-                    <strong>{formatCents(t.amount_cents, t.currency)}</strong>
-                  </div>
-                </div>
-                <div className="item-field-grid">
-                  <div className="item-field">
-                    <span>Category</span>
-                    <span>{cat ?? '—'}</span>
-                  </div>
-                  <div className="item-field">
-                    <span>Account</span>
-                    <span>{account ?? `#${t.account_id}`}</span>
-                  </div>
-                </div>
-                <div className="camera-row">
-                  <Button variant="danger" onClick={() => handleDelete(t.id)}>
-                    Delete transaction
-                  </Button>
-                </div>
-              </ItemPanel>
-            );
-          })}
-        </ItemPanels>
+        <div className="day-group">
+          {dayGroups.map((group) => (
+            <section key={group.date} aria-label={`${group.label}, total ${formatCents(group.total, group.currency)}`}>
+              <div className="day-header">
+                <span>{group.label}</span>
+                <span>{formatSignedCents(group.total, group.currency)}</span>
+              </div>
+              <ItemPanels>
+                {group.items.map((t) => {
+                  const isIncome = t.kind === 'income';
+                  const cat = t.category_id ? categoryNames.get(t.category_id) : undefined;
+                  const account = accountNames.get(t.account_id);
+                  return (
+                    <ItemPanel
+                      key={t.id}
+                      icon={isIncome ? '💰' : '🛒'}
+                      title={t.description || '(no description)'}
+                      subtitle={[cat ?? 'Uncategorized', account].filter(Boolean).join(' · ')}
+                      value={formatCents(t.amount_cents, t.currency)}
+                      valueClass={isIncome ? 'stat-positive' : ''}
+                    >
+                      <div className="item-field-grid">
+                        <div className="item-field">
+                          <span>Date</span>
+                          <span>{t.date}</span>
+                        </div>
+                        <div className="item-field">
+                          <span>Kind</span>
+                          <span>{t.kind}</span>
+                        </div>
+                        <div className="item-field">
+                          <span>Amount</span>
+                          <strong>{formatCents(t.amount_cents, t.currency)}</strong>
+                        </div>
+                      </div>
+                      <div className="item-field-grid">
+                        <div className="item-field">
+                          <span>Category</span>
+                          <span>{cat ?? '—'}</span>
+                        </div>
+                        <div className="item-field">
+                          <span>Account</span>
+                          <span>{account ?? `#${t.account_id}`}</span>
+                        </div>
+                      </div>
+                      <div className="camera-row">
+                        <Button variant="danger" onClick={() => handleDelete(t.id)}>
+                          Delete transaction
+                        </Button>
+                      </div>
+                    </ItemPanel>
+                  );
+                })}
+              </ItemPanels>
+            </section>
+          ))}
+        </div>
       )}
     </div>
   );
+}
+
+/** Section header for a transaction day: "Today", "Yesterday", or
+ *  "SAT, SEP 12" for older dates. */
+function dayLabel(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const day = new Date(y ?? 2000, (m ?? 1) - 1, d ?? 1);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysAgo = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  if (daysAgo === 0) return 'Today';
+  if (daysAgo === 1) return 'Yesterday';
+  return day
+    .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    .toUpperCase();
 }
