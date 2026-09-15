@@ -187,6 +187,7 @@ type AIProviderType string
 
 const (
 	AIProviderOllama           AIProviderType = "ollama"
+	AIProviderOllamaWebSearch  AIProviderType = "ollama_web_search"
 	AIProviderOpenAI           AIProviderType = "openai"
 	AIProviderGemini           AIProviderType = "gemini"
 	AIProviderAnthropic        AIProviderType = "anthropic"
@@ -195,7 +196,7 @@ const (
 
 func (t AIProviderType) Valid() bool {
 	switch t {
-	case AIProviderOllama, AIProviderOpenAI, AIProviderGemini, AIProviderAnthropic, AIProviderOpenAICompatible:
+	case AIProviderOllama, AIProviderOllamaWebSearch, AIProviderOpenAI, AIProviderGemini, AIProviderAnthropic, AIProviderOpenAICompatible:
 		return true
 	}
 	return false

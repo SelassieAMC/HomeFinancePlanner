@@ -318,6 +318,7 @@ export interface Bill {
 
 export type AIProviderType =
   | 'ollama'
+  | 'ollama_web_search'
   | 'openai'
   | 'gemini'
   | 'anthropic'

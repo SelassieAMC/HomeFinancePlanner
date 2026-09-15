@@ -129,7 +129,7 @@ func describeSearchError(err error, provider domain.AIProvider, timeout time.Dur
 	detail := cannotSearchDetail(err)
 	if detail != "" {
 		return fmt.Sprintf(
-			"the configured model %q (type %s) cannot search the web — %s. Configure a connector with native web search in Settings (Gemini with google_search, Anthropic with web_search, or an OpenAI search model) and retry",
+			"the configured model %q (type %s) cannot search the web — %s. Configure a connector with native web search in Settings (Gemini with google_search, Anthropic with web_search, an OpenAI search model, or an Ollama web-search connector with an API key) and retry",
 			provider.Model, provider.Type, detail,
 		)
 	}

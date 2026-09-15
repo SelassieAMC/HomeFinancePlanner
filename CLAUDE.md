@@ -157,10 +157,12 @@ unlinked from products. The **purchase cart** keeps its items client-side only
 persisted **offer search** (`offer_searches` table, token-polling pipeline like
 bill scans): the default AI provider is asked for current prices of the cart
 products in the user's local markets. Connector families with native web search
-(Gemini `google_search`, Anthropic `web_search`, OpenAI Responses API `web_search`)
-get the search tool attached; Ollama/openai_compatible are prompted only and any
-failure there becomes an actionable "configure a connector with web search"
-error. The normalized result is stored as JSON and rendered per product with
+(Gemini `google_search`, Anthropic `web_search`, OpenAI Responses API `web_search`,
+and the `ollama_web_search` connector type — key-required — whose backend runs
+Ollama's client-side `web_search`/`web_fetch` tool loop against ollama.com)
+get the search tool attached; plain `ollama`/`openai_compatible` are prompted
+only and any failure there becomes an actionable "configure a connector with
+web search" error. The normalized result is stored as JSON and rendered per product with
 backend-computed `best_price` (green) / `worst_price` (red) flags per product and
 currency; only failed searches are TTL-swept (done rows are the kept record).
 When adding

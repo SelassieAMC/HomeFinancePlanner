@@ -39,7 +39,7 @@ func (e *Extractor) Extract(ctx context.Context, image []byte, mimeType string, 
 	var err error
 
 	switch provider.Type {
-	case domain.AIProviderOllama:
+	case domain.AIProviderOllama, domain.AIProviderOllamaWebSearch:
 		raw, err = e.ollamaChat(ctx, provider, image)
 	case domain.AIProviderOpenAI, domain.AIProviderOpenAICompatible:
 		raw, err = e.openAIChat(ctx, provider, image, mimeType)
@@ -74,6 +74,13 @@ func (e *Extractor) TestConnection(ctx context.Context, provider domain.AIProvid
 	switch provider.Type {
 	case domain.AIProviderOllama:
 		url = base + "/api/tags"
+	case domain.AIProviderOllamaWebSearch:
+		// Two checks: the chat endpoint must answer, and — the point of this
+		// connector family — the ollama.com key must be accepted for search.
+		if err := e.testOllamaChat(ctx, base, provider); err != nil {
+			return err
+		}
+		return e.testOllamaWebSearch(ctx, provider)
 	case domain.AIProviderOpenAI, domain.AIProviderOpenAICompatible:
 		url = base + "/models"
 		auth = func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+provider.APIKey) }
@@ -176,7 +183,7 @@ func truncate(s string, n int) string {
 
 func defaultBaseURL(t domain.AIProviderType) string {
 	switch t {
-	case domain.AIProviderOllama:
+	case domain.AIProviderOllama, domain.AIProviderOllamaWebSearch:
 		return "http://localhost:11434"
 	case domain.AIProviderOpenAI, domain.AIProviderOpenAICompatible:
 		return "https://api.openai.com/v1"

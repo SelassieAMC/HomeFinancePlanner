@@ -11,6 +11,10 @@ import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels 
 
 const providerTypes: { value: AIProviderType; label: string }[] = [
   { value: 'ollama', label: 'Ollama (local, no key)' },
+  {
+    value: 'ollama_web_search',
+    label: 'Ollama web search (key required)',
+  },
   { value: 'openai', label: 'OpenAI' },
   { value: 'gemini', label: 'Google Gemini' },
   { value: 'anthropic', label: 'Anthropic' },
@@ -19,6 +23,7 @@ const providerTypes: { value: AIProviderType; label: string }[] = [
 
 const modelPlaceholder: Record<AIProviderType, string> = {
   ollama: 'llama3.2-vision',
+  ollama_web_search: 'qwen3',
   openai: 'gpt-4o-mini',
   gemini: 'gemini-2.5-flash',
   anthropic: 'claude-haiku-4-5',
@@ -27,6 +32,7 @@ const modelPlaceholder: Record<AIProviderType, string> = {
 
 const baseUrlPlaceholder: Record<AIProviderType, string> = {
   ollama: 'http://localhost:11434',
+  ollama_web_search: 'http://localhost:11434 (https://ollama.com = cloud)',
   openai: 'https://api.openai.com/v1',
   gemini: 'https://generativelanguage.googleapis.com/v1beta',
   anthropic: 'https://api.anthropic.com/v1',
@@ -275,6 +281,12 @@ export function SettingsPage() {
               </label>
               <label>
                 API key{' '}
+                {d.type === 'ollama_web_search' && (
+                  <span className="hint-inline">
+                    required — ollama.com key (ollama.com/settings/keys); powers
+                    web search for offer searches
+                  </span>
+                )}
                 {d.stored_key_mask && (
                   <span className="hint-inline">stored: {d.stored_key_mask}</span>
                 )}

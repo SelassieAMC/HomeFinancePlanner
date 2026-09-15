@@ -204,12 +204,13 @@ func (s *SettingsService) TestProvider(ctx context.Context, id string) error {
 
 func (s *SettingsService) validateProvider(in ProviderInput, stored domain.AIProvider) error {
 	if !in.Type.Valid() {
-		return validationError("type %q must be one of ollama, openai, gemini, anthropic, openai_compatible", in.Type)
+		return validationError("type %q must be one of ollama, ollama_web_search, openai, gemini, anthropic, openai_compatible", in.Type)
 	}
 	if strings.TrimSpace(in.Model) == "" {
 		return validationError("model is required")
 	}
-	// Ollama is local and needs no key; hosted providers need one (either
+	// Plain Ollama is local and needs no key; every other family — including
+	// ollama_web_search, whose web tools call ollama.com — needs one (either
 	// newly supplied or already stored).
 	if in.Type != domain.AIProviderOllama &&
 		strings.TrimSpace(in.APIKey) == "" && stored.APIKey == "" {

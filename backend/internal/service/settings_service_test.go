@@ -333,3 +333,65 @@ func TestDefaultProvider(t *testing.T) {
 		}
 	})
 }
+
+// The Ollama web-search family calls ollama.com for its web tools, so unlike
+// plain ollama it requires an API key (new or already stored).
+func TestSaveOllamaWebSearchRequiresKey(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("without key rejected", func(t *testing.T) {
+		store := &fakeSettingsStore{data: map[string]string{}}
+		svc := newSettingsServiceForTest(store)
+		_, err := svc.SaveAIProviders(ctx, []ProviderInput{
+			{Type: domain.AIProviderOllamaWebSearch, Model: "qwen3"},
+		})
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("error = %v, want domain.ErrValidation", err)
+		}
+		if stored := storedProvidersFromStore(t, store); stored != nil {
+			t.Errorf("rejected save must not persist: %+v", stored)
+		}
+	})
+
+	t.Run("with key saved", func(t *testing.T) {
+		store := &fakeSettingsStore{data: map[string]string{}}
+		svc := newProviderTestService(store)
+		out, err := svc.SaveAIProviders(ctx, []ProviderInput{
+			{Type: domain.AIProviderOllamaWebSearch, APIKey: "ok-1", Model: "qwen3"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored := storedProvidersFromStore(t, store)
+		if len(stored) != 1 || stored[0].APIKey != "enc:ok-1" {
+			t.Errorf("stored = %+v", stored)
+		}
+		if out[0].Type != domain.AIProviderOllamaWebSearch {
+			t.Errorf("type = %q, want ollama_web_search", out[0].Type)
+		}
+	})
+
+	t.Run("stored key satisfies requirement on later saves", func(t *testing.T) {
+		store := &fakeSettingsStore{data: map[string]string{}}
+		seedProviders(t, store, []domain.AIProvider{
+			{ID: "provider-1", Type: domain.AIProviderOllamaWebSearch, APIKey: "enc:ok-1", Model: "qwen3"},
+		})
+		svc := newProviderTestService(store)
+		// Empty key means "keep the stored one" — must not fail validation.
+		if _, err := svc.SaveAIProviders(ctx, []ProviderInput{
+			{ID: "provider-1", Type: domain.AIProviderOllamaWebSearch, Model: "qwen3"},
+		}); err != nil {
+			t.Errorf("empty key should keep the stored one: %v", err)
+		}
+	})
+
+	t.Run("plain ollama stays keyless", func(t *testing.T) {
+		store := &fakeSettingsStore{data: map[string]string{}}
+		svc := newSettingsServiceForTest(store)
+		if _, err := svc.SaveAIProviders(ctx, []ProviderInput{
+			{Type: domain.AIProviderOllama, Model: "llama3.2-vision"},
+		}); err != nil {
+			t.Errorf("plain ollama must not require a key: %v", err)
+		}
+	})
+}

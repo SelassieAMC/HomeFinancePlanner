@@ -126,7 +126,7 @@ func TestDescribeSearchError_CannotSearch(t *testing.T) {
 	err := fmt.Errorf("%w: the model answered without searching", domain.ErrCannotSearch)
 
 	msg := describeSearchError(err, provider, 10*time.Minute)
-	for _, want := range []string{`"llama3.1"`, "ollama", "Settings", "Gemini", "Anthropic"} {
+	for _, want := range []string{`"llama3.1"`, "ollama", "Settings", "Gemini", "Anthropic", "Ollama web-search"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q: %s", want, msg)
 		}

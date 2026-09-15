@@ -14,9 +14,10 @@ import (
 // normalized result.
 //
 // Connector families with a native web-search tool (Gemini google_search,
-// Anthropic web_search, OpenAI search models) get that tool attached. The
-// remaining families (ollama, openai_compatible) are prompted and asked to
-// report when they cannot browse the web; any failure there is turned into
+// Anthropic web_search, OpenAI search models, Ollama web search with its
+// client-side tool loop) get that tool attached. The remaining families
+// (plain ollama, openai_compatible) are prompted and asked to report when
+// they cannot browse the web; any failure there is turned into
 // domain.ErrCannotSearch so the UI can tell the user to switch providers.
 func (e *Extractor) SearchOffers(ctx context.Context, provider domain.AIProvider, prompt string) (domain.OfferResult, error) {
 	var raw string
@@ -30,6 +31,8 @@ func (e *Extractor) SearchOffers(ctx context.Context, provider domain.AIProvider
 		raw, err = e.anthropicSearch(ctx, provider, prompt)
 	case domain.AIProviderOpenAI:
 		raw, err = e.openAISearch(ctx, provider, prompt)
+	case domain.AIProviderOllamaWebSearch:
+		raw, err = e.ollamaSearch(ctx, provider, prompt)
 	case domain.AIProviderOpenAICompatible, domain.AIProviderOllama:
 		textOnly = true
 		raw, err = e.textChat(ctx, provider, prompt)
