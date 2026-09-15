@@ -13,12 +13,45 @@ import (
 type TransactionHandler struct{ Svc *service.TransactionService }
 
 type transactionRequest struct {
-	AccountID   int64                  `json:"account_id"`
-	CategoryID  *int64                 `json:"category_id"`
-	Kind        domain.TransactionKind `json:"kind"`
-	AmountCents int64                  `json:"amount_cents"`
-	Description string                 `json:"description"`
-	Date        string                 `json:"date"`
+	AccountID   int64                    `json:"account_id"`
+	CategoryID  *int64                   `json:"category_id"`
+	Kind        domain.TransactionKind   `json:"kind"`
+	AmountCents int64                    `json:"amount_cents"`
+	Description string                   `json:"description"`
+	Date        string                   `json:"date"`
+	StoreName   string                   `json:"store_name"`
+	Items       []transactionItemRequest `json:"items"`
+}
+
+// transactionItemRequest is one item line of a manually entered transaction.
+type transactionItemRequest struct {
+	Name           string  `json:"name"`
+	Brand          string  `json:"brand,omitempty"`
+	Unit           string  `json:"unit,omitempty"`
+	CategoryID     *int64  `json:"category_id"`
+	Quantity       float64 `json:"quantity"`
+	UnitPriceCents int64   `json:"unit_price_cents"`
+	DiscountCents  int64   `json:"discount_cents"`
+}
+
+// transactionItemInputs maps the wire lines into the service payload.
+func transactionItemInputs(reqs []transactionItemRequest) []service.TransactionItemInput {
+	if len(reqs) == 0 {
+		return nil
+	}
+	items := make([]service.TransactionItemInput, 0, len(reqs))
+	for _, it := range reqs {
+		items = append(items, service.TransactionItemInput{
+			Name:           it.Name,
+			Brand:          it.Brand,
+			Unit:           it.Unit,
+			CategoryID:     it.CategoryID,
+			Quantity:       it.Quantity,
+			UnitPriceCents: it.UnitPriceCents,
+			DiscountCents:  it.DiscountCents,
+		})
+	}
+	return items
 }
 
 // List returns transactions with optional month/account/category/kind filters
@@ -87,6 +120,8 @@ func (h *TransactionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		AmountCents: req.AmountCents,
 		Description: req.Description,
 		Date:        req.Date,
+		StoreName:   req.StoreName,
+		Items:       transactionItemInputs(req.Items),
 	})
 	if err != nil {
 		respondServiceError(w, r, err)
@@ -113,6 +148,8 @@ func (h *TransactionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		AmountCents: req.AmountCents,
 		Description: req.Description,
 		Date:        req.Date,
+		StoreName:   req.StoreName,
+		Items:       transactionItemInputs(req.Items),
 	})
 	if err != nil {
 		respondServiceError(w, r, err)

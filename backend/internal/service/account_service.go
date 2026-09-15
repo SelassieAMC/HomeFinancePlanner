@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -126,7 +129,14 @@ type TransactionService struct {
 	transactions TransactionStore
 	accounts     AccountStore
 	categories   CategoryStore
+	stores       StoreStore
+	products     ProductStore
+	log          *slog.Logger
 }
+
+// maxTransactionItems caps the item lines of one manual transaction, like the
+// bill editor's sanity bound.
+const maxTransactionItems = 200
 
 // TransactionInput is the user-facing payload for create/update.
 type TransactionInput struct {
@@ -136,6 +146,24 @@ type TransactionInput struct {
 	AmountCents int64
 	Description string
 	Date        string
+	// StoreName is the market of a manual purchase (find-or-created like a
+	// bill's market name). Ignored for bill-linked rows, which keep their
+	// store on the bill.
+	StoreName string
+	// Items are the article lines of a manually entered purchase; empty for a
+	// plain amount-only transaction. Only expenses may carry them.
+	Items []TransactionItemInput
+}
+
+// TransactionItemInput is one item line of the user-facing payload.
+type TransactionItemInput struct {
+	Name           string
+	Brand          string
+	Unit           string
+	CategoryID     *int64
+	Quantity       float64
+	UnitPriceCents int64
+	DiscountCents  int64
 }
 
 func (s *TransactionService) List(ctx context.Context, f TransactionFilters) ([]domain.Transaction, error) {
@@ -156,20 +184,51 @@ func (s *TransactionService) Create(ctx context.Context, in TransactionInput) (d
 	if err != nil {
 		return domain.Transaction{}, err
 	}
+	if len(t.Items) > 0 {
+		return s.transactions.CreateWithItems(ctx, t, t.Items)
+	}
 	return s.transactions.Create(ctx, t)
 }
 
 func (s *TransactionService) Update(ctx context.Context, id int64, in TransactionInput) (domain.Transaction, error) {
+	// A bill's transaction is a mirror of the bill row — it changes only in
+	// the bills view.
+	if err := s.guardNotBill(ctx, id); err != nil {
+		return domain.Transaction{}, err
+	}
 	t, err := s.build(ctx, in)
 	if err != nil {
 		return domain.Transaction{}, err
 	}
 	t.ID = id
+	if len(t.Items) > 0 {
+		return s.transactions.UpdateWithItems(ctx, t, t.Items)
+	}
 	return s.transactions.Update(ctx, t)
 }
 
 func (s *TransactionService) Delete(ctx context.Context, id int64) error {
+	// A bill's transaction dies with its bill (BillService.Delete) — deleting
+	// it from here would desync the bill and the reports.
+	if err := s.guardNotBill(ctx, id); err != nil {
+		return err
+	}
 	return s.transactions.Delete(ctx, id)
+}
+
+// guardNotBill refuses writes to a transaction that was recorded for a
+// scanned bill: it is readonly, edited through the bill it mirrors.
+func (s *TransactionService) guardNotBill(ctx context.Context, id int64) error {
+	existing, err := s.transactions.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing.BillID != nil {
+		return conflictError(
+			"this transaction was recorded for bill %d — edit or delete it in the bills view",
+			*existing.BillID)
+	}
+	return nil
 }
 
 func (s *TransactionService) build(ctx context.Context, in TransactionInput) (domain.Transaction, error) {
@@ -181,6 +240,12 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	}
 	if !in.Kind.Valid() {
 		return domain.Transaction{}, validationError("kind %q must be income or expense", in.Kind)
+	}
+	if len(in.Items) > 0 && in.Kind != domain.TransactionExpense {
+		return domain.Transaction{}, validationError("items are only supported on expense transactions")
+	}
+	if len(in.Items) > maxTransactionItems {
+		return domain.Transaction{}, validationError("at most %d items are supported", maxTransactionItems)
 	}
 	if err := validateDate(in.Date, "date"); err != nil {
 		return domain.Transaction{}, err
@@ -198,15 +263,149 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 			return domain.Transaction{}, fmt.Errorf("validate category_id: %w", err)
 		}
 	}
+
+	// Item lines, mirroring buildBill's per-line rules minus budget
+	// attribution: deposit returns ("Leergut") and lines filed under a
+	// category with allows_negative (the seeded "Deposit & Returns" / Pfand
+	// family) are money back — their unit price and line total may be
+	// negative and reduce the items total.
+	items := make([]domain.TransactionItem, 0, len(in.Items))
+	itemsTotal := int64(0)
+	for _, it := range in.Items {
+		name := strings.TrimSpace(it.Name)
+		if name == "" {
+			return domain.Transaction{}, validationError("every item needs a name")
+		}
+		if it.Quantity <= 0 {
+			return domain.Transaction{}, validationError("quantity for %q must be positive", name)
+		}
+		// The negative rule needs the line's category, so it is resolved
+		// before the price checks — like buildBill.
+		allowsNegative := isDepositReturn(name)
+		if it.CategoryID != nil {
+			cat, err := s.categories.GetByID(ctx, *it.CategoryID)
+			if err != nil {
+				return domain.Transaction{}, fmt.Errorf("validate category for %q: %w", name, err)
+			}
+			allowsNegative = allowsNegative || cat.AllowsNegative
+		}
+		if (!allowsNegative && it.UnitPriceCents < 0) || (!allowsNegative && it.DiscountCents < 0) {
+			return domain.Transaction{}, validationError("prices for %q must not be negative", name)
+		}
+		line := it.Quantity*float64(it.UnitPriceCents) - float64(it.DiscountCents)
+		lineCents := int64(math.Round(line))
+		if lineCents < 0 && !allowsNegative {
+			lineCents = 0
+		}
+		itemsTotal += lineCents
+		items = append(items, domain.TransactionItem{
+			Name:           name,
+			Brand:          strings.TrimSpace(it.Brand),
+			Unit:           strings.ToLower(strings.TrimSpace(it.Unit)),
+			CategoryID:     it.CategoryID,
+			Quantity:       it.Quantity,
+			UnitPriceCents: it.UnitPriceCents,
+			DiscountCents:  it.DiscountCents,
+			LineTotalCents: lineCents,
+		})
+	}
+
+	storeID, err := s.resolveTransactionStore(ctx, in.StoreName)
+	if err != nil {
+		return domain.Transaction{}, err
+	}
+
+	// Link each line to its catalogue product, find-or-created on first use —
+	// the same lenient rule as the bill flow: a product-link problem is logged
+	// and the line stays unlinked, never blocking the financial record.
+	// Money-back lines (Leergut / negative prices) stay unlinked, like bill
+	// returns, so purchase stats and store prices stay about real purchases.
+	if s.log == nil {
+		s.log = slog.Default()
+	}
+	for i := range items {
+		if items[i].UnitPriceCents < 0 || isDepositReturn(items[i].Name) {
+			continue
+		}
+		items[i].ProductID = s.resolveTransactionProduct(ctx, items[i])
+	}
+
 	return domain.Transaction{
-		AccountID:   in.AccountID,
-		CategoryID:  in.CategoryID,
-		Kind:        in.Kind,
-		AmountCents: in.AmountCents,
-		Currency:    acc.Currency, // manual rows are always in the account's currency
-		Description: strings.TrimSpace(in.Description),
-		Date:        in.Date,
+		AccountID:       in.AccountID,
+		CategoryID:      in.CategoryID,
+		Kind:            in.Kind,
+		AmountCents:     in.AmountCents,
+		Currency:        acc.Currency, // manual rows are always in the account's currency
+		Description:     strings.TrimSpace(in.Description),
+		Date:            in.Date,
+		StoreID:         storeID,
+		ItemsTotalCents: itemsTotal,
+		Items:           items,
 	}, nil
+}
+
+// resolveTransactionStore find-or-creates the store for a manual purchase,
+// matched case-insensitively on the trimmed name — the same shape as the
+// bill flow's resolveStore, race-safe through the unique name index.
+func (s *TransactionService) resolveTransactionStore(ctx context.Context, market string) (*int64, error) {
+	name := strings.TrimSpace(market)
+	if name == "" || s.stores == nil {
+		return nil, nil
+	}
+	store, err := s.stores.FindByName(ctx, name)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		store, err = s.stores.Create(ctx, domain.Store{Name: name})
+		if errors.Is(err, domain.ErrConflict) {
+			// Lost a race against a concurrent write — re-read the winner.
+			store, err = s.stores.FindByName(ctx, name)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("create store %q: %w", name, err)
+		}
+	case err != nil:
+		return nil, fmt.Errorf("find store: %w", err)
+	}
+	id := store.ID
+	return &id, nil
+}
+
+// resolveTransactionProduct links a manual item line to its catalogue
+// product, find-or-created case-insensitively from the line name (CategoryID
+// seeds a new product). Failures are non-fatal (logged, link left nil) — a
+// catalogue problem must not block recording the purchase; the next save
+// retries.
+func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it domain.TransactionItem) *int64 {
+	if s.products == nil {
+		return nil
+	}
+	name := strings.TrimSpace(it.Name)
+	if name == "" {
+		return nil
+	}
+	product, err := s.products.FindByName(ctx, name)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		product, err = s.products.Create(ctx, domain.Product{
+			Name:       name,
+			Brand:      it.Brand,
+			Unit:       it.Unit,
+			CategoryID: it.CategoryID,
+		})
+		if errors.Is(err, domain.ErrConflict) {
+			// Lost a race — re-read the winner.
+			product, err = s.products.FindByName(ctx, name)
+		}
+		if err != nil {
+			s.log.Warn("create product from transaction item", "name", name, "error", err)
+			return nil
+		}
+	case err != nil:
+		s.log.Warn("find product for transaction item", "name", name, "error", err)
+		return nil
+	}
+	id := product.ID
+	return &id
 }
 
 // BudgetService implements budget business rules. Budgets are open-ended

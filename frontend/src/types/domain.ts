@@ -38,8 +38,43 @@ export interface Transaction {
   currency: string; // ISO 4217; account's currency, bill's for confirmations
   description: string;
   date: string; // YYYY-MM-DD
+  // Set when this row was recorded for a scanned bill: the transaction is
+  // then readonly — edits happen in the bills view.
+  bill_id?: number | null;
+  // Manual purchases: the market bought at (null for bill transactions).
+  store_id?: number | null;
+  store_name?: string; // display-only, joined from stores
+  item_count?: number; // display-only correlated count
+  items_total_cents?: number; // display-only Σ line totals
+  items?: TransactionItem[]; // loaded by get only, never by list
   created_at: string;
   updated_at: string;
+}
+
+/** One article line of a manually entered transaction. */
+export interface TransactionItem {
+  id: number;
+  transaction_id: number;
+  product_id?: number | null;
+  product_name?: string; // display-only join
+  name: string;
+  brand?: string;
+  unit?: string;
+  category_id?: number | null;
+  quantity: number;
+  unit_price_cents: number;
+  discount_cents: number;
+  line_total_cents: number;
+}
+
+export interface TransactionItemInput {
+  name: string;
+  brand?: string;
+  unit?: string;
+  category_id?: number | null;
+  quantity: number;
+  unit_price_cents: number;
+  discount_cents: number;
 }
 
 export interface TransactionInput {
@@ -49,6 +84,8 @@ export interface TransactionInput {
   amount_cents: number;
   description: string;
   date: string;
+  store_name?: string; // manual purchases: market, find-or-created server-side
+  items?: TransactionItemInput[];
 }
 
 // 'product' = bill item storage taxonomy; 'expense' = general budget grouping.

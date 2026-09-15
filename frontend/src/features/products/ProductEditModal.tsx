@@ -24,7 +24,8 @@ interface ProductEditModalProps {
  * Product edit modal, laid out like a mini editor page: basic information and
  * purchase stats on the left, photo card with drag & drop and the footer
  * actions on the right. Saving rewrites name/measure/category on every
- * historical bill item too — a confirmation dialog warns first.
+ * historical bill and transaction lines too — a confirmation dialog warns
+ * first.
  */
 export function ProductEditModal({ product, categories, onClose, onSaved }: ProductEditModalProps) {
   const [name, setName] = useState(product.name);
@@ -45,7 +46,8 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   const [mergeError, setMergeError] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  /** True when the edit rewrites a field that propagates to bill items. */
+  /** True when the edit rewrites a field that propagates to bill items and
+   *  manually recorded transaction items. */
   function touchesBillItems(): boolean {
     return (
       name.trim() !== product.name ||
@@ -131,7 +133,8 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
       }
     }
     if (touchesBillItems()) {
-      // Historical bill items are rewritten with the product — warn first.
+      // Historical bill and transaction lines are rewritten with the
+      // product — warn first.
       setConfirmPropagate(true);
     } else {
       void doSave(input);
@@ -299,9 +302,10 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
             This will also update{' '}
             <strong>
               {current.times_bought}{' '}
-              {current.times_bought === 1 ? 'historical bill item' : 'historical bill items'}
+              {current.times_bought === 1 ? 'purchase line' : 'purchase lines'}
             </strong>{' '}
-            on past bills (name, measure and category are rewritten on every linked line).
+            on past bills and manual transactions (name, measure and category
+            are rewritten on every linked line).
           </p>
           <div className="camera-row">
             <Button onClick={() => void doSave(buildInput())}>Update product</Button>

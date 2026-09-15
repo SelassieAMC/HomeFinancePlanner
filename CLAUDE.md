@@ -150,7 +150,9 @@ whitelist). Receipt uploads are deduplicated by
 content: each upload's sha256 is stored on `bill_scans` and `bills`, and
 re-uploading the same image is a 409 conflict. Negative item prices are allowed
 only for "Leergut" lines or items under a category with `allows_negative` (the
-seeded "Deposit & Returns" product category covers Pfand/Leergut). When adding
+seeded "Deposit & Returns" product category covers Pfand/Leergut) — the same
+rule applies to manual transaction item lines, whose money-back lines also stay
+unlinked from products. When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.

@@ -25,8 +25,8 @@ function toQuery(filters: ProductFilters): string {
 }
 
 export const productsApi = {
-  list: (filters: ProductFilters = {}) =>
-    apiClient.get<Paged<Product>>(`${BASE}/products${toQuery(filters)}`),
+  list: (filters: ProductFilters = {}, init?: { signal?: AbortSignal }) =>
+    apiClient.get<Paged<Product>>(`${BASE}/products${toQuery(filters)}`, init),
   get: (id: number) => apiClient.get<Product>(`${BASE}/products/${id}`),
   /** Latest price per store (details modal), scoped to the product's latest
    *  purchase currency. */

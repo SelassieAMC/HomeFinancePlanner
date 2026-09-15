@@ -1048,6 +1048,39 @@ func (f *fakeTxStore) Create(_ context.Context, t domain.Transaction) (domain.Tr
 	return t, nil
 }
 
+// CreateWithItems mirrors Create — item lines ride on the transaction in the
+// fake (the real store keeps them in a separate table).
+func (f *fakeTxStore) CreateWithItems(_ context.Context, t domain.Transaction, items []domain.TransactionItem) (domain.Transaction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.next == 0 {
+		f.next = 1
+	}
+	t.ID = f.next
+	f.next++
+	for i := range items {
+		items[i].TransactionID = t.ID
+	}
+	t.Items = items
+	f.items[t.ID] = t
+	return t, nil
+}
+
+// UpdateWithItems mirrors Update — item lines ride on the transaction.
+func (f *fakeTxStore) UpdateWithItems(_ context.Context, t domain.Transaction, items []domain.TransactionItem) (domain.Transaction, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[t.ID]; !ok {
+		return domain.Transaction{}, domain.ErrNotFound
+	}
+	for i := range items {
+		items[i].TransactionID = t.ID
+	}
+	t.Items = items
+	f.items[t.ID] = t
+	return t, nil
+}
+
 func (f *fakeTxStore) GetByID(_ context.Context, id int64) (domain.Transaction, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -29,12 +30,18 @@ type CategoryStore interface {
 // TransactionFilters re-exports the shared domain filter type.
 type TransactionFilters = domain.TransactionFilters
 
-// TransactionStore is the persistence contract for transactions.
+// TransactionStore is the persistence contract for transactions. The plain
+// Create/Update never touch item lines (the bill sync path uses them); the
+// WithItems variants write the row and its item lines atomically.
 type TransactionStore interface {
 	List(ctx context.Context, f domain.TransactionFilters) ([]domain.Transaction, error)
+	// GetByID loads the item lines (Items and ItemsTotalCents filled); List
+	// leaves both empty.
 	GetByID(ctx context.Context, id int64) (domain.Transaction, error)
 	Create(ctx context.Context, t domain.Transaction) (domain.Transaction, error)
+	CreateWithItems(ctx context.Context, t domain.Transaction, items []domain.TransactionItem) (domain.Transaction, error)
 	Update(ctx context.Context, t domain.Transaction) (domain.Transaction, error)
+	UpdateWithItems(ctx context.Context, t domain.Transaction, items []domain.TransactionItem) (domain.Transaction, error)
 	Delete(ctx context.Context, id int64) error
 }
 
@@ -111,12 +118,16 @@ type Services struct {
 	Analytics    *AnalyticsService
 }
 
-// New wires services onto their stores.
+// New wires services onto their stores. storeStore/productStore are the raw
+// repositories (find-or-create targets for manual purchases), alongside the
+// service wrappers the API handlers use.
 func New(
 	accounts AccountStore,
 	categories CategoryStore,
-	stores *StoreService,
-	products *ProductService,
+	storeSvc *StoreService,
+	productSvc *ProductService,
+	storeStore StoreStore,
+	productStore ProductStore,
 	transactions TransactionStore,
 	budgets BudgetStore,
 	summary SummaryStore,
@@ -128,9 +139,9 @@ func New(
 	return &Services{
 		Accounts:     &AccountService{accounts: accounts},
 		Categories:   &CategoryService{categories: categories},
-		Stores:       stores,
-		Products:     products,
-		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories},
+		Stores:       storeSvc,
+		Products:     productSvc,
+		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, log: slog.Default()},
 		Budgets:      &BudgetService{budgets: budgets, categories: categories},
 		Summary:      &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},
 		Settings:     settings,

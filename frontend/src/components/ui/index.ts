@@ -5,3 +5,4 @@ export { ItemPanel, ItemPanels } from './ItemPanel';
 export { Pagination } from './Pagination';
 export { CategorySelect } from './CategorySelect';
 export { UnitSelect } from './UnitSelect';
+export { ProductAutocomplete } from './ProductAutocomplete';

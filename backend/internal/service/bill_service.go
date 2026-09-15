@@ -437,6 +437,9 @@ func applyAccountPaymentRules(in *domain.BillConfirmInput, account domain.Accoun
 // recordBillTransaction writes the expense transaction for a bill and links it,
 // so later bill edits keep it in sync.
 func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, bill domain.Bill, accountID int64) error {
+	// BillID marks the row as bill-linked (readonly in the activity view, the
+	// UI links back to the bill); it is round-tripped by every later
+	// transaction Update and never cleared while the bill lives.
 	txRow, err := s.txStore.Create(ctx, domain.Transaction{
 		AccountID:   accountID,
 		Kind:        domain.TransactionExpense,
@@ -444,6 +447,7 @@ func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, b
 		Currency:    bill.Currency,
 		Description: billDescription(bill),
 		Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
+		BillID:      &billID,
 	})
 	if err != nil {
 		return fmt.Errorf("record bill transaction: %w", err)
@@ -466,7 +470,9 @@ func billDescription(b domain.Bill) string {
 
 // syncBillTransaction refreshes the expense transaction recorded at confirm
 // time so reports reflect the edited bill. accountID > 0 re-points the
-// transaction to another account (a bill whose account was edited).
+// transaction to another account (a bill whose account was edited). The row's
+// bill_id/store_id are round-tripped untouched by the store's Update —
+// BillID must never be cleared while the bill lives.
 func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill domain.Bill, accountID int64) error {
 	tx, err := s.txStore.GetByID(ctx, txID)
 	if errors.Is(err, domain.ErrNotFound) {

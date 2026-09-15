@@ -2,13 +2,14 @@ package domain
 
 import "time"
 
-// Product is a thing the user has bought, find-or-created from bill item
-// names. Bill lines link to their product via bill_items.product_id; editing
-// name/unit/category propagates to those lines (bill lines are not snapshots,
+// Product is a thing the user has bought, find-or-created from bill item and
+// manual transaction item names. Lines link to their product via
+// bill_items.product_id and transaction_items.product_id; editing
+// name/unit/category propagates to those lines (line names are not snapshots,
 // unlike bills' market_name). ImagePath is the server-side file path and is
 // never exposed; HasImage tells the UI whether GET /products/{id}/photo
 // returns an image. The purchase stats are display-only, computed from linked
-// bill lines on accepted bills.
+// accepted bill lines and manual transaction item lines.
 type Product struct {
 	ID           int64  `json:"id"`
 	Name         string `json:"name"`
@@ -20,7 +21,8 @@ type Product struct {
 	ImagePath    string `json:"-"`
 	HasImage     bool   `json:"has_image"`
 
-	// Display-only purchase stats, computed from linked accepted bill lines.
+	// Display-only purchase stats, computed from linked accepted bill lines
+	// and manual transaction item lines.
 	TimesBought      int64  `json:"times_bought"`
 	LastPurchaseDate string `json:"last_purchase_date,omitempty"` // bills.date text, YYYY-MM-DD
 	// Latest/Avg/Best price are native-currency amounts; Latest is from the

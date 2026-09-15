@@ -9,6 +9,7 @@ export function ItemPanel({
   subtitle,
   value,
   valueClass,
+  onToggle,
   children,
 }: {
   icon?: ReactNode;
@@ -16,10 +17,16 @@ export function ItemPanel({
   subtitle?: ReactNode;
   value?: ReactNode;
   valueClass?: string;
+  /** Fires with the new open state when the panel is expanded/collapsed —
+   *  used to lazy-load the record's full detail, like the bills view. */
+  onToggle?: (open: boolean) => void;
   children: ReactNode;
 }) {
   return (
-    <details className="item-panel">
+    <details
+      className="item-panel"
+      onToggle={(e) => onToggle?.((e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary>
         {icon && (
           <span className="item-icon" title={typeof icon === 'string' ? icon : undefined}>

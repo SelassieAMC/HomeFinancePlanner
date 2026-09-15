@@ -83,8 +83,48 @@ type Transaction struct {
 	Currency    string          `json:"currency"`     // ISO 4217 code; account's currency for manual rows, bill's for confirmations
 	Description string          `json:"description"`
 	Date        string          `json:"date"` // YYYY-MM-DD
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	// BillID is set when this row was recorded for a scanned bill: the
+	// transaction is then readonly — edits happen in the bills view.
+	BillID *int64 `json:"bill_id,omitempty"`
+	// StoreID is the market a manual purchase was made at (NULL for bill
+	// transactions, which keep their store on the bill row).
+	StoreID   *int64 `json:"store_id,omitempty"`
+	StoreName string `json:"store_name,omitempty"` // display-only, joined from stores
+
+	// Display-only. ItemCount is the number of item lines (correlated count,
+	// always present); Items are loaded by Get only, never by List.
+	ItemCount       int               `json:"item_count"`
+	ItemsTotalCents int64             `json:"items_total_cents"` // Σ line totals; 0 without items
+	Items           []TransactionItem `json:"items,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// TransactionItem is one article line of a manually entered transaction.
+// Bill lines live in bill_items and carry budget attribution, returns and
+// receipt analysis; these are the purchase-relevant subset, in the
+// transaction's currency. Money-back lines (Leergut / a category with
+// allows_negative) may carry negative prices and reduce the items total —
+// they never link to the catalogue, like bill returns. LineTotalCents is
+// computed server-side (quantity × unit price − discount, clamped to ≥ 0
+// unless the line allows negatives).
+type TransactionItem struct {
+	ID             int64   `json:"id"`
+	TransactionID  int64   `json:"transaction_id"`
+	ProductID      *int64  `json:"product_id"`
+	ProductName    string  `json:"product_name,omitempty"` // display-only join
+	Name           string  `json:"name"`
+	Brand          string  `json:"brand,omitempty"`
+	Unit           string  `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
+	CategoryID     *int64  `json:"category_id"`    // seeds a newly created product only
+	Quantity       float64 `json:"quantity"`
+	UnitPriceCents int64   `json:"unit_price_cents"`
+	DiscountCents  int64   `json:"discount_cents"`
+	LineTotalCents int64   `json:"line_total_cents"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Category groups transactions (groceries, rent, …). The migration-seeded

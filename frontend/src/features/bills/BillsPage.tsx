@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
 import { billsApi, type BillStatsGroupBy } from '../../api/bills';
 import { accountsApi } from '../../api/accounts';
@@ -114,6 +114,35 @@ export function BillsPage() {
       setDetailLoading(false);
     }
   }
+
+  // Deep link from the transactions view (?bill=<id>): jump to the bill's
+  // month, expand it and load its lines. One-shot like the scan view's
+  // ?token= resume; the query param is cleared afterwards.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkRef.current) return;
+    const raw = searchParams.get('bill');
+    if (!raw) return;
+    deepLinkRef.current = true;
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) {
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    billsApi
+      .get(id)
+      .then((bill) => {
+        setMonth(bill.date.slice(0, 7));
+        setExpandedId(bill.id);
+        return loadDetail(bill.id);
+      })
+      .catch(() => {
+        // Unknown id: silently drop the link, the list shows as usual.
+      })
+      .finally(() => setSearchParams({}, { replace: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function saveEdit(accountId?: number) {
     if (!detail || !editDraft) return;

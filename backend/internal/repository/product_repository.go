@@ -12,27 +12,42 @@ import (
 )
 
 // Purchase stats are derived from the linked bill lines of accepted bills
-// (deposit returns are excluded — they are money back, not purchases). One
-// CTE computes every product's stats in a single pass over bill_items ⋈ bills,
-// instead of the per-row correlated subqueries this replaced:
+// (deposit returns are excluded — they are money back, not purchases) UNION
+// the item lines of manual transactions. One CTE computes every product's
+// stats in a single pass over both sources, instead of the per-row correlated
+// subqueries this replaced:
 //
-//	ranked — each line, numbered per product by recency (bill date, bill id,
-//	         item id; the same top-1 rule the old subqueries used)
+//	lines  — every purchase line from both sources (src/src_id/line_id make
+//	         the cross-table recency ORDER BY deterministic; 'b' sorts before
+//	         't' on an exact date tie)
+//	ranked — each line, numbered per product by recency (date, source id,
+//	         line id; the same top-1 rule the old subqueries used)
 //	latest — the most recent line's price and currency, per product
 //	stats  — the aggregates; avg/best are scoped to that latest currency so
 //	         unlike currencies never mix
 //
-// productColumns joins products against it (LEFT JOIN keeps never-bought
-// products, hence the COALESCE on the count). Scope is injectable so single-
-// product reads stay index-driven instead of aggregating the whole table:
-// the scope's placeholder(s) bind first (the CTE is evaluated first).
+// Manual transactions are always "accepted" and have no return lines. The
+// scope is injectable and unqualified so one literal serves both branches;
+// single-product reads stay index-driven instead of aggregating the whole
+// table: the scope's placeholder(s) bind first (the CTE is evaluated first),
+// and each branch carries its own occurrence of the scope's placeholder.
 const productStatsCTE = `
-WITH ranked AS (
+WITH lines AS (
 	SELECT bi.product_id, b.date AS bill_date, bi.unit_price_cents, b.currency,
-	       ROW_NUMBER() OVER (PARTITION BY bi.product_id
-	         ORDER BY b.date DESC, b.id DESC, bi.id DESC) AS rn
+	       'b' AS src, b.id AS src_id, bi.id AS line_id
 	FROM bill_items bi JOIN bills b ON b.id = bi.bill_id
 	WHERE b.status = 'accepted' AND bi.is_return = 0 [scope]
+	UNION ALL
+	SELECT ti.product_id, t.date AS bill_date, ti.unit_price_cents, t.currency,
+	       't', t.id, ti.id
+	FROM transaction_items ti JOIN transactions t ON t.id = ti.transaction_id
+	WHERE ti.product_id IS NOT NULL [scope]
+),
+ranked AS (
+	SELECT product_id, bill_date, unit_price_cents, currency,
+	       ROW_NUMBER() OVER (PARTITION BY product_id
+	         ORDER BY bill_date DESC, src, src_id DESC, line_id DESC) AS rn
+	FROM lines
 ),
 latest AS (
 	SELECT product_id,
@@ -57,11 +72,12 @@ stats AS (
 
 // CTE scopes: all products (List), one by id (GetByID), one by name
 // (FindByName — the subselect keeps the lookup index-driven without knowing
-// the id up front).
+// the id up front). Each appears in both ranked branches, so its placeholder
+// binds once per branch.
 const (
 	productScopeNone   = ""
-	productScopeByID   = " AND bi.product_id = ?"
-	productScopeByName = " AND bi.product_id = (SELECT id FROM products WHERE name = ? COLLATE NOCASE)"
+	productScopeByID   = " AND product_id = ?"
+	productScopeByName = " AND product_id = (SELECT id FROM products WHERE name = ? COLLATE NOCASE)"
 )
 
 // productColumns + productFrom read a product together with its derived
@@ -81,7 +97,7 @@ const productFrom = `
 // productQuery assembles the stats CTE for a scope with the product columns
 // after it.
 func productQuery(scope string) string {
-	return strings.Replace(productStatsCTE, "[scope]", scope, 1) + `
+	return strings.ReplaceAll(productStatsCTE, "[scope]", scope) + `
 SELECT` + productColumns + productFrom
 }
 
@@ -168,10 +184,11 @@ func (r *ProductRepository) List(ctx context.Context, f domain.ProductFilters) (
 }
 
 // GetByID returns one product with its purchase stats, or domain.ErrNotFound.
-// The id scopes the stats CTE (bound first) so the read stays index-driven.
+// The id scopes the stats CTE (bound first; both lines branches carry their
+// own placeholder occurrence) so the read stays index-driven.
 func (r *ProductRepository) GetByID(ctx context.Context, id int64) (domain.Product, error) {
 	row := r.db.QueryRowContext(ctx,
-		productQuery(productScopeByID)+` WHERE p.id = ?`, id, id)
+		productQuery(productScopeByID)+` WHERE p.id = ?`, id, id, id)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Product{}, domain.ErrNotFound
@@ -185,7 +202,7 @@ func (r *ProductRepository) GetByID(ctx context.Context, id int64) (domain.Produ
 // FindByName returns the product whose name matches case-insensitively.
 func (r *ProductRepository) FindByName(ctx context.Context, name string) (domain.Product, error) {
 	row := r.db.QueryRowContext(ctx,
-		productQuery(productScopeByName)+` WHERE p.name = ? COLLATE NOCASE`, name, name)
+		productQuery(productScopeByName)+` WHERE p.name = ? COLLATE NOCASE`, name, name, name)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Product{}, domain.ErrNotFound
@@ -197,22 +214,35 @@ func (r *ProductRepository) FindByName(ctx context.Context, name string) (domain
 }
 
 // storePricesCTE lists the latest price a product was bought at, grouped by
-// store, in one pass: ranked numbers each accepted non-return line per store
-// (partitioning by store id treats NULL-store bills as their own group — the
-// `store_id IS store_id` workaround the correlated version needed is gone),
-// then the group select takes the top-1 price/currency and the last date.
-// [currencyFilter] is either empty (all currencies) or an extra `b.currency
-// = ?` filter, whose placeholder binds after the product id.
+// store, in one pass over accepted non-return bill lines UNION the item lines
+// of manual transactions (whose store lives on the transaction header): lines
+// numbers each line per store (partitioning by store id treats NULL-store
+// rows as their own group), then the group select takes the top-1
+// price/currency and the last date. The ROW_NUMBER runs over the union so the
+// top-1 is the most recent line across both sources. [currencyFilter] is
+// either empty (all currencies) or an extra `currency = ?` filter, whose
+// placeholder binds after the product id.
 const storePricesCTE = `
-WITH ranked AS (
+WITH lines AS (
 	SELECT b.store_id, COALESCE(st.name, '—') AS store_name, b.date,
-	       bi.unit_price_cents, b.currency,
-	       ROW_NUMBER() OVER (PARTITION BY b.store_id
-	         ORDER BY b.date DESC, b.id DESC, bi.id DESC) AS rn
+	       bi.unit_price_cents, b.currency, 'b' AS src, b.id AS src_id, bi.id AS line_id
 	FROM bills b
 	JOIN bill_items bi ON bi.bill_id = b.id
 	LEFT JOIN stores st ON st.id = b.store_id
 	WHERE bi.product_id = ? AND b.status = 'accepted' AND bi.is_return = 0 [currencyFilter]
+	UNION ALL
+	SELECT t.store_id, COALESCE(st.name, '—') AS store_name, t.date,
+	       ti.unit_price_cents, t.currency, 't', t.id, ti.id
+	FROM transactions t
+	JOIN transaction_items ti ON ti.transaction_id = t.id
+	LEFT JOIN stores st ON st.id = t.store_id
+	WHERE ti.product_id = ? [currencyFilter]
+),
+ranked AS (
+	SELECT store_id, store_name, date, unit_price_cents, currency,
+	       ROW_NUMBER() OVER (PARTITION BY store_id
+	         ORDER BY date DESC, src, src_id DESC, line_id DESC) AS rn
+	FROM lines
 )
 SELECT store_id, store_name,
        MAX(CASE WHEN rn = 1 THEN unit_price_cents END) AS latest_price_cents,
@@ -222,14 +252,14 @@ FROM ranked
 GROUP BY store_id, store_name
 ORDER BY last_purchase_date DESC, store_name ASC`
 
-const storeCurrencyFilter = " AND b.currency = ?"
+const storeCurrencyFilter = " AND currency = ?"
 
 // StorePrices returns the latest price a product was bought at, grouped by
 // store. currency scopes the amounts to a single currency (the service passes
 // the product's most recent purchase currency) so unlike currencies never mix.
 func (r *ProductRepository) StorePrices(ctx context.Context, id int64, currency string) ([]domain.ProductStorePrice, error) {
 	return r.storePrices(ctx,
-		strings.Replace(storePricesCTE, "[currencyFilter]", storeCurrencyFilter, 1),
+		strings.ReplaceAll(storePricesCTE, "[currencyFilter]", storeCurrencyFilter),
 		id, currency, "list product store prices")
 }
 
@@ -239,13 +269,19 @@ func (r *ProductRepository) StorePrices(ctx context.Context, id int64, currency 
 // two products may have been priced in different currencies.
 func (r *ProductRepository) StorePurchaseSummary(ctx context.Context, id int64) ([]domain.ProductStorePrice, error) {
 	return r.storePrices(ctx,
-		strings.Replace(storePricesCTE, "[currencyFilter]", "", 1),
+		strings.ReplaceAll(storePricesCTE, "[currencyFilter]", ""),
 		id, "", "list product store purchases")
 }
 
-// storePrices runs the shared CTE and scans its rows.
+// storePrices runs the shared CTE and scans its rows. Placeholders bind in
+// branch order: each lines branch contributes one product id followed by one
+// currency filter occurrence.
 func (r *ProductRepository) storePrices(ctx context.Context, query string, id int64, currency, op string) ([]domain.ProductStorePrice, error) {
 	args := []any{id}
+	if currency != "" {
+		args = append(args, currency)
+	}
+	args = append(args, id)
 	if currency != "" {
 		args = append(args, currency)
 	}
@@ -285,14 +321,14 @@ func (r *ProductRepository) storePrices(ctx context.Context, query string, id in
 	return items, rows.Err()
 }
 
-// Merge redirects every bill item of drop to keep, deletes drop, and rewrites
-// keep's editable fields to final — one transaction, so the name index never
-// sees both rows under the same NOCASE name (drop is deleted before keep is
-// renamed). Redirected items get the kept product's final name/unit/category
-// straight away (unit keeps its historical line value when final.unit is
-// empty), mirroring Update's propagation semantics. image_path is untouched:
-// photo files are owned by the service, which transfers or removes them after
-// the transaction commits.
+// Merge redirects every bill item and transaction item of drop to keep,
+// deletes drop, and rewrites keep's editable fields to final — one
+// transaction, so the name index never sees both rows under the same NOCASE
+// name (drop is deleted before keep is renamed). Redirected items get the
+// kept product's final name/unit/category straight away (unit keeps its
+// historical line value when final.unit is empty), mirroring Update's
+// propagation semantics. image_path is untouched: photo files are owned by
+// the service, which transfers or removes them after the transaction commits.
 func (r *ProductRepository) Merge(ctx context.Context, keepID, dropID int64, final domain.Product) (domain.Product, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -310,6 +346,17 @@ func (r *ProductRepository) Merge(ctx context.Context, keepID, dropID int64, fin
 		keepID, final.Name, final.Unit, final.Unit, final.CategoryID, dropID); err != nil {
 		tx.Rollback()
 		return domain.Product{}, fmt.Errorf("redirect merged product items: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE transaction_items
+		SET product_id = ?,
+		    name = ?,
+		    unit = CASE WHEN TRIM(?) = '' THEN unit ELSE ? END,
+		    category_id = ?
+		WHERE product_id = ?`,
+		keepID, final.Name, final.Unit, final.Unit, final.CategoryID, dropID); err != nil {
+		tx.Rollback()
+		return domain.Product{}, fmt.Errorf("redirect merged product transaction items: %w", err)
 	}
 
 	res, err := tx.ExecContext(ctx, `DELETE FROM products WHERE id = ?`, dropID)
@@ -361,10 +408,10 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (domai
 }
 
 // Update rewrites the user-editable fields and propagates name/unit/category
-// to the linked bill items in one transaction (their names are not snapshots,
-// unlike bills' market_name). A cleared unit keeps historical line units.
-// It deliberately never touches image_path — photo files are owned by
-// SetPhoto only.
+// to the linked bill items and transaction items in one transaction (their
+// names are not snapshots, unlike bills' market_name). A cleared unit keeps
+// historical line units. It deliberately never touches image_path — photo
+// files are owned by SetPhoto only.
 func (r *ProductRepository) Update(ctx context.Context, p domain.Product) (domain.Product, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -394,6 +441,16 @@ func (r *ProductRepository) Update(ctx context.Context, p domain.Product) (domai
 		p.Name, p.Unit, p.Unit, p.CategoryID, p.ID); err != nil {
 		tx.Rollback()
 		return domain.Product{}, fmt.Errorf("propagate product to bill items: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE transaction_items
+		SET name = ?,
+		    unit = CASE WHEN TRIM(?) = '' THEN unit ELSE ? END,
+		    category_id = ?
+		WHERE product_id = ?`,
+		p.Name, p.Unit, p.Unit, p.CategoryID, p.ID); err != nil {
+		tx.Rollback()
+		return domain.Product{}, fmt.Errorf("propagate product to transaction items: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

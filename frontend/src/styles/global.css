@@ -1902,3 +1902,191 @@ select:focus,
   background: var(--seq-0);
   border: 1px solid var(--border);
 }
+
+/* --- Product autocomplete (transaction lines) --------------------------------
+   Name input with a server-matched suggestion dropdown; positioning is
+   relative to the wrapping .product-autocomplete. */
+.product-autocomplete {
+  position: relative;
+  flex: 1;
+  min-width: 140px;
+}
+
+.product-autocomplete-input {
+  width: 100%;
+}
+
+.product-autocomplete-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.product-autocomplete-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.product-autocomplete-option.is-active {
+  background: rgba(255, 176, 32, 0.14);
+}
+
+.product-autocomplete-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-autocomplete-brand {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.product-autocomplete-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.product-autocomplete-empty {
+  padding: 0.45rem 0.55rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* --- Manual transaction item lines -------------------------------------------
+   Two-row grid per line on narrow screens, one row on wide ones (name grows,
+   numbers stay compact like the bill draft's .cell-input-num). */
+.transaction-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.transaction-lines-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.transaction-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.transaction-line .product-autocomplete {
+  flex: 3;
+  min-width: 180px;
+}
+
+.transaction-line-num {
+  flex: 0 1 76px;
+  min-width: 64px;
+  width: 76px;
+  text-align: right;
+}
+
+.transaction-line select {
+  flex: 0 1 auto;
+  min-width: 72px;
+}
+
+.transaction-line .btn {
+  flex: 0 0 auto;
+}
+
+.transaction-line-total {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.transaction-lines-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.transaction-lines-footer strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Transaction item lines (readonly view in the expanded panel) ------------ */
+.tx-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tx-item-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.tx-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-item-brand {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.tx-item-meta {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx-item-total {
+  flex-shrink: 0;
+  min-width: 4.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

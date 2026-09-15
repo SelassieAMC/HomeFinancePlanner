@@ -243,3 +243,72 @@ func TestProductRepositoryMergeRedirectsItems(t *testing.T) {
 		t.Fatalf("%d bill items still reference the deleted product", orphaned)
 	}
 }
+
+// seedManualPurchase writes an account, a manual transaction and one item
+// line linked to a product; it feeds the stats CTE's manual branch. Returns
+// the transaction id.
+func seedManualPurchase(t *testing.T, db *sql.DB, accountID, productID int64, date, currency string, price int64) int64 {
+	t.Helper()
+	res, err := db.Exec(`
+		INSERT INTO transactions (account_id, kind, amount_cents, currency, description, date, created_at, updated_at)
+		VALUES (?, 'expense', ?, ?, 'Manual purchase', ?, 100, 100)`,
+		accountID, price, currency, date)
+	if err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+	txID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("seed transaction id: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO transaction_items (transaction_id, product_id, name, quantity, unit_price_cents, line_total_cents, created_at, updated_at)
+		VALUES (?, ?, 'Milk', 1, ?, ?, 100, 100)`,
+		txID, productID, price, price); err != nil {
+		t.Fatalf("seed transaction item: %v", err)
+	}
+	return txID
+}
+
+func TestProductRepositoryStatsIncludeManualItems(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProductRepository(db)
+	reweID, milkID, _, _ := seedProductStats(t, db)
+
+	accountID, err := db.Exec(`INSERT INTO accounts (name, type, currency, created_at, updated_at) VALUES ('Wallet', 'cash', 'EUR', 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	accountIDv, _ := accountID.LastInsertId()
+
+	// A manual purchase of milk at REWE is the most recent line overall.
+	seedManualPurchase(t, db, accountIDv, milkID, "2026-05-10", "EUR", 189)
+
+	milk, err := repo.GetByID(ctx, milkID)
+	if err != nil {
+		t.Fatalf("get milk: %v", err)
+	}
+	if milk.TimesBought != 5 || milk.LastPurchaseDate != "2026-05-10" {
+		t.Fatalf("milk stats = %d bought, last %q; want 5, 2026-05-10", milk.TimesBought, milk.LastPurchaseDate)
+	}
+	if milk.LatestPriceCents == nil || *milk.LatestPriceCents != 189 || milk.PriceCurrency != "EUR" {
+		t.Fatalf("milk latest = %v %q; want 189 EUR (manual line wins recency)", milk.LatestPriceCents, milk.PriceCurrency)
+	}
+
+	// The manual line participates in the per-store comparison too.
+	prices, err := repo.StorePrices(ctx, milkID, "EUR")
+	if err != nil {
+		t.Fatalf("store prices: %v", err)
+	}
+	// REWE bill history + the manual purchase (storeless, its own group).
+	foundManual := false
+	for _, p := range prices {
+		if p.StoreID == nil && p.LatestPriceCents != nil && *p.LatestPriceCents == 189 {
+			foundManual = true
+		}
+	}
+	if !foundManual {
+		t.Fatalf("store prices = %+v; want a storeless manual group at 189", prices)
+	}
+	_ = reweID
+}

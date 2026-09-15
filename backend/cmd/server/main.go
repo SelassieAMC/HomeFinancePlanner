@@ -77,7 +77,7 @@ func run() error {
 	analyticsRepo := repository.NewAnalyticsRepository(db)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
-	svc := service.New(accounts, categories, storeSvc, productSvc, transactions, budgets, summary, settingsSvc, billSvc, fxSvc, analyticsSvc)
+	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, transactions, budgets, summary, settingsSvc, billSvc, fxSvc, analyticsSvc)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
