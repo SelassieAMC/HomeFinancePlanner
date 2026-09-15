@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +75,16 @@ func TestMarkBestWorst(t *testing.T) {
 				{Market: "Lidl", PriceCents: 100, Currency: "EUR"},
 			},
 			best:  []string{"REWE", "Lidl"},
+			worst: []string{},
+		},
+		{
+			name: "unavailable rows get no flags even with a stray price",
+			offers: []domain.OfferRow{
+				{Market: "REWE", PriceCents: 129, Currency: "EUR", Availability: domain.OfferNotAvailable},
+				{Market: "Lidl", PriceCents: 99, Currency: "EUR"},
+				{Market: "Edeka", PriceCents: 0, Currency: "EUR", Availability: domain.OfferNotPublished},
+			},
+			best:  []string{}, // Lidl alone in the priced group → no flags
 			worst: []string{},
 		},
 	}
@@ -168,18 +180,165 @@ func TestBuildOffersPrompt_IncludesContext(t *testing.T) {
 	products := []domain.OfferSearchProduct{
 		{ProductID: 3, Name: "Olive Oil", Brand: "Basso", Unit: "l", Quantity: 2, LastPriceCents: &lastPrice, Currency: "EUR"},
 	}
-	prompt := BuildOffersPrompt(products, []string{"REWE", "Lidl"})
+	prompt := BuildOffersPrompt(products, []string{"REWE", "Lidl"}, nil, domain.OfferNameStrict)
 	for _, want := range []string{
 		`"product_id": 3`, `"name": "Olive Oil"`, `"brand_hint": "Basso"`,
-		`"quantity_to_buy": 2`, `1.99 EUR`, "REWE, Lidl",
+		`"quantity_to_buy": 2`, `1.99 EUR`, "REWE, Lidl", "STRICT",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q\n---\n%s", want, prompt)
 		}
 	}
 
-	empty := BuildOffersPrompt(nil, nil)
+	empty := BuildOffersPrompt(nil, nil, nil, "")
 	if !strings.Contains(empty, "(none recorded)") {
 		t.Error("empty context should be spelled out")
+	}
+	if !strings.Contains(empty, "STRICT") {
+		t.Error("empty name match must default to strict")
+	}
+}
+
+// Pinned markets switch the prompt to the discriminating scope: one entry per
+// market per product, unavailable markets reported, none added outside.
+func TestBuildOffersPrompt_PinnedStores(t *testing.T) {
+	products := []domain.OfferSearchProduct{{ProductID: 1, Name: "Avocado"}}
+	prompt := BuildOffersPrompt(products, []string{"REWE", "Lidl"}, []string{"REWE", "Edeka"}, domain.OfferNameStrict)
+	for _, want := range []string{
+		"ONLY these markets: REWE, Edeka",
+		"one offer entry per listed market",
+		`"not_available"`, `"not_published"`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("pinned prompt missing %q\n---\n%s", want, prompt)
+		}
+	}
+	// The unbounded known-markets line must not appear when stores are pinned.
+	if strings.Contains(prompt, "other local markets are allowed") {
+		t.Errorf("pinned prompt leaked the open scope line\n---\n%s", prompt)
+	}
+}
+
+func TestBuildOffersPrompt_LooseMatch(t *testing.T) {
+	prompt := BuildOffersPrompt(nil, nil, nil, domain.OfferNameLoose)
+	for _, want := range []string{"LOOSE", `"variety"`, "Hass"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("loose prompt missing %q\n---\n%s", want, prompt)
+		}
+	}
+}
+
+type offerStoreFake struct {
+	OfferSearchStore
+	created domain.OfferSearch
+}
+
+func (f *offerStoreFake) Create(_ context.Context, s domain.OfferSearch) (domain.OfferSearch, error) {
+	s.ID = 1
+	f.created = s
+	return s, nil
+}
+
+// The service-side sweeper touches these on every Search; no-op fakes keep
+// the queue-only test fixture from needing the embedded interface.
+func (f *offerStoreFake) DeleteStale(context.Context, time.Time) ([]string, error) {
+	return nil, nil
+}
+
+func (f *offerStoreFake) List(context.Context, []domain.OfferSearchStatus, int) ([]domain.OfferSearch, error) {
+	return nil, nil
+}
+
+type offerProductStoreFake struct {
+	ProductStore
+}
+
+func (f offerProductStoreFake) GetByID(_ context.Context, id int64) (domain.Product, error) {
+	if id == 99 {
+		return domain.Product{}, fmt.Errorf("%w: product 99", domain.ErrNotFound)
+	}
+	return domain.Product{ID: id, Name: "Avocado", Unit: "pc"}, nil
+}
+
+type offerSettingsStoreFake struct {
+	SettingsStore
+}
+
+func (f offerSettingsStoreFake) Get(context.Context, string) (string, error) {
+	return `[{"id":"p1","type":"gemini","model":"gemini-2"}]`, nil
+}
+
+// An invalid name match is rejected up front, before any store is touched.
+func TestSearch_NameMatchValidation(t *testing.T) {
+	s := &OfferSearchService{}
+	_, err := s.Search(context.Background(), domain.OfferSearchInput{
+		Items:     []domain.OfferSearchInputItem{{ProductID: 1}},
+		NameMatch: domain.OfferNameMatch("fuzzy"),
+	})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("want validation error, got %v", err)
+	}
+	for _, want := range []string{"fuzzy", `"strict"`, `"loose"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message missing %q: %s", want, err.Error())
+		}
+	}
+}
+
+// Stores are trimmed, deduped and empty-dropped; an empty name match is
+// persisted as the strict default.
+func TestSearch_NormalizesStoresAndDefaultsStrict(t *testing.T) {
+	store := &offerStoreFake{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	s := &OfferSearchService{
+		searches:      store,
+		products:      offerProductStoreFake{},
+		providers:     NewSettingsService(offerSettingsStoreFake{}, wrapBox{}, nil),
+		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		queue:         make(chan string, 1),
+		ctx:           ctx,
+		cancel:        cancel,
+		searchTimeout: time.Minute,
+	}
+	search, err := s.Search(context.Background(), domain.OfferSearchInput{
+		Items:  []domain.OfferSearchInputItem{{ProductID: 1}},
+		Stores: []string{" REWE ", "", "REWE", "Edeka"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.created.Stores) != 2 || store.created.Stores[0] != "REWE" || store.created.Stores[1] != "Edeka" {
+		t.Errorf("stores not normalized: %v", store.created.Stores)
+	}
+	if store.created.NameMatch != domain.OfferNameStrict {
+		t.Errorf("empty name match must default to strict, got %q", store.created.NameMatch)
+	}
+	if search.NameMatch != domain.OfferNameStrict {
+		t.Errorf("returned search: name match %q", search.NameMatch)
+	}
+}
+
+func TestSearch_RejectsBadItems(t *testing.T) {
+	s := &OfferSearchService{
+		products: offerProductStoreFake{},
+	}
+	cases := []struct {
+		name    string
+		input   domain.OfferSearchInput
+		wantMsg string
+	}{
+		{"empty cart", domain.OfferSearchInput{}, "cart is empty"},
+		{"unknown product", domain.OfferSearchInput{Items: []domain.OfferSearchInputItem{{ProductID: 99}}}, "product 99 does not exist"},
+		{"duplicate product", domain.OfferSearchInput{Items: []domain.OfferSearchInputItem{{ProductID: 1}, {ProductID: 1}}}, "appears twice"},
+		{"bad name match value", domain.OfferSearchInput{Items: []domain.OfferSearchInputItem{{ProductID: 1}}, NameMatch: "nope"}, "unknown name match"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.Search(context.Background(), tt.input)
+			if !errors.Is(err, domain.ErrValidation) || !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("want validation error with %q, got %v", tt.wantMsg, err)
+			}
+		})
 	}
 }

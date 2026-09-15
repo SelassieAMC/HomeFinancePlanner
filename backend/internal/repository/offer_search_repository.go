@@ -27,7 +27,11 @@ const offerSearchColumns = `
 // Create inserts a search row in the searching state.
 func (r *OfferSearchRepository) Create(ctx context.Context, s domain.OfferSearch) (domain.OfferSearch, error) {
 	now := time.Now().Unix()
-	reqJSON, err := json.Marshal(s.Products)
+	reqJSON, err := json.Marshal(domain.OfferSearchRequest{
+		Products:  s.Products,
+		Stores:    s.Stores,
+		NameMatch: s.NameMatch,
+	})
 	if err != nil {
 		return domain.OfferSearch{}, fmt.Errorf("encode offer search request: %w", err)
 	}
@@ -206,6 +210,25 @@ func (r *OfferSearchRepository) DeleteStale(ctx context.Context, olderThan time.
 	return tokens, nil
 }
 
+// decodeOfferSearchRequest decodes request_json into the search. Rows written
+// before store pinning existed hold a bare products array; those fall back to
+// products-only with an empty scope (strict, any market).
+func decodeOfferSearchRequest(raw string, s *domain.OfferSearch) error {
+	var req domain.OfferSearchRequest
+	if err := json.Unmarshal([]byte(raw), &req); err == nil {
+		s.Products = req.Products
+		s.Stores = req.Stores
+		s.NameMatch = req.NameMatch
+		return nil
+	}
+	var legacy []domain.OfferSearchProduct
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+		return fmt.Errorf("decode offer search request: %w", err)
+	}
+	s.Products = legacy
+	return nil
+}
+
 func scanOfferSearch(row interface{ Scan(...any) error }) (domain.OfferSearch, error) {
 	var (
 		s         domain.OfferSearch
@@ -220,8 +243,8 @@ func scanOfferSearch(row interface{ Scan(...any) error }) (domain.OfferSearch, e
 	}
 	s.Status = domain.OfferSearchStatus(status)
 	if reqJSON != "" {
-		if err := json.Unmarshal([]byte(reqJSON), &s.Products); err != nil {
-			return domain.OfferSearch{}, fmt.Errorf("decode offer search request: %w", err)
+		if err := decodeOfferSearchRequest(reqJSON, &s); err != nil {
+			return domain.OfferSearch{}, err
 		}
 	}
 	if resJSON != "" {

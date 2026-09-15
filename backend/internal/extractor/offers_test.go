@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"home-finance-planner/backend/internal/domain"
 )
 
 func TestParseOffersJSON_PinnedSchema(t *testing.T) {
@@ -112,6 +114,58 @@ func TestParseOffersJSON_MissingOffersAreEmpty(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `"offers":[]`) {
 		t.Errorf("wire output must carry an empty offers array: %s", out)
+	}
+}
+
+// Pinned-scope searches discriminate stores without a price: those rows must
+// survive parsing with their availability, and varieties are kept.
+func TestParseOffersJSON_AvailabilityAndVariety(t *testing.T) {
+	raw := `{
+		"products": [
+			{
+				"product_id": 1, "name": "Avocado",
+				"offers": [
+					{"market": "Store1", "price": 0.5, "currency": "EUR", "variety": "Hass"},
+					{"market": "Store2", "availability": "not_available"},
+					{"market": "Store3", "price": 1.2, "currency": "EUR", "availability": "available", "variety": "XL"},
+					{"market": "Store4", "availability": "not_published", "note": "shop online only"},
+					{"market": "Store5", "availability": "who knows"},
+					{"market": "Store6", "price": 0.9, "currency": "EUR", "availability": "not_available"}
+				]
+			}
+		]
+	}`
+	res, err := ParseOffersJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := res.Products[0].Offers
+	if len(rows) != 5 { // Store5 (unknown availability, no price) is dropped
+		t.Fatalf("offers: %d (want 5): %+v", len(rows), rows)
+	}
+	if rows[0].Variety != "Hass" || rows[0].PriceCents != 50 {
+		t.Errorf("row 0: %+v", rows[0])
+	}
+	if rows[1].Market != "Store2" || rows[1].Availability != domain.OfferNotAvailable || rows[1].PriceCents != 0 {
+		t.Errorf("not_available row: %+v", rows[1])
+	}
+	if rows[2].Availability != domain.OfferAvailable {
+		t.Errorf("explicit available row: %+v", rows[2])
+	}
+	if rows[3].Availability != domain.OfferNotPublished || rows[3].Note != "shop online only" {
+		t.Errorf("not_published row: %+v", rows[3])
+	}
+	// Unknown availability normalizes to available → the priceless row is
+	// dropped; a priced row keeps available even with the flag set oddly.
+	if rows[4].Market != "Store6" || rows[4].PriceCents != 90 {
+		t.Errorf("last kept row: %+v", rows[4])
+	}
+
+	// Unavailable rows must never be flagged best/worst.
+	out, _ := json.Marshal(res)
+	if strings.Contains(string(out), `"best_price":true`) &&
+		strings.Contains(string(out), `"price_cents":0,`) {
+		t.Errorf("a 0-cent row got a flag: %s", out)
 	}
 }
 

@@ -410,14 +410,20 @@ export interface OfferSearchProduct {
   currency?: string;
 }
 
-/** One price found for one product in one market. best/worst are computed
- *  backend-side (cheapest/most expensive of the product within one currency). */
+export type OfferAvailability = 'available' | 'not_available' | 'not_published';
+
+/** One price found for one product in one market — or an explicit "no price
+ *  here" row (availability) when the search was scoped to pinned stores.
+ *  best/worst are computed backend-side (cheapest/most expensive of the
+ *  product within one currency). */
 export interface OfferRow {
   market: string;
   brand?: string;
+  variety?: string; // name/variety actually sold, e.g. "Hass"
   price_cents: number;
   currency: string;
   is_offer: boolean; // true = explicit promotion
+  availability?: OfferAvailability; // omitted = available
   note?: string;
   best_price?: boolean;
   worst_price?: boolean;
@@ -441,6 +447,8 @@ export interface OfferSearch {
   status: OfferSearchStatus;
   provider_id?: string;
   products?: OfferSearchProduct[]; // request snapshot echoed back
+  stores?: string[]; // pinned markets; absent = any local market
+  name_match?: 'strict' | 'loose'; // absent = strict
   result?: OfferResult; // absent while searching or failed
   error?: string; // set when failed
   created_at?: string;

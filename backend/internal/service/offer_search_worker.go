@@ -114,7 +114,7 @@ func (s *OfferSearchService) runSearch(ctx context.Context, provider domain.AIPr
 			}
 		}
 	}
-	prompt := BuildOffersPrompt(search.Products, storeNames)
+	prompt := BuildOffersPrompt(search.Products, storeNames, search.Stores, search.NameMatch)
 	res, err := s.searcher.SearchOffers(ctx, provider, prompt, log)
 	// The wire echoes product ids from the request; keep the snapshot's names
 	// authoritative so renamed products still render the result correctly.
@@ -270,7 +270,9 @@ func markBestWorst(res *domain.OfferResult) {
 		product := &res.Products[i]
 		byCurrency := map[string][]int{}
 		for j, offer := range product.Offers {
-			if offer.PriceCents <= 0 {
+			if offer.PriceCents <= 0 || offer.Availability.Unavailable() {
+				// Not-available/not-published rows never compete for best/worst
+				// even if a stray price slipped through parsing.
 				continue
 			}
 			byCurrency[offer.Currency] = append(byCurrency[offer.Currency], j)

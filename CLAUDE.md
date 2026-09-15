@@ -163,7 +163,17 @@ and the `ollama_web_search` connector type — key-required — whose backend ru
 Ollama's client-side `web_search`/`web_fetch` tool loop against ollama.com)
 get the search tool attached; plain `ollama`/`openai_compatible` are prompted
 only and any failure there becomes an actionable "configure a connector with
-web search" error. The normalized result is stored as JSON and rendered per product with
+web search" error. The search scope is chosen in a pre-search options panel:
+pinned stores (one offer entry per pinned market per product, otherwise any
+local market) and a name match — `strict` (exact product names, the default)
+or `loose` (include similar names/varieties, e.g. avocado → Hass, XL,
+ready-to-eat, with each offer naming the variety actually sold). The scope
+rides in `offer_searches.request_json` (`OfferSearchRequest` snapshot with a
+legacy bare-array fallback decode), so retries reuse it. When stores are
+pinned, stores without the product or without online prices are discriminated
+with explicit rows: `availability` is `available` (priced, the default for
+legacy rows) / `not_available` / `not_published` (priceless, muted in the UI,
+never flagged best/worst). The normalized result is stored as JSON and rendered per product with
 backend-computed `best_price` (green) / `worst_price` (red) flags per product and
 currency; only failed searches are TTL-swept (done rows are the kept record).
 When adding

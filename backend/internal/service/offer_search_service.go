@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,6 +108,30 @@ func (s *OfferSearchService) Search(ctx context.Context, in domain.OfferSearchIn
 		return domain.OfferSearch{}, validationError("too many cart items (%d) — search for at most %d products at once", len(in.Items), maxOfferSearchItems)
 	}
 
+	// Search scope: pinned stores and name-match mode ride along with the
+	// snapshot (request_json) so the result renders the scope and retries
+	// reuse it.
+	nameMatch := in.NameMatch
+	if nameMatch == "" {
+		nameMatch = domain.OfferNameStrict
+	}
+	if !nameMatch.Valid() {
+		return domain.OfferSearch{}, validationError("unknown name match %q — want \"strict\" or \"loose\"", in.NameMatch)
+	}
+	pinnedStores := make([]string, 0, len(in.Stores))
+	seenStores := map[string]bool{}
+	for _, st := range in.Stores {
+		name := strings.TrimSpace(st)
+		if name == "" || seenStores[name] {
+			continue
+		}
+		seenStores[name] = true
+		pinnedStores = append(pinnedStores, name)
+	}
+	if len(pinnedStores) > maxOfferSearchItems {
+		return domain.OfferSearch{}, validationError("too many pinned stores (%d) — pin at most %d stores", len(pinnedStores), maxOfferSearchItems)
+	}
+
 	snapshot := make([]domain.OfferSearchProduct, 0, len(in.Items))
 	seen := map[int64]bool{}
 	for _, item := range in.Items {
@@ -162,6 +187,8 @@ func (s *OfferSearchService) Search(ctx context.Context, in domain.OfferSearchIn
 		SearchToken: token,
 		ProviderID:  provider.ID,
 		Products:    snapshot,
+		Stores:      pinnedStores,
+		NameMatch:   nameMatch,
 	})
 	if err != nil {
 		return domain.OfferSearch{}, err

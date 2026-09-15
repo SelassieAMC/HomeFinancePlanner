@@ -55,19 +55,40 @@ export function OfferResultView({ result }: { result: OfferResult }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {offers.map((o, i) => (
-                          <tr
-                            key={`${o.market}-${o.brand}-${i}`}
-                            className={
-                              o.best_price ? 'offer-best' : o.worst_price ? 'offer-worst' : undefined
-                            }
-                          >
-                            <td>{o.market}</td>
-                            <td>{o.brand || '—'}</td>
-                            <td className="num">{formatCents(o.price_cents, o.currency)}</td>
-                            <td>{o.is_offer ? <span className="offer-tag">offer</span> : '—'}</td>
-                          </tr>
-                        ))}
+                        {offers.map((o, i) => {
+                          // Pinned-scope searches discriminate stores without a
+                          // price: not available / not published instead of one.
+                          const unavailable =
+                            o.availability === 'not_available' || o.availability === 'not_published';
+                          return (
+                            <tr
+                              key={`${o.market}-${o.brand}-${i}`}
+                              className={
+                                unavailable
+                                  ? 'offer-unavailable'
+                                  : o.best_price
+                                    ? 'offer-best'
+                                    : o.worst_price
+                                      ? 'offer-worst'
+                                      : undefined
+                              }
+                            >
+                              <td>
+                                {o.market}
+                                {o.variety && <span className="offer-variety">{o.variety}</span>}
+                              </td>
+                              <td>{o.brand || '—'}</td>
+                              <td className="num">
+                                {unavailable
+                                  ? o.availability === 'not_available'
+                                    ? 'not available'
+                                    : 'not published'
+                                  : formatCents(o.price_cents, o.currency)}
+                              </td>
+                              <td>{o.is_offer ? <span className="offer-tag">offer</span> : '—'}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -93,8 +114,12 @@ export function OfferResultView({ result }: { result: OfferResult }) {
   );
 }
 
-/** Formats the cheapest offer's price for the collapsed panel summary. */
-function bestPriceLabel(offers: { price_cents: number; currency: string }[]): string {
-  const cheapest = offers.reduce((min, o) => (o.price_cents < min.price_cents ? o : min));
-  return `from ${formatCents(cheapest.price_cents, cheapest.currency)}`;
+/** Formats the cheapest offer's price for the collapsed panel summary.
+ *  Unavailable rows (0 cents) never count as the cheapest. */
+function bestPriceLabel(offers: { price_cents: number; currency: string; variety?: string }[]): string {
+  const priced = offers.filter((o) => o.price_cents > 0);
+  if (priced.length === 0) return 'not found';
+  const cheapest = priced.reduce((min, o) => (o.price_cents < min.price_cents ? o : min));
+  const variety = cheapest.variety ? ` (${cheapest.variety})` : '';
+  return `from ${formatCents(cheapest.price_cents, cheapest.currency)}${variety}`;
 }

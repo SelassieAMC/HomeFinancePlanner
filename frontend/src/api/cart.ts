@@ -10,11 +10,19 @@ export interface CartSearchInputItem {
   brand?: string;
 }
 
+/** Search scope: pinned stores (empty/absent = any local market) and the
+ *  name-match mode (strict = exact names, loose = include varieties). */
+export interface CartSearchInput {
+  items: CartSearchInputItem[];
+  stores?: string[];
+  name_match?: 'strict' | 'loose';
+}
+
 export const cartApi = {
   /** Confirm the cart: starts the offer search with the default AI provider.
    *  Returns immediately with status "searching"; poll get until done/failed. */
-  search: (items: CartSearchInputItem[]) =>
-    apiClient.post<OfferSearch>(`${BASE}/cart-searches`, { items }),
+  search: (input: CartSearchInput) =>
+    apiClient.post<OfferSearch>(`${BASE}/cart-searches`, input),
   /** Poll one search's pipeline state (searching → done/failed). */
   get: (token: string) => apiClient.get<OfferSearch>(`${BASE}/cart-searches/${token}`),
   /** Recent searches for the purchase-cart view. */

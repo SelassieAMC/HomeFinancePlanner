@@ -2168,6 +2168,58 @@ select:focus,
   background: rgba(220, 70, 70, 0.14);
 }
 
+/* Pinned-scope rows without a price: store does not carry / publish the
+   product. Muted, never tinted — they carry no best/worst flag. */
+.offer-unavailable td {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Variety actually sold in that market (loose name match). */
+.offer-variety {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Pre-search options: store scope + name-match toggle. */
+.search-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+  padding: 0.7rem;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 8px;
+}
+
+.search-options-group {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.search-options-group legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0;
+}
+
+.search-options-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+  margin: 0.25rem 0;
+}
+
+.search-options-stores {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0 0.8rem;
+  margin: 0.3rem 0 0.3rem 1.5rem;
+}
+
 .offer-tag {
   display: inline-block;
   padding: 0.05rem 0.4rem;

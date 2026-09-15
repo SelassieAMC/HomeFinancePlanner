@@ -149,12 +149,28 @@ type rawProductW struct {
 }
 
 type rawOfferW struct {
-	Market   string   `json:"market"`
-	Brand    string   `json:"brand"`
-	Price    *float64 `json:"price"`
-	Currency string   `json:"currency"`
-	IsOffer  *bool    `json:"is_offer"`
-	Note     string   `json:"note"`
+	Market       string   `json:"market"`
+	Brand        string   `json:"brand"`
+	Variety      string   `json:"variety"`
+	Price        *float64 `json:"price"`
+	Currency     string   `json:"currency"`
+	IsOffer      *bool    `json:"is_offer"`
+	Availability string   `json:"availability"`
+	Note         string   `json:"note"`
+}
+
+// normalizeAvailability maps a model-reported availability to the domain
+// enum: unknown or empty means available (legacy rows never carried the
+// field), so an unpriced row of unknown quality is dropped rather than kept.
+func normalizeAvailability(raw string) domain.OfferAvailability {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(domain.OfferNotAvailable):
+		return domain.OfferNotAvailable
+	case string(domain.OfferNotPublished):
+		return domain.OfferNotPublished
+	default:
+		return domain.OfferAvailable
+	}
 }
 
 // ParseOffersJSON extracts and normalizes the offers JSON object from a model
@@ -188,17 +204,35 @@ func ParseOffersJSON(raw string) (domain.OfferResult, error) {
 		}
 		for _, o := range p.Offers {
 			market := strings.TrimSpace(o.Market)
-			if o.Price == nil || market == "" {
-				continue // an offer without a market or price is useless
+			if market == "" {
+				continue // an offer without a market cannot be discriminated
+			}
+			availability := normalizeAvailability(o.Availability)
+			// Priceless rows are kept only as explicit "no price here"
+			// discrimination (store does not carry / does not publish it).
+			if o.Price == nil {
+				if !availability.Unavailable() {
+					continue
+				}
+				out.Offers = append(out.Offers, domain.OfferRow{
+					Market:       market,
+					Brand:        strings.TrimSpace(o.Brand),
+					Variety:      strings.TrimSpace(o.Variety),
+					Availability: availability,
+					Note:         strings.TrimSpace(o.Note),
+				})
+				continue
 			}
 			currency := strings.ToUpper(strings.TrimSpace(o.Currency))
 			out.Offers = append(out.Offers, domain.OfferRow{
-				Market:     market,
-				Brand:      strings.TrimSpace(o.Brand),
-				PriceCents: toCents(*o.Price),
-				Currency:   currency,
-				IsOffer:    o.IsOffer != nil && *o.IsOffer,
-				Note:       strings.TrimSpace(o.Note),
+				Market:       market,
+				Brand:        strings.TrimSpace(o.Brand),
+				Variety:      strings.TrimSpace(o.Variety),
+				PriceCents:   toCents(*o.Price),
+				Currency:     currency,
+				IsOffer:      o.IsOffer != nil && *o.IsOffer,
+				Availability: availability,
+				Note:         strings.TrimSpace(o.Note),
 			})
 		}
 		res.Products = append(res.Products, out)

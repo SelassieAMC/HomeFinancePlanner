@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { cartApi } from '../../api/cart';
+import { storesApi } from '../../api/stores';
 import { ApiError } from '../../api/client';
 import type { OfferResult } from '../../types/domain';
 import { useAsync } from '../../hooks/useAsync';
@@ -32,6 +33,12 @@ export function CartPage() {
 
   // "Add item" field for products not yet in the cart.
   const [pickName, setPickName] = useState('');
+  // Search options shown between "Search offers" and starting the search.
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [pinStores, setPinStores] = useState(false);
+  const [pickedStores, setPickedStores] = useState<string[]>([]);
+  const [looseMatch, setLooseMatch] = useState(false);
+  const stores = useAsync(storesApi.list, optionsOpen ? [optionsOpen] : []);
   // Past searches list, refreshed after new results land.
   const [historyKey, setHistoryKey] = useState(0);
   const history = useAsync(
@@ -110,20 +117,25 @@ export function CartPage() {
     };
   }, [token, setSearchParams]);
 
-  /** Confirms the purchase: start the offer search for the cart's products. */
+  /** Confirms the purchase: start the offer search for the cart's products,
+   *  scoped to the options chosen in the panel (pinned stores, name match). */
   async function handleSearch() {
     if (cart.items.length === 0) return;
+    if (pinStores && pickedStores.length === 0) return;
     setBusy(true);
     setError(null);
     setConfirmed(false);
     try {
-      const res = await cartApi.search(
-        cart.items.map((it) => ({
+      const res = await cartApi.search({
+        items: cart.items.map((it) => ({
           product_id: it.product_id,
           quantity: it.quantity,
           brand: it.brand || undefined,
         })),
-      );
+        stores: pinStores ? pickedStores : undefined,
+        name_match: looseMatch ? 'loose' : 'strict',
+      });
+      setOptionsOpen(false);
       setResult(null);
       setFailed(null);
       setToken(res.search_token);
@@ -268,13 +280,94 @@ export function CartPage() {
           </div>
 
           <div className="camera-row">
-            <Button onClick={handleSearch} disabled={busy || cart.items.length === 0}>
+            <Button
+              onClick={() => setOptionsOpen((open) => !open)}
+              disabled={busy || cart.items.length === 0}
+            >
               🔎 Search offers
             </Button>
             <Button variant="secondary" onClick={() => cart.clear()} disabled={busy || cart.items.length === 0}>
               Clear all
             </Button>
           </div>
+
+          {optionsOpen && cart.items.length > 0 && (
+            <div className="search-options">
+              <fieldset className="search-options-group">
+                <legend>Store scope</legend>
+                <label className="search-options-choice">
+                  <input
+                    type="radio"
+                    name="store-scope"
+                    checked={!pinStores}
+                    onChange={() => setPinStores(false)}
+                  />
+                  Any local market — whatever appears available
+                </label>
+                <label className="search-options-choice">
+                  <input
+                    type="radio"
+                    name="store-scope"
+                    checked={pinStores}
+                    onChange={() => setPinStores(true)}
+                  />
+                  Only these stores (missing products are reported per store)
+                </label>
+                {pinStores && (
+                  stores.loading && !stores.data ? (
+                    <Spinner label="Loading your stores…" />
+                  ) : (stores.data ?? []).length === 0 ? (
+                    <p className="hint-text">
+                      No stores recorded yet — add one on a bill, or leave the
+                      scope open.
+                    </p>
+                  ) : (
+                    <div className="search-options-stores">
+                      {(stores.data ?? []).map((store) => (
+                        <label key={store.id} className="search-options-choice">
+                          <input
+                            type="checkbox"
+                            checked={pickedStores.includes(store.name)}
+                            onChange={(e) =>
+                              setPickedStores((picked) =>
+                                e.target.checked
+                                  ? [...picked, store.name]
+                                  : picked.filter((name) => name !== store.name),
+                              )
+                            }
+                          />
+                          {store.name}
+                        </label>
+                      ))}
+                    </div>
+                  )
+                )}
+              </fieldset>
+
+              <label className="search-options-choice">
+                <input
+                  type="checkbox"
+                  checked={looseMatch}
+                  onChange={(e) => setLooseMatch(e.target.checked)}
+                />
+                Include similar names and varieties (loose) — e.g. avocado also
+                matches Hass, XL, ready-to-eat; each offer names what the
+                market sells. Off = exact name only (strict).
+              </label>
+
+              <div className="camera-row">
+                <Button
+                  onClick={handleSearch}
+                  disabled={busy || cart.items.length === 0 || (pinStores && pickedStores.length === 0)}
+                >
+                  Start search
+                </Button>
+                <Button variant="secondary" onClick={() => setOptionsOpen(false)} disabled={busy}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
           {error && <ErrorMessage message={error} />}
         </Card>
       )}
@@ -347,6 +440,8 @@ export function CartPage() {
                 >
                   {new Date(s.created_at ?? '').toLocaleString()} ·{' '}
                   {s.products?.length ?? 0} product(s)
+                  {s.stores && s.stores.length > 0 && ` · ${s.stores.length} pinned`}
+                  {s.name_match === 'loose' && ' · loose'}
                 </button>
                 <span className={`offer-status offer-status-${s.status}`}>{s.status}</span>
                 <button

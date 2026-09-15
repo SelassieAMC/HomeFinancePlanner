@@ -23,6 +23,40 @@ func (s OfferSearchStatus) Valid() bool {
 	return false
 }
 
+// OfferNameMatch selects how strictly the model must match product names:
+// strict = exactly the product as named; loose = include similar naming and
+// varieties (avocado → Hass, XL, ready-to-eat). Empty means strict.
+type OfferNameMatch string
+
+const (
+	OfferNameStrict OfferNameMatch = "strict"
+	OfferNameLoose  OfferNameMatch = "loose"
+)
+
+func (m OfferNameMatch) Valid() bool {
+	switch m {
+	case OfferNameStrict, OfferNameLoose:
+		return true
+	}
+	return false
+}
+
+// OfferAvailability is the per-row store availability reported by the model.
+// Empty means available (legacy rows never carried the field).
+type OfferAvailability string
+
+const (
+	OfferAvailable    OfferAvailability = "available"
+	OfferNotAvailable OfferAvailability = "not_available" // store does not carry the product
+	OfferNotPublished OfferAvailability = "not_published" // store exists but publishes no price online
+)
+
+// Unavailable reports whether the row is an explicit "no price here" entry —
+// such rows carry no price and are excluded from best/worst flags.
+func (a OfferAvailability) Unavailable() bool {
+	return a == OfferNotAvailable || a == OfferNotPublished
+}
+
 // OfferSearchProduct is one cart line as sent to the model — a snapshot of the
 // product at search time (name, brand, unit, last known price), so the result
 // stays renderable even if the product is later edited or merged.
@@ -36,19 +70,24 @@ type OfferSearchProduct struct {
 	Currency       string  `json:"currency,omitempty"`
 }
 
-// OfferRow is one price found for one product in one market. BestPrice and
+// OfferRow is one price found for one product in one market — or an explicit
+// "no price here" entry when the search was scoped to pinned markets and the
+// store does not carry the product (Availability) . Variety discloses which
+// name/variety the market actually sells (loose name match). BestPrice and
 // WorstPrice are computed by the service at parse time (cheapest/most
 // expensive offer of the product within one currency) — the UI only applies
 // classes to them.
 type OfferRow struct {
-	Market     string `json:"market"`
-	Brand      string `json:"brand,omitempty"`
-	PriceCents int64  `json:"price_cents"`
-	Currency   string `json:"currency"`
-	IsOffer    bool   `json:"is_offer"` // true = explicit promotion
-	Note       string `json:"note,omitempty"`
-	BestPrice  bool   `json:"best_price,omitempty"`  // computed: cheapest of its product+currency
-	WorstPrice bool   `json:"worst_price,omitempty"` // computed: most expensive
+	Market       string            `json:"market"`
+	Brand        string            `json:"brand,omitempty"`
+	Variety      string            `json:"variety,omitempty"` // variety/name actually sold, e.g. "Hass"
+	PriceCents   int64             `json:"price_cents"`
+	Currency     string            `json:"currency"`
+	IsOffer      bool              `json:"is_offer"`               // true = explicit promotion
+	Availability OfferAvailability `json:"availability,omitempty"` // omitted = available
+	Note         string            `json:"note,omitempty"`
+	BestPrice    bool              `json:"best_price,omitempty"`  // computed: cheapest of its product+currency
+	WorstPrice   bool              `json:"worst_price,omitempty"` // computed: most expensive
 }
 
 // OfferProductResult is the set of offers found for one cart product.
@@ -70,6 +109,15 @@ type OfferResult struct {
 	SearchedAt   string               `json:"searched_at"` // RFC3339
 }
 
+// OfferSearchRequest is the search scope snapshot persisted in request_json:
+// the cart lines plus the store pinning and name-match mode at search time
+// (retry reuses them).
+type OfferSearchRequest struct {
+	Products  []OfferSearchProduct `json:"products"`
+	Stores    []string             `json:"stores,omitempty"`     // pinned markets; empty = any local market
+	NameMatch OfferNameMatch       `json:"name_match,omitempty"` // omitted = strict
+}
+
 // OfferSearch is the wire shape of one search (mirrors BillScan): created with
 // status searching, polled by token until done (Result) or failed (Error).
 type OfferSearch struct {
@@ -78,16 +126,20 @@ type OfferSearch struct {
 	Status      OfferSearchStatus    `json:"status"`
 	ProviderID  string               `json:"provider_id,omitempty"`
 	Products    []OfferSearchProduct `json:"products,omitempty"` // from request_json
-	Result      *OfferResult         `json:"result,omitempty"`   // null unless done
-	Error       string               `json:"error,omitempty"`    // set when failed
+	Stores      []string             `json:"stores,omitempty"`   // pinned markets; empty = any
+	NameMatch   OfferNameMatch       `json:"name_match,omitempty"`
+	Result      *OfferResult         `json:"result,omitempty"` // null unless done
+	Error       string               `json:"error,omitempty"`  // set when failed
 	CreatedAt   time.Time            `json:"created_at"`
 	UpdatedAt   time.Time            `json:"-"`
 }
 
 // OfferSearchInput is the POST body when confirming a cart: cart lines by
-// product id.
+// product id, optionally scoped to pinned stores and a name-match mode.
 type OfferSearchInput struct {
-	Items []OfferSearchInputItem `json:"items"`
+	Items     []OfferSearchInputItem `json:"items"`
+	Stores    []string               `json:"stores,omitempty"`     // pinned markets; empty = any local market
+	NameMatch OfferNameMatch         `json:"name_match,omitempty"` // omitted = strict
 }
 
 // OfferSearchInputItem carries the product id plus optional quantity and a
