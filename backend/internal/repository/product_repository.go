@@ -11,44 +11,79 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// productColumns + productFrom read a product together with its display-only
-// purchase stats (computed from the linked bill lines of accepted bills;
-// deposit returns are excluded — they are money back, not purchases). Prices
-// are native-currency amounts from the most recent purchase; the average is
-// taken only over lines in that same currency so unlike currencies never mix.
+// Purchase stats are derived from the linked bill lines of accepted bills
+// (deposit returns are excluded — they are money back, not purchases). One
+// CTE computes every product's stats in a single pass over bill_items ⋈ bills,
+// instead of the per-row correlated subqueries this replaced:
+//
+//	ranked — each line, numbered per product by recency (bill date, bill id,
+//	         item id; the same top-1 rule the old subqueries used)
+//	latest — the most recent line's price and currency, per product
+//	stats  — the aggregates; avg/best are scoped to that latest currency so
+//	         unlike currencies never mix
+//
+// productColumns joins products against it (LEFT JOIN keeps never-bought
+// products, hence the COALESCE on the count). Scope is injectable so single-
+// product reads stay index-driven instead of aggregating the whole table:
+// the scope's placeholder(s) bind first (the CTE is evaluated first).
+const productStatsCTE = `
+WITH ranked AS (
+	SELECT bi.product_id, b.date AS bill_date, bi.unit_price_cents, b.currency,
+	       ROW_NUMBER() OVER (PARTITION BY bi.product_id
+	         ORDER BY b.date DESC, b.id DESC, bi.id DESC) AS rn
+	FROM bill_items bi JOIN bills b ON b.id = bi.bill_id
+	WHERE b.status = 'accepted' AND bi.is_return = 0 [scope]
+),
+latest AS (
+	SELECT product_id,
+	       MAX(CASE WHEN rn = 1 THEN unit_price_cents END) AS latest_price_cents,
+	       MAX(CASE WHEN rn = 1 THEN currency END) AS price_currency
+	FROM ranked
+	GROUP BY product_id
+),
+stats AS (
+	SELECT r.product_id,
+	       COUNT(*) AS times_bought,
+	       MAX(r.bill_date) AS last_purchase_date,
+	       l.latest_price_cents,
+	       l.price_currency,
+	       CAST(ROUND(AVG(CASE WHEN r.currency = l.price_currency
+	                       THEN r.unit_price_cents END)) AS INTEGER) AS avg_price_cents,
+	       MIN(CASE WHEN r.currency = l.price_currency
+	                THEN r.unit_price_cents END) AS best_price_cents
+	FROM ranked r JOIN latest l ON l.product_id = r.product_id
+	GROUP BY r.product_id
+)`
+
+// CTE scopes: all products (List), one by id (GetByID), one by name
+// (FindByName — the subselect keeps the lookup index-driven without knowing
+// the id up front).
+const (
+	productScopeNone   = ""
+	productScopeByID   = " AND bi.product_id = ?"
+	productScopeByName = " AND bi.product_id = (SELECT id FROM products WHERE name = ? COLLATE NOCASE)"
+)
+
+// productColumns + productFrom read a product together with its derived
+// purchase stats (see productStatsCTE). The column order matches scanProduct.
 const productColumns = `
 	p.id, p.name, p.brand, p.unit, p.category_id, c.name, p.description, p.image_path,
 	p.created_at, p.updated_at,
-	(SELECT COUNT(*)
-	   FROM bill_items bi JOIN bills b ON b.id = bi.bill_id
-	   WHERE bi.product_id = p.id AND b.status = 'accepted' AND bi.is_return = 0) AS times_bought,
-	(SELECT MAX(b.date)
-	   FROM bill_items bi JOIN bills b ON b.id = bi.bill_id
-	   WHERE bi.product_id = p.id AND b.status = 'accepted' AND bi.is_return = 0 AND b.date != '') AS last_purchase_date,
-	(SELECT bi2.unit_price_cents
-	   FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
-	   WHERE bi2.product_id = p.id AND b2.status = 'accepted' AND bi2.is_return = 0
-	   ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1) AS latest_price_cents,
-	(SELECT b2.currency
-	   FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
-	   WHERE bi2.product_id = p.id AND b2.status = 'accepted' AND bi2.is_return = 0
-	   ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1) AS price_currency,
-	(SELECT CAST(ROUND(AVG(bi3.unit_price_cents)) AS INTEGER)
-	   FROM bill_items bi3 JOIN bills b3 ON b3.id = bi3.bill_id
-	   WHERE bi3.product_id = p.id AND b3.status = 'accepted' AND bi3.is_return = 0
-	     AND b3.currency = (SELECT b4.currency
-	        FROM bill_items bi4 JOIN bills b4 ON b4.id = bi4.bill_id
-	        WHERE bi4.product_id = p.id AND b4.status = 'accepted' AND bi4.is_return = 0
-	        ORDER BY b4.date DESC, b4.id DESC, bi4.id DESC LIMIT 1)) AS avg_price_cents,
-	(SELECT MIN(bi5.unit_price_cents)
-	   FROM bill_items bi5 JOIN bills b5 ON b5.id = bi5.bill_id
-	   WHERE bi5.product_id = p.id AND b5.status = 'accepted' AND bi5.is_return = 0
-	     AND b5.currency = (SELECT b6.currency
-	        FROM bill_items bi6 JOIN bills b6 ON b6.id = bi6.bill_id
-	        WHERE bi6.product_id = p.id AND b6.status = 'accepted' AND bi6.is_return = 0
-	        ORDER BY b6.date DESC, b6.id DESC, bi6.id DESC LIMIT 1)) AS best_price_cents`
+	COALESCE(s.times_bought, 0) AS times_bought,
+	s.last_purchase_date, s.latest_price_cents, s.price_currency,
+	s.avg_price_cents, s.best_price_cents`
 
-const productFrom = `FROM products p LEFT JOIN categories c ON c.id = p.category_id`
+const productFrom = `
+	FROM products p
+	LEFT JOIN categories c ON c.id = p.category_id
+	LEFT JOIN stats s ON s.product_id = p.id`
+
+// productQuery assembles the stats CTE for a scope with the product columns
+// after it.
+func productQuery(scope string) string {
+	return strings.Replace(productStatsCTE, "[scope]", scope, 1) + `
+SELECT` + productColumns + productFrom
+}
 
 // productSortColumns whitelists the sortable ORDER BY expressions. Anything
 // else falls back to name — a raw query string never reaches the ORDER BY
@@ -110,7 +145,7 @@ func (r *ProductRepository) List(ctx context.Context, f domain.ProductFilters) (
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+productColumns+` `+productFrom+` WHERE `+whereSQL+`
+		productQuery(productScopeNone)+` WHERE `+whereSQL+`
 		 ORDER BY `+sortCol+` `+order+`, p.id ASC
 		 LIMIT ? OFFSET ?`, append(args, limit, f.Offset)...)
 	if err != nil {
@@ -133,9 +168,10 @@ func (r *ProductRepository) List(ctx context.Context, f domain.ProductFilters) (
 }
 
 // GetByID returns one product with its purchase stats, or domain.ErrNotFound.
+// The id scopes the stats CTE (bound first) so the read stays index-driven.
 func (r *ProductRepository) GetByID(ctx context.Context, id int64) (domain.Product, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT `+productColumns+` `+productFrom+` WHERE p.id = ?`, id)
+		productQuery(productScopeByID)+` WHERE p.id = ?`, id, id)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Product{}, domain.ErrNotFound
@@ -149,7 +185,7 @@ func (r *ProductRepository) GetByID(ctx context.Context, id int64) (domain.Produ
 // FindByName returns the product whose name matches case-insensitively.
 func (r *ProductRepository) FindByName(ctx context.Context, name string) (domain.Product, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT `+productColumns+` `+productFrom+` WHERE p.name = ? COLLATE NOCASE`, name)
+		productQuery(productScopeByName)+` WHERE p.name = ? COLLATE NOCASE`, name, name)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Product{}, domain.ErrNotFound
@@ -160,33 +196,62 @@ func (r *ProductRepository) FindByName(ctx context.Context, name string) (domain
 	return p, nil
 }
 
+// storePricesCTE lists the latest price a product was bought at, grouped by
+// store, in one pass: ranked numbers each accepted non-return line per store
+// (partitioning by store id treats NULL-store bills as their own group — the
+// `store_id IS store_id` workaround the correlated version needed is gone),
+// then the group select takes the top-1 price/currency and the last date.
+// [currencyFilter] is either empty (all currencies) or an extra `b.currency
+// = ?` filter, whose placeholder binds after the product id.
+const storePricesCTE = `
+WITH ranked AS (
+	SELECT b.store_id, COALESCE(st.name, '—') AS store_name, b.date,
+	       bi.unit_price_cents, b.currency,
+	       ROW_NUMBER() OVER (PARTITION BY b.store_id
+	         ORDER BY b.date DESC, b.id DESC, bi.id DESC) AS rn
+	FROM bills b
+	JOIN bill_items bi ON bi.bill_id = b.id
+	LEFT JOIN stores st ON st.id = b.store_id
+	WHERE bi.product_id = ? AND b.status = 'accepted' AND bi.is_return = 0 [currencyFilter]
+)
+SELECT store_id, store_name,
+       MAX(CASE WHEN rn = 1 THEN unit_price_cents END) AS latest_price_cents,
+       MAX(CASE WHEN rn = 1 THEN currency END) AS currency,
+       MAX(date) AS last_purchase_date
+FROM ranked
+GROUP BY store_id, store_name
+ORDER BY last_purchase_date DESC, store_name ASC`
+
+const storeCurrencyFilter = " AND b.currency = ?"
+
 // StorePrices returns the latest price a product was bought at, grouped by
 // store. currency scopes the amounts to a single currency (the service passes
 // the product's most recent purchase currency) so unlike currencies never mix.
-// Bills without a store group under a NULL store id; the newest purchase per
-// store wins, stores are ordered by their most recent purchase.
 func (r *ProductRepository) StorePrices(ctx context.Context, id int64, currency string) ([]domain.ProductStorePrice, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT st.id, COALESCE(st.name, '—'),
-		       (SELECT bi2.unit_price_cents
-		          FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
-		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
-		            AND b2.store_id = b.store_id AND b2.currency = b.currency
-		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
-		       (SELECT b2.currency
-		          FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
-		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
-		            AND b2.store_id = b.store_id AND b2.currency = b.currency
-		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
-		       MAX(b.date)
-		FROM bills b
-		JOIN bill_items bi ON bi.bill_id = b.id
-		LEFT JOIN stores st ON st.id = b.store_id
-		WHERE bi.product_id = ? AND b.status = 'accepted' AND bi.is_return = 0 AND b.currency = ?
-		GROUP BY b.store_id, st.id, st.name
-		ORDER BY MAX(b.date) DESC, st.name ASC`, id, currency)
+	return r.storePrices(ctx,
+		strings.Replace(storePricesCTE, "[currencyFilter]", storeCurrencyFilter, 1),
+		id, currency, "list product store prices")
+}
+
+// StorePurchaseSummary is StorePrices without the currency scope: the latest
+// price and its currency per store across all currencies. The merge check
+// needs it to compare two products' pricing at their shared stores, where the
+// two products may have been priced in different currencies.
+func (r *ProductRepository) StorePurchaseSummary(ctx context.Context, id int64) ([]domain.ProductStorePrice, error) {
+	return r.storePrices(ctx,
+		strings.Replace(storePricesCTE, "[currencyFilter]", "", 1),
+		id, "", "list product store purchases")
+}
+
+// storePrices runs the shared CTE and scans its rows.
+func (r *ProductRepository) storePrices(ctx context.Context, query string, id int64, currency, op string) ([]domain.ProductStorePrice, error) {
+	args := []any{id}
+	if currency != "" {
+		args = append(args, currency)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list product store prices: %w", err)
+		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 	defer rows.Close()
 
@@ -201,65 +266,6 @@ func (r *ProductRepository) StorePrices(ctx context.Context, id int64, currency 
 		)
 		if err := rows.Scan(&storeID, &storeName, &latest, &currencyCode, &lastPurchase); err != nil {
 			return nil, fmt.Errorf("scan product store price: %w", err)
-		}
-		row := domain.ProductStorePrice{
-			StoreName:        storeName,
-			Currency:         currencyCode.String,
-			LastPurchaseDate: lastPurchase.String,
-		}
-		if storeID.Valid {
-			v := storeID.Int64
-			row.StoreID = &v
-		}
-		if latest.Valid {
-			v := latest.Int64
-			row.LatestPriceCents = &v
-		}
-		items = append(items, row)
-	}
-	return items, rows.Err()
-}
-
-// StorePurchaseSummary is StorePrices without the currency scope: the latest
-// price and its currency per store across all currencies. The merge check
-// needs it to compare two products' pricing at their shared stores, where the
-// two products may have been priced in different currencies.
-func (r *ProductRepository) StorePurchaseSummary(ctx context.Context, id int64) ([]domain.ProductStorePrice, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT st.id, COALESCE(st.name, '—'),
-		       (SELECT bi2.unit_price_cents
-		          FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
-		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
-		            AND b2.store_id IS b.store_id
-		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
-		       (SELECT b2.currency
-		          FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
-		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
-		            AND b2.store_id IS b.store_id
-		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
-		       MAX(b.date)
-		FROM bills b
-		JOIN bill_items bi ON bi.bill_id = b.id
-		LEFT JOIN stores st ON st.id = b.store_id
-		WHERE bi.product_id = ? AND b.status = 'accepted' AND bi.is_return = 0
-		GROUP BY b.store_id, st.id, st.name
-		ORDER BY MAX(b.date) DESC, st.name ASC`, id)
-	if err != nil {
-		return nil, fmt.Errorf("list product store purchases: %w", err)
-	}
-	defer rows.Close()
-
-	items := []domain.ProductStorePrice{}
-	for rows.Next() {
-		var (
-			storeID      sql.NullInt64
-			storeName    string
-			latest       sql.NullInt64
-			currencyCode sql.NullString
-			lastPurchase sql.NullString
-		)
-		if err := rows.Scan(&storeID, &storeName, &latest, &currencyCode, &lastPurchase); err != nil {
-			return nil, fmt.Errorf("scan product store purchase: %w", err)
 		}
 		row := domain.ProductStorePrice{
 			StoreName:        storeName,
