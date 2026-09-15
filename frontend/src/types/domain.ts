@@ -140,6 +140,10 @@ export interface ProductStorePrice {
   store_id?: number | null;
   store_name: string; // "—" when the bill had no store
   latest_price_cents?: number | null;
+  /** Currency of latest_price_cents. The /prices endpoint is currency-scoped
+   *  (constant); the merge check compares unscoped rows where the two products
+   *  may have been priced in different currencies. */
+  currency?: string;
   last_purchase_date?: string;
 }
 
@@ -149,6 +153,33 @@ export interface ProductInput {
   unit?: string;
   category_id?: number | null;
   description?: string;
+}
+
+/** Pre-save rename check: the matched product and the merge plan to confirm.
+ *  `match` is absent when the new name matches nothing (or the product itself). */
+export interface ProductMergeCheck {
+  match?: Product;
+  mergeable: boolean;
+  /** "different_stores" — same product bought in different stores (simple
+   *  confirm); "same_store" — both bought at a shared store, any price (the
+   *  user picks which record to keep). */
+  reason?: 'different_stores' | 'same_store';
+  /** Shared store the comparison is taken at (same_store only). */
+  store_name?: string;
+  source_store_price?: ProductStorePrice;
+  target_store_price?: ProductStorePrice;
+  /** Store names each product was bought at (different_stores dialog). */
+  source_stores?: string[];
+  target_stores?: string[];
+}
+
+/** Merge confirmation: fold the product into `merge_with`, keeping "source"
+ *  (the edited product; `product` carries the pending edit) or "target" (the
+ *  matched product; the typed edits are discarded). */
+export interface ProductMergeInput {
+  merge_with: number;
+  keep: 'source' | 'target';
+  product?: ProductInput;
 }
 
 export type ProductSort =

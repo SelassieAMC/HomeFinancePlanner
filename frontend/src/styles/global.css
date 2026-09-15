@@ -763,6 +763,35 @@ select:focus,
   min-width: 100%;
 }
 
+/* Product merge dialog: side-by-side comparison of the two records; the
+ * column (and header) of the record chosen to keep is highlighted. The
+ * leading column is a row-label column, so it uses th styling like thead. */
+.merge-compare-table {
+  margin-top: 0.5rem;
+}
+
+.merge-compare-table th[scope='row'] {
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.merge-compare-table td.selected,
+.merge-compare-table th.selected {
+  background: color-mix(in srgb, var(--accent, #4d8ef7) 12%, transparent);
+}
+
+.merge-keep-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text, inherit);
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
 /* Product edit modal: a two-column mini editor page (basic information and
  * purchase stats on the left; photo card and footer actions on the right),
  * collapsing to one column on narrow screens. */

@@ -103,6 +103,8 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("GET /api/v1/products", productH.List)
 	mux.HandleFunc("GET /api/v1/products/{id}", productH.Get)
 	mux.HandleFunc("GET /api/v1/products/{id}/prices", productH.StorePrices)
+	mux.HandleFunc("GET /api/v1/products/{id}/merge-check", productH.CheckMerge)
+	mux.HandleFunc("POST /api/v1/products/{id}/merge", productH.Merge)
 	mux.HandleFunc("PUT /api/v1/products/{id}", productH.Update)
 	mux.HandleFunc("POST /api/v1/products/{id}/photo", productH.UploadPhoto)
 	mux.HandleFunc("GET /api/v1/products/{id}/photo", productH.Photo)

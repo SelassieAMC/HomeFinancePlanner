@@ -136,7 +136,14 @@ the service find-or-creates the store from the (case-insensitive) market name,
 while `market_name` stays a denormalized snapshot. Bill items link to products
 via `product_id`: on confirm the service find-or-creates the product from the
 case-insensitive item name (deposit returns are never linked), and product
-edits (name/unit/category) propagate to the linked bill items. Products cannot
+edits (name/unit/category) propagate to the linked bill items. Renaming a
+product to a name that already exists offers a **merge** instead of failing on
+the unique name index: `GET /products/{id}/merge-check` returns the matched
+product and the plan (bought at different stores → simple confirm; bought at a
+shared store → comparison dialog where the user picks which record to keep),
+and `POST /products/{id}/merge` redirects the loser's bill items to the keeper
+(purchase history — prices included — combines under it) and deletes the loser
+row in one transaction. Products cannot
 be created or deleted through the API; `GET /api/v1/products` is the only
 paginated endpoint (`{items, total, limit, offset}` envelope, sort key
 whitelist). Receipt uploads are deduplicated by

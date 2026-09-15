@@ -4,6 +4,8 @@ import type {
   Product,
   ProductFilters,
   ProductInput,
+  ProductMergeCheck,
+  ProductMergeInput,
   ProductStorePrice,
 } from '../types/domain';
 
@@ -34,6 +36,16 @@ export const productsApi = {
    *  historical bill items linked to the product (name/unit/category). */
   update: (id: number, input: ProductInput) =>
     apiClient.put<Product>(`${BASE}/products/${id}`, input),
+  /** Pre-save rename check: does the new name match an existing product, and
+   *  what merge plan should the UI confirm? No `match` → plain update. */
+  checkMerge: (id: number, name: string) =>
+    apiClient.get<ProductMergeCheck>(
+      `${BASE}/products/${id}/merge-check?name=${encodeURIComponent(name)}`,
+    ),
+  /** Folds the product into `merge_with`, redirecting its bill items to the
+   *  kept product (purchase history — including prices — combines there). */
+  merge: (id: number, input: ProductMergeInput) =>
+    apiClient.post<Product>(`${BASE}/products/${id}/merge`, input),
   uploadPhoto: (id: number, file: File) => {
     const form = new FormData();
     form.append('photo', file);

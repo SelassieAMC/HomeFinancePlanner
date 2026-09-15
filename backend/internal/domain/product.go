@@ -62,5 +62,9 @@ type ProductStorePrice struct {
 	StoreID          *int64 `json:"store_id,omitempty"`
 	StoreName        string `json:"store_name"` // "—" when the bill had no store
 	LatestPriceCents *int64 `json:"latest_price_cents,omitempty"`
+	// Currency of LatestPriceCents. The /prices endpoint is currency-scoped by
+	// the service, so it is redundant there; the merge check uses unscoped
+	// per-store rows, where two products can be priced in different currencies.
+	Currency         string `json:"currency,omitempty"`
 	LastPurchaseDate string `json:"last_purchase_date,omitempty"`
 }

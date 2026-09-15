@@ -173,6 +173,11 @@ func (r *ProductRepository) StorePrices(ctx context.Context, id int64, currency 
 		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
 		            AND b2.store_id = b.store_id AND b2.currency = b.currency
 		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
+		       (SELECT b2.currency
+		          FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
+		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
+		            AND b2.store_id = b.store_id AND b2.currency = b.currency
+		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
 		       MAX(b.date)
 		FROM bills b
 		JOIN bill_items bi ON bi.bill_id = b.id
@@ -191,12 +196,17 @@ func (r *ProductRepository) StorePrices(ctx context.Context, id int64, currency 
 			storeID      sql.NullInt64
 			storeName    string
 			latest       sql.NullInt64
+			currencyCode sql.NullString
 			lastPurchase sql.NullString
 		)
-		if err := rows.Scan(&storeID, &storeName, &latest, &lastPurchase); err != nil {
+		if err := rows.Scan(&storeID, &storeName, &latest, &currencyCode, &lastPurchase); err != nil {
 			return nil, fmt.Errorf("scan product store price: %w", err)
 		}
-		row := domain.ProductStorePrice{StoreName: storeName, LastPurchaseDate: lastPurchase.String}
+		row := domain.ProductStorePrice{
+			StoreName:        storeName,
+			Currency:         currencyCode.String,
+			LastPurchaseDate: lastPurchase.String,
+		}
 		if storeID.Valid {
 			v := storeID.Int64
 			row.StoreID = &v
@@ -208,6 +218,121 @@ func (r *ProductRepository) StorePrices(ctx context.Context, id int64, currency 
 		items = append(items, row)
 	}
 	return items, rows.Err()
+}
+
+// StorePurchaseSummary is StorePrices without the currency scope: the latest
+// price and its currency per store across all currencies. The merge check
+// needs it to compare two products' pricing at their shared stores, where the
+// two products may have been priced in different currencies.
+func (r *ProductRepository) StorePurchaseSummary(ctx context.Context, id int64) ([]domain.ProductStorePrice, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT st.id, COALESCE(st.name, '—'),
+		       (SELECT bi2.unit_price_cents
+		          FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
+		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
+		            AND b2.store_id IS b.store_id
+		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
+		       (SELECT b2.currency
+		          FROM bill_items bi2 JOIN bills b2 ON b2.id = bi2.bill_id
+		          WHERE bi2.product_id = bi.product_id AND b2.status = 'accepted' AND bi2.is_return = 0
+		            AND b2.store_id IS b.store_id
+		          ORDER BY b2.date DESC, b2.id DESC, bi2.id DESC LIMIT 1),
+		       MAX(b.date)
+		FROM bills b
+		JOIN bill_items bi ON bi.bill_id = b.id
+		LEFT JOIN stores st ON st.id = b.store_id
+		WHERE bi.product_id = ? AND b.status = 'accepted' AND bi.is_return = 0
+		GROUP BY b.store_id, st.id, st.name
+		ORDER BY MAX(b.date) DESC, st.name ASC`, id)
+	if err != nil {
+		return nil, fmt.Errorf("list product store purchases: %w", err)
+	}
+	defer rows.Close()
+
+	items := []domain.ProductStorePrice{}
+	for rows.Next() {
+		var (
+			storeID      sql.NullInt64
+			storeName    string
+			latest       sql.NullInt64
+			currencyCode sql.NullString
+			lastPurchase sql.NullString
+		)
+		if err := rows.Scan(&storeID, &storeName, &latest, &currencyCode, &lastPurchase); err != nil {
+			return nil, fmt.Errorf("scan product store purchase: %w", err)
+		}
+		row := domain.ProductStorePrice{
+			StoreName:        storeName,
+			Currency:         currencyCode.String,
+			LastPurchaseDate: lastPurchase.String,
+		}
+		if storeID.Valid {
+			v := storeID.Int64
+			row.StoreID = &v
+		}
+		if latest.Valid {
+			v := latest.Int64
+			row.LatestPriceCents = &v
+		}
+		items = append(items, row)
+	}
+	return items, rows.Err()
+}
+
+// Merge redirects every bill item of drop to keep, deletes drop, and rewrites
+// keep's editable fields to final — one transaction, so the name index never
+// sees both rows under the same NOCASE name (drop is deleted before keep is
+// renamed). Redirected items get the kept product's final name/unit/category
+// straight away (unit keeps its historical line value when final.unit is
+// empty), mirroring Update's propagation semantics. image_path is untouched:
+// photo files are owned by the service, which transfers or removes them after
+// the transaction commits.
+func (r *ProductRepository) Merge(ctx context.Context, keepID, dropID int64, final domain.Product) (domain.Product, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Product{}, fmt.Errorf("begin product merge: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE bill_items
+		SET product_id = ?,
+		    name = ?,
+		    unit = CASE WHEN TRIM(?) = '' THEN unit ELSE ? END,
+		    category_id = ?
+		WHERE product_id = ?`,
+		keepID, final.Name, final.Unit, final.Unit, final.CategoryID, dropID); err != nil {
+		tx.Rollback()
+		return domain.Product{}, fmt.Errorf("redirect merged product items: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM products WHERE id = ?`, dropID)
+	if err != nil {
+		tx.Rollback()
+		return domain.Product{}, mapWriteError("delete merged product", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		tx.Rollback()
+		return domain.Product{}, domain.ErrNotFound
+	}
+
+	res, err = tx.ExecContext(ctx, `
+		UPDATE products SET name = ?, brand = ?, unit = ?, category_id = ?, description = ?, updated_at = ?
+		WHERE id = ?`,
+		final.Name, final.Brand, final.Unit, final.CategoryID, final.Description, time.Now().Unix(), keepID)
+	if err != nil {
+		tx.Rollback()
+		return domain.Product{}, mapWriteError("update merged product", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		tx.Rollback()
+		return domain.Product{}, domain.ErrNotFound
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domain.Product{}, fmt.Errorf("commit product merge: %w", err)
+	}
+	return r.GetByID(ctx, keepID)
 }
 
 // Create inserts a product and returns it with its id and timestamps filled

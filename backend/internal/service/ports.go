@@ -87,6 +87,14 @@ type ProductStore interface {
 	// StorePrices lists the latest per-store price of one product, scoped to
 	// the given currency (the product's latest purchase currency).
 	StorePrices(ctx context.Context, id int64, currency string) ([]domain.ProductStorePrice, error)
+	// StorePurchaseSummary is StorePrices without the currency scope: the
+	// latest price and its currency per store. The merge check compares two
+	// products' pricing at shared stores through it.
+	StorePurchaseSummary(ctx context.Context, id int64) ([]domain.ProductStorePrice, error)
+	// Merge redirects every bill item of the drop id to the keep id, deletes
+	// the drop row, and rewrites the keep row's editable fields to final —
+	// one transaction. Photo files are owned by the service.
+	Merge(ctx context.Context, keepID, dropID int64, final domain.Product) (domain.Product, error)
 }
 
 // Services bundles the business services for handler wiring.

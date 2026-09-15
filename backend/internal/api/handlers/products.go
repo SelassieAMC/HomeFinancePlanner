@@ -108,6 +108,79 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, product)
 }
 
+// CheckMerge reports what renaming the product to ?name would do: either no
+// match, or the matched product plus the merge plan the UI confirms before
+// calling POST /products/{id}/merge.
+func (h *ProductHandler) CheckMerge(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	check, err := h.Svc.CheckMerge(r.Context(), id, r.URL.Query().Get("name"))
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, check)
+}
+
+// productMergeRequest is the merge confirmation: which product to fold in,
+// which side to keep, and (optionally) the pending edit — applied when the
+// source is kept, discarded when the target wins.
+type productMergeRequest struct {
+	MergeWith int64           `json:"merge_with"`
+	Keep      string          `json:"keep"` // "source" | "target"
+	Product   *productRequest `json:"product"`
+}
+
+// Merge folds the product into another one (merge_with), redirecting all of
+// the dropped product's bill items to the keeper.
+func (h *ProductHandler) Merge(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req productMergeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.MergeWith == 0 {
+		respondError(w, r, http.StatusBadRequest, "merge_with is required")
+		return
+	}
+	var keepTarget bool
+	switch req.Keep {
+	case "source":
+	case "target":
+		keepTarget = true
+	default:
+		respondError(w, r, http.StatusBadRequest, `keep must be "source" or "target"`)
+		return
+	}
+	var input *service.ProductInput
+	if req.Product != nil {
+		input = &service.ProductInput{
+			Name:        req.Product.Name,
+			Brand:       req.Product.Brand,
+			Unit:        req.Product.Unit,
+			CategoryID:  req.Product.CategoryID,
+			Description: req.Product.Description,
+		}
+	}
+	product, err := h.Svc.Merge(r.Context(), id, service.ProductMergeInput{
+		MergeWith:  req.MergeWith,
+		KeepTarget: keepTarget,
+		Product:    input,
+	})
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, product)
+}
+
 // UploadPhoto stores an uploaded product photo (multipart "photo" field).
 func (h *ProductHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)

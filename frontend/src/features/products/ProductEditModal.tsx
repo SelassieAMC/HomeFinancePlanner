@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { productsApi } from '../../api/products';
 import { formatCents } from '../../lib/money';
-import type { Category, Product } from '../../types/domain';
+import type { Category, Product, ProductInput, ProductMergeCheck } from '../../types/domain';
+import { ProductMergeDialog } from './ProductMergeDialog';
 import {
   Button,
   CategorySelect,
@@ -37,6 +38,11 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   const [busy, setBusy] = useState(false);
   const [confirmPropagate, setConfirmPropagate] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // Rename matched an existing product: the merge plan awaiting confirmation.
+  const [mergeCheck, setMergeCheck] = useState<ProductMergeCheck | null>(null);
+  const [pendingInput, setPendingInput] = useState<ProductInput | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   /** True when the edit rewrites a field that propagates to bill items. */
@@ -48,17 +54,21 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
     );
   }
 
-  async function doSave() {
+  function buildInput(): ProductInput {
+    return {
+      name: name.trim(),
+      brand: brand.trim(),
+      unit: unit.trim().toLowerCase(),
+      category_id: categoryId,
+      description: description.trim(),
+    };
+  }
+
+  async function doSave(input: ProductInput) {
     setBusy(true);
     setFormError(null);
     try {
-      await productsApi.update(product.id, {
-        name: name.trim(),
-        brand: brand.trim(),
-        unit: unit.trim().toLowerCase(),
-        category_id: categoryId,
-        description: description.trim(),
-      });
+      await productsApi.update(product.id, input);
       onSaved();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to save product.');
@@ -68,16 +78,63 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
     }
   }
 
-  function handleSaveClick() {
+  /** Fold the product into the matched one (the rename target). */
+  async function doMerge(keep: 'source' | 'target') {
+    if (!mergeCheck?.match || !pendingInput) return;
+    setMergeBusy(true);
+    setMergeError(null);
+    try {
+      await productsApi.merge(product.id, {
+        merge_with: mergeCheck.match.id,
+        keep,
+        // The typed edit applies only when the source survives; keeping the
+        // target means the user chose its data over the edit.
+        product: keep === 'source' ? pendingInput : undefined,
+      });
+      onSaved();
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : 'Failed to merge products.');
+    } finally {
+      setMergeBusy(false);
+    }
+  }
+
+  async function handleSaveClick() {
     if (!name.trim()) {
       setFormError('Product name is required.');
       return;
+    }
+    const input = buildInput();
+    // A changed name may collide with an existing product: pre-check before
+    // any write so the UI can offer the merge instead of a 409.
+    if (input.name.toLowerCase() !== product.name.toLowerCase()) {
+      setBusy(true);
+      setFormError(null);
+      try {
+        const check = await productsApi.checkMerge(product.id, input.name);
+        if (check.match) {
+          if (!check.mergeable) {
+            setFormError(
+              `A product named “${check.match.name}” already exists and cannot be merged. Choose a different name.`,
+            );
+            return;
+          }
+          setPendingInput(input);
+          setMergeCheck(check);
+          return;
+        }
+      } catch (err) {
+        setFormError(err instanceof Error ? err.message : 'Failed to check for a matching product.');
+        return;
+      } finally {
+        setBusy(false);
+      }
     }
     if (touchesBillItems()) {
       // Historical bill items are rewritten with the product — warn first.
       setConfirmPropagate(true);
     } else {
-      void doSave();
+      void doSave(input);
     }
   }
 
@@ -247,12 +304,27 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
             on past bills (name, measure and category are rewritten on every linked line).
           </p>
           <div className="camera-row">
-            <Button onClick={() => void doSave()}>Update product</Button>
+            <Button onClick={() => void doSave(buildInput())}>Update product</Button>
             <Button variant="ghost" onClick={() => setConfirmPropagate(false)}>
               Cancel
             </Button>
           </div>
         </Dialog>
+      )}
+
+      {mergeCheck?.match && (
+        <ProductMergeDialog
+          check={mergeCheck}
+          source={product}
+          busy={mergeBusy}
+          error={mergeError}
+          onKeep={(keep) => void doMerge(keep)}
+          onClose={() => {
+            setMergeCheck(null);
+            setPendingInput(null);
+            setMergeError(null);
+          }}
+        />
       )}
     </Dialog>
   );

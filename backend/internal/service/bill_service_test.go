@@ -286,10 +286,16 @@ type fakeProductStore struct {
 	items        map[int64]domain.Product
 	next         int64
 	failConflict bool
+	// storeRows holds per-store purchase summaries seeded by merge-check tests.
+	storeRows map[int64][]domain.ProductStorePrice
 }
 
 func newFakeProductStore() *fakeProductStore {
-	return &fakeProductStore{items: map[int64]domain.Product{}, next: 1}
+	return &fakeProductStore{
+		items:     map[int64]domain.Product{},
+		next:      1,
+		storeRows: map[int64][]domain.ProductStorePrice{},
+	}
 }
 
 func (f *fakeProductStore) List(context.Context, domain.ProductFilters) (domain.ProductPage, error) {
@@ -362,6 +368,29 @@ func (f *fakeProductStore) Update(_ context.Context, p domain.Product) (domain.P
 	return p, nil
 }
 
+// Merge folds drop into keep: the fake mirrors the observable product-table
+// outcome (drop gone, keep's editable fields rewritten, photo untouched — the
+// bill-item redirect itself is the repository's job and isn't modeled here).
+func (f *fakeProductStore) Merge(_ context.Context, keepID, dropID int64, final domain.Product) (domain.Product, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	keep, ok := f.items[keepID]
+	if !ok {
+		return domain.Product{}, domain.ErrNotFound
+	}
+	if _, ok := f.items[dropID]; !ok {
+		return domain.Product{}, domain.ErrNotFound
+	}
+	keep.Name = final.Name
+	keep.Brand = final.Brand
+	keep.Unit = final.Unit
+	keep.CategoryID = final.CategoryID
+	keep.Description = final.Description
+	delete(f.items, dropID)
+	f.items[keepID] = keep
+	return keep, nil
+}
+
 func (f *fakeProductStore) SetPhoto(_ context.Context, id int64, photoPath string) (domain.Product, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -377,6 +406,25 @@ func (f *fakeProductStore) SetPhoto(_ context.Context, id int64, photoPath strin
 // StorePrices is unused by the bill workflow tests; it satisfies the interface.
 func (f *fakeProductStore) StorePrices(context.Context, int64, string) ([]domain.ProductStorePrice, error) {
 	return nil, nil
+}
+
+// StorePurchaseSummary returns the per-store rows a merge-check test seeded
+// via seedStoreRows (the fake doesn't model bills/bill_items).
+func (f *fakeProductStore) StorePurchaseSummary(_ context.Context, id int64) ([]domain.ProductStorePrice, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[id]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	return f.storeRows[id], nil
+}
+
+// seedStoreRows attaches per-store purchase summary rows to a product for
+// merge-check tests.
+func (f *fakeProductStore) seedStoreRows(id int64, rows ...domain.ProductStorePrice) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.storeRows[id] = append([]domain.ProductStorePrice{}, rows...)
 }
 
 // fakeSettingsStore + passthrough box feed provider resolution.
