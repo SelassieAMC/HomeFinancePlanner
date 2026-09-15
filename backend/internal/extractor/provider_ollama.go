@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
@@ -157,27 +158,47 @@ func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider
 			"content":    resp.Message.Content,
 			"tool_calls": resp.Message.ToolCalls,
 		})
-		for _, call := range resp.Message.ToolCalls {
-			toolStart := time.Now()
-			result, err := e.runOllamaWebTool(ctx, headers, call)
-			log.Info("ollama web tool finished",
-				"tool", call.Function.Name, "duration", time.Since(toolStart),
-				"bytes", len(result), "err", err != nil,
-			)
-			if err != nil {
-				// A rejected key cannot recover on retry within this loop.
-				msg := err.Error()
-				if strings.Contains(msg, "status 401") || strings.Contains(msg, "status 403") {
-					return "", err
+		// The tool calls are independent web fetches — run them concurrently
+		// and keep the results in call order for the tool messages.
+		calls := resp.Message.ToolCalls
+		results := make([]string, len(calls))
+		fatal := make([]error, len(calls))
+		var wg sync.WaitGroup
+		for i, call := range calls {
+			wg.Add(1)
+			go func(i int, call ollamaToolCall) {
+				defer wg.Done()
+				toolStart := time.Now()
+				result, err := e.runOllamaWebTool(ctx, headers, call)
+				log.Info("ollama web tool finished",
+					"tool", call.Function.Name, "duration", time.Since(toolStart),
+					"bytes", len(result), "err", err != nil,
+				)
+				if err != nil {
+					// A rejected key cannot recover on retry within this loop.
+					msg := err.Error()
+					if strings.Contains(msg, "status 401") || strings.Contains(msg, "status 403") {
+						fatal[i] = err
+						return
+					}
+					// Any other tool failure is fed back so the model can adapt
+					// (retry with another query, skip a dead link, …).
+					result = "tool failed: " + msg
 				}
-				// Any other tool failure is fed back so the model can adapt
-				// (retry with another query, skip a dead link, …).
-				result = "tool failed: " + msg
+				results[i] = result
+			}(i, call)
+		}
+		wg.Wait()
+		for _, err := range fatal {
+			if err != nil {
+				return "", err
 			}
+		}
+		for i, call := range calls {
 			messages = append(messages, map[string]any{
 				"role":      "tool",
 				"tool_name": call.Function.Name,
-				"content":   result,
+				"content":   results[i],
 			})
 		}
 		if round >= ollamaSearchMaxRounds {
