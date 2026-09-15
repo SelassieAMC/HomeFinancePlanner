@@ -9,7 +9,8 @@ export interface AIProviderInput {
   base_url?: string;
   api_key?: string; // empty keeps the stored key
   model: string;
-  is_default?: boolean;
+  default_for_bills?: boolean;
+  default_for_search?: boolean;
 }
 
 export interface ConnectionTestResult {

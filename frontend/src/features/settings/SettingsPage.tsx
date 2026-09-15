@@ -49,7 +49,8 @@ interface DraftProvider {
   api_key: string; // what the user has typed this session (never echoed back)
   stored_key_mask: string; // masked key from the server, e.g. ••••abcd
   model: string;
-  is_default: boolean;
+  default_for_bills: boolean;
+  default_for_search: boolean;
 }
 
 function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
@@ -61,7 +62,8 @@ function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
     api_key: '',
     stored_key_mask: p.api_key ?? '',
     model: p.model,
-    is_default: p.is_default ?? false,
+    default_for_bills: p.default_for_bills ?? false,
+    default_for_search: p.default_for_search ?? false,
   };
 }
 
@@ -127,7 +129,8 @@ export function SettingsPage() {
         api_key: '',
         stored_key_mask: '',
         model: '',
-        is_default: false,
+        default_for_bills: false,
+        default_for_search: false,
       },
     ]);
   }
@@ -136,11 +139,18 @@ export function SettingsPage() {
     setDrafts(current.filter((d) => d.key !== key));
   }
 
-  // Radio semantics for the default connector: only the clicked one is set.
-  // Exactly-one is enforced server-side on save, and the save response
-  // re-derives the drafts with the authoritative flag.
-  function setDefault(key: DraftKey) {
-    setDrafts(current.map((d) => ({ ...d, is_default: d.key === key })));
+  // Purpose defaults are exclusive per purpose: marking one connector sets
+  // that purpose's flag on it alone and clears it from the others (the other
+  // purpose's flags stay untouched). The save response re-derives the drafts
+  // with the authoritative flags.
+  function setDefaultFor(key: DraftKey, purpose: 'bills' | 'search') {
+    const field = purpose === 'bills' ? 'default_for_bills' : 'default_for_search';
+    setDrafts(
+      current.map((d) => ({
+        ...d,
+        [field]: d.key === key ? true : false,
+      })),
+    );
   }
 
   async function handleSave() {
@@ -154,7 +164,8 @@ export function SettingsPage() {
         // Empty api_key means "keep the stored one" server-side.
         api_key: d.api_key.trim() || undefined,
         model: d.model.trim(),
-        is_default: d.is_default,
+        default_for_bills: d.default_for_bills,
+        default_for_search: d.default_for_search,
       }));
       const savedList = await settingsApi.saveAIProviders(payload);
       setTestResults({});
@@ -233,11 +244,12 @@ export function SettingsPage() {
       <h2 className="page-title">AI connectors</h2>
 
       <p className="hint-text">
-        These connectors read receipt photos during bill scanning; the one
-        marked default is used unless a scan pins another. Keys are encrypted
-        server-side and never returned in full — the masked value (••••abcd)
-        only shows the last four characters. Leave the key field empty to keep
-        the stored key.
+        These connectors read receipt photos during bill scanning and search
+        current prices for the purchase cart. Mark one as default for bill
+        reads and/or one as default for web search; a purpose without a marked
+        connector uses any configured one. Keys are encrypted server-side and
+        never returned in full — the masked value (••••abcd) only shows the
+        last four characters. Leave the key field empty to keep the stored key.
       </p>
 
       {current.length === 0 ? (
@@ -252,7 +264,8 @@ export function SettingsPage() {
               subtitle={
                 <>
                   {d.model || 'model not set'}
-                  {d.is_default && <span className="default-badge"> ★ default</span>}
+                  {d.default_for_bills && <span className="default-badge"> ★ bills</span>}
+                  {d.default_for_search && <span className="default-badge"> ★ search</span>}
                 </>
               }
               value={testResults[d.id as string]?.ok ? '✓' : d.id ? undefined : 'new'}
@@ -307,12 +320,19 @@ export function SettingsPage() {
                 />
               </label>
               <label className="default-radio">
-                Default connector
+                Default for bill reads
                 <input
-                  type="radio"
-                  name="default-connector"
-                  checked={d.is_default}
-                  onChange={() => setDefault(d.key)}
+                  type="checkbox"
+                  checked={d.default_for_bills}
+                  onChange={() => setDefaultFor(d.key, 'bills')}
+                />
+              </label>
+              <label className="default-radio">
+                Default for web search
+                <input
+                  type="checkbox"
+                  checked={d.default_for_search}
+                  onChange={() => setDefaultFor(d.key, 'search')}
                 />
               </label>
             </div>

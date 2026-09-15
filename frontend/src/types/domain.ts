@@ -330,8 +330,10 @@ export interface AIProvider {
   base_url?: string;
   api_key?: string; // masked (••••abcd) in responses
   model: string;
-  /** The connector used when a scan does not pin one. */
-  is_default: boolean;
+  /** The connector used by default for bill reads (any configured one when unset). */
+  default_for_bills?: boolean;
+  /** The connector used by default for web (offer) searches. */
+  default_for_search?: boolean;
 }
 
 export interface BillStatsRow {

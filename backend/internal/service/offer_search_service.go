@@ -171,10 +171,10 @@ func (s *OfferSearchService) Search(ctx context.Context, in domain.OfferSearchIn
 		snapshot = append(snapshot, line)
 	}
 
-	provider, err := s.providers.DefaultProvider(ctx)
+	provider, err := s.providers.DefaultSearchProvider(ctx)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return domain.OfferSearch{}, validationError("no AI provider is configured — add and mark a default connector in Settings")
+			return domain.OfferSearch{}, validationError("no AI provider is configured — add a connector and mark it default for web search in Settings")
 		}
 		return domain.OfferSearch{}, fmt.Errorf("resolve AI provider: %w", err)
 	}
@@ -250,10 +250,11 @@ func (s *OfferSearchService) Retry(ctx context.Context, token, providerID string
 	}, nil
 }
 
-// resolveProvider picks the pinned provider or falls back to the default one.
+// resolveProvider picks the pinned provider or falls back to the connector
+// flagged as the default for web search (any configured one when none is).
 func (s *OfferSearchService) resolveProvider(ctx context.Context, providerID string) (domain.AIProvider, error) {
 	if providerID == "" {
-		return s.providers.DefaultProvider(ctx)
+		return s.providers.DefaultSearchProvider(ctx)
 	}
 	return s.providers.GetProvider(ctx, providerID)
 }

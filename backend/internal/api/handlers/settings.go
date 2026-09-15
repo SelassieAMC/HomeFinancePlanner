@@ -11,12 +11,13 @@ import (
 type SettingsHandler struct{ Svc *service.SettingsService }
 
 type aiProviderRequest struct {
-	ID        string `json:"id,omitempty"`
-	Type      string `json:"type"`
-	BaseURL   string `json:"base_url,omitempty"`
-	APIKey    string `json:"api_key,omitempty"`
-	Model     string `json:"model"`
-	IsDefault bool   `json:"is_default"`
+	ID               string `json:"id,omitempty"`
+	Type             string `json:"type"`
+	BaseURL          string `json:"base_url,omitempty"`
+	APIKey           string `json:"api_key,omitempty"`
+	Model            string `json:"model"`
+	DefaultForBills  bool   `json:"default_for_bills,omitempty"`
+	DefaultForSearch bool   `json:"default_for_search,omitempty"`
 }
 
 // ListAIProviders returns configured AI connectors with masked keys.
@@ -40,12 +41,13 @@ func (h *SettingsHandler) SaveAIProviders(w http.ResponseWriter, r *http.Request
 	inputs := make([]service.ProviderInput, 0, len(req))
 	for _, in := range req {
 		inputs = append(inputs, service.ProviderInput{
-			ID:        in.ID,
-			Type:      domain.AIProviderType(in.Type),
-			BaseURL:   in.BaseURL,
-			APIKey:    in.APIKey,
-			Model:     in.Model,
-			IsDefault: in.IsDefault,
+			ID:               in.ID,
+			Type:             domain.AIProviderType(in.Type),
+			BaseURL:          in.BaseURL,
+			APIKey:           in.APIKey,
+			Model:            in.Model,
+			DefaultForBills:  in.DefaultForBills,
+			DefaultForSearch: in.DefaultForSearch,
 		})
 	}
 

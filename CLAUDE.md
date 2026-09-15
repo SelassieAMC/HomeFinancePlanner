@@ -156,8 +156,13 @@ rule applies to manual transaction item lines, whose money-back lines also stay
 unlinked from products. The **purchase cart** keeps its items client-side only
 (React Context + `localStorage` under `hfp.cart.v1`); confirming it starts a
 persisted **offer search** (`offer_searches` table, token-polling pipeline like
-bill scans): the default AI provider is asked for current prices of the cart
-products in the user's local markets. Connector families with native web search
+bill scans): the connector flagged **default for web search** is asked for
+current prices of the cart products in the user's local markets. AI connectors
+carry per-purpose defaults — `default_for_bills` (bill reads) and
+`default_for_search` (offer searches), stored on the `ai_providers` settings
+row; a purpose with no flagged connector falls back to any configured one, and
+legacy single `is_default` lists map onto both flags until the next save.
+Connector families with native web search
 (Gemini `google_search`, Anthropic `web_search`, OpenAI Responses API `web_search`,
 and the `ollama_web_search` connector type — key-required — whose backend runs
 Ollama's client-side `web_search`/`web_fetch` tool loop against ollama.com)

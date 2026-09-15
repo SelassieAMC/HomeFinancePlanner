@@ -57,7 +57,7 @@ func (s *SettingsService) ListAIProviders(ctx context.Context) ([]domain.AIProvi
 	if err != nil {
 		return nil, err
 	}
-	normalizeDefaults(stored)
+	normalizePurposeDefaults(stored)
 
 	out := make([]domain.AIProvider, 0, len(stored))
 	for _, p := range stored {
@@ -74,12 +74,13 @@ func (s *SettingsService) ListAIProviders(ctx context.Context) ([]domain.AIProvi
 
 // ProviderInput is what the UI sends when saving provider configuration.
 type ProviderInput struct {
-	ID        string
-	Type      domain.AIProviderType
-	BaseURL   string
-	APIKey    string // plaintext from the user; empty = keep stored key
-	Model     string
-	IsDefault bool
+	ID               string
+	Type             domain.AIProviderType
+	BaseURL          string
+	APIKey           string // plaintext from the user; empty = keep stored key
+	Model            string
+	DefaultForBills  bool
+	DefaultForSearch bool
 }
 
 // SaveAIProviders persists the provider list, encrypting API keys. An empty
@@ -87,7 +88,9 @@ type ProviderInput struct {
 // independent per connector: an empty ID always generates a fresh one that
 // cannot collide with a stored connector (so a new connector never inherits
 // another one's stored key or config), and duplicate IDs within a request are
-// rejected. Exactly one connector ends up flagged as the default.
+// rejected. At most one connector ends up flagged for each purpose default
+// (bill reads, web search); a purpose without a flag falls back to any
+// configured connector.
 func (s *SettingsService) SaveAIProviders(ctx context.Context, inputs []ProviderInput) ([]domain.AIProvider, error) {
 	stored, err := s.storedProviders(ctx)
 	if err != nil {
@@ -131,15 +134,16 @@ func (s *SettingsService) SaveAIProviders(ctx context.Context, inputs []Provider
 		}
 
 		out = append(out, domain.AIProvider{
-			ID:        id,
-			Type:      in.Type,
-			BaseURL:   strings.TrimSpace(in.BaseURL),
-			APIKey:    apiKey,
-			Model:     strings.TrimSpace(in.Model),
-			IsDefault: in.IsDefault,
+			ID:               id,
+			Type:             in.Type,
+			BaseURL:          strings.TrimSpace(in.BaseURL),
+			APIKey:           apiKey,
+			Model:            strings.TrimSpace(in.Model),
+			DefaultForBills:  in.DefaultForBills,
+			DefaultForSearch: in.DefaultForSearch,
 		})
 	}
-	normalizeDefaults(out)
+	normalizePurposeDefaults(out)
 
 	if err := s.persistProviders(ctx, out); err != nil {
 		return nil, err
@@ -174,10 +178,20 @@ func (s *SettingsService) GetProvider(ctx context.Context, id string) (domain.AI
 	return domain.AIProvider{}, fmt.Errorf("%w: provider %q", domain.ErrNotFound, id)
 }
 
-// DefaultProvider returns the connector flagged as default, falling back to
-// the first configured one (also for legacy stored lists without any flag).
-// Used when the client does not pin a provider for extraction.
-func (s *SettingsService) DefaultProvider(ctx context.Context) (domain.AIProvider, error) {
+// DefaultBillProvider returns the connector flagged as the default for bill
+// reads, falling back to any configured connector (first in list order) when
+// no connector carries the flag. Used when a scan does not pin a provider.
+func (s *SettingsService) DefaultBillProvider(ctx context.Context) (domain.AIProvider, error) {
+	return s.defaultProviderFor(ctx, func(p domain.AIProvider) bool { return p.DefaultForBills })
+}
+
+// DefaultSearchProvider returns the connector flagged as the default for web
+// (offer) searches, with the same fallback rule as DefaultBillProvider.
+func (s *SettingsService) DefaultSearchProvider(ctx context.Context) (domain.AIProvider, error) {
+	return s.defaultProviderFor(ctx, func(p domain.AIProvider) bool { return p.DefaultForSearch })
+}
+
+func (s *SettingsService) defaultProviderFor(ctx context.Context, flagged func(domain.AIProvider) bool) (domain.AIProvider, error) {
 	stored, err := s.storedProviders(ctx)
 	if err != nil {
 		return domain.AIProvider{}, err
@@ -186,7 +200,7 @@ func (s *SettingsService) DefaultProvider(ctx context.Context) (domain.AIProvide
 		return domain.AIProvider{}, fmt.Errorf("%w: no AI provider configured", domain.ErrNotFound)
 	}
 	for _, p := range stored {
-		if p.IsDefault {
+		if flagged(p) {
 			return s.GetProvider(ctx, p.ID)
 		}
 	}
@@ -269,33 +283,50 @@ func (s *SettingsService) persistProviders(ctx context.Context, providers []doma
 }
 
 func decodeStoredProviders(raw string) ([]domain.AIProvider, error) {
-	var stored []domain.AIProvider
-	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+	// Legacy stored lists carried a single is_default flag used for both
+	// purposes; map it onto both purpose defaults until the next save, which
+	// persists the new field names.
+	var legacy []struct {
+		domain.AIProvider
+		IsDefault bool `json:"is_default"`
+	}
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
 		return nil, fmt.Errorf("decode stored providers: %w", err)
+	}
+	stored := make([]domain.AIProvider, 0, len(legacy))
+	for _, p := range legacy {
+		if p.IsDefault && !p.DefaultForBills && !p.DefaultForSearch {
+			p.DefaultForBills = true
+			p.DefaultForSearch = true
+		}
+		stored = append(stored, p.AIProvider)
 	}
 	return stored, nil
 }
 
-// normalizeDefaults enforces the default-connector invariant in place: with a
-// single provider it is always the default; with none flagged the first is;
-// with several flagged the first in list order wins. Deterministic so the
-// read path and the write path agree even for legacy stored lists.
-func normalizeDefaults(providers []domain.AIProvider) {
-	if len(providers) == 0 {
-		return
-	}
-	marked := false
+// normalizePurposeDefaults enforces the per-purpose invariant in place: for
+// each purpose flag, the first flagged provider in list order wins and later
+// duplicates are cleared. No flag is ever added: a purpose without any flagged
+// connector falls back to any configured connector at resolution time.
+// Deterministic so the read path and the write path agree even for legacy
+// stored lists.
+func normalizePurposeDefaults(providers []domain.AIProvider) {
+	bills, search := false, false
 	for i := range providers {
-		if providers[i].IsDefault {
-			if marked {
-				providers[i].IsDefault = false
+		if providers[i].DefaultForBills {
+			if bills {
+				providers[i].DefaultForBills = false
 			} else {
-				marked = true
+				bills = true
 			}
 		}
-	}
-	if !marked {
-		providers[0].IsDefault = true
+		if providers[i].DefaultForSearch {
+			if search {
+				providers[i].DefaultForSearch = false
+			} else {
+				search = true
+			}
+		}
 	}
 }
 

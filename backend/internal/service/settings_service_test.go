@@ -208,10 +208,10 @@ func TestSaveRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
-func TestSaveNormalizesDefaultFlag(t *testing.T) {
+func TestSaveNormalizesPurposeDefaults(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("none marked marks the first", func(t *testing.T) {
+	t.Run("none marked stays unflagged", func(t *testing.T) {
 		store := &fakeSettingsStore{data: map[string]string{}}
 		svc := newSettingsServiceForTest(store)
 		out, err := svc.SaveAIProviders(ctx, []ProviderInput{
@@ -221,115 +221,130 @@ func TestSaveNormalizesDefaultFlag(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !out[0].IsDefault || out[1].IsDefault {
-			t.Errorf("defaults = %v/%v, want true/false", out[0].IsDefault, out[1].IsDefault)
+		if out[0].DefaultForBills || out[0].DefaultForSearch || out[1].DefaultForBills || out[1].DefaultForSearch {
+			t.Errorf("flags = %+v/%+v, want none set (resolution falls back)", out[0], out[1])
 		}
 	})
 
-	t.Run("several marked keeps the first", func(t *testing.T) {
+	t.Run("several marked keeps the first per purpose", func(t *testing.T) {
 		store := &fakeSettingsStore{data: map[string]string{}}
 		svc := newSettingsServiceForTest(store)
 		out, err := svc.SaveAIProviders(ctx, []ProviderInput{
-			{Type: domain.AIProviderOllama, Model: "a", IsDefault: true},
-			{Type: domain.AIProviderOllama, Model: "b", IsDefault: true},
+			{Type: domain.AIProviderOllama, Model: "a", DefaultForBills: true, DefaultForSearch: true},
+			{Type: domain.AIProviderOllama, Model: "b", DefaultForBills: true, DefaultForSearch: true},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !out[0].IsDefault || out[1].IsDefault {
-			t.Errorf("defaults = %v/%v, want first marked to win", out[0].IsDefault, out[1].IsDefault)
+		if !out[0].DefaultForBills || !out[0].DefaultForSearch {
+			t.Errorf("first = %+v, want both flags kept", out[0])
+		}
+		if out[1].DefaultForBills || out[1].DefaultForSearch {
+			t.Errorf("second = %+v, want both flags cleared", out[1])
 		}
 	})
 
-	t.Run("single connector is always default", func(t *testing.T) {
+	t.Run("purposes are independent", func(t *testing.T) {
 		store := &fakeSettingsStore{data: map[string]string{}}
 		svc := newSettingsServiceForTest(store)
 		out, err := svc.SaveAIProviders(ctx, []ProviderInput{
-			{Type: domain.AIProviderOllama, Model: "a"},
+			{Type: domain.AIProviderOllama, Model: "a", DefaultForBills: true},
+			{Type: domain.AIProviderOllama, Model: "b", DefaultForSearch: true},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !out[0].IsDefault {
-			t.Error("single connector must be flagged default")
-		}
-	})
-
-	t.Run("removing the default promotes a remaining one", func(t *testing.T) {
-		store := &fakeSettingsStore{data: map[string]string{}}
-		seedProviders(t, store, []domain.AIProvider{
-			{ID: "provider-1", Type: domain.AIProviderOllama, Model: "a", IsDefault: true},
-			{ID: "provider-2", Type: domain.AIProviderOllama, Model: "b"},
-		})
-		svc := newSettingsServiceForTest(store)
-		out, err := svc.SaveAIProviders(ctx, []ProviderInput{
-			{ID: "provider-2", Type: domain.AIProviderOllama, Model: "b"},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(out) != 1 || !out[0].IsDefault {
-			t.Errorf("remaining = %+v, want provider-2 flagged default", out)
+		if !out[0].DefaultForBills || out[0].DefaultForSearch || out[1].DefaultForBills || !out[1].DefaultForSearch {
+			t.Errorf("flags = %+v/%+v, want bills on a, search on b", out[0], out[1])
 		}
 	})
 }
 
 func TestListAIProvidersNormalizesLegacyStored(t *testing.T) {
 	store := &fakeSettingsStore{data: map[string]string{}}
-	// Legacy JSON saved before is_default existed.
+	// Legacy JSON saved before purpose defaults existed: an is_default flag
+	// applies to both purposes, flagless lists stay flagless.
 	store.data[settingsKeyAIProviders] =
-		`[{"id":"provider-1","type":"ollama","model":"a"},{"id":"provider-2","type":"ollama","model":"b"}]`
+		`[{"id":"provider-1","type":"ollama","model":"a","is_default":true},{"id":"provider-2","type":"ollama","model":"b"}]`
 	svc := newSettingsServiceForTest(store)
 
 	out, err := svc.ListAIProviders(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out[0].IsDefault || out[1].IsDefault {
-		t.Errorf("legacy list defaults = %v/%v, want first flagged on read", out[0].IsDefault, out[1].IsDefault)
+	if !out[0].DefaultForBills || !out[0].DefaultForSearch || out[1].DefaultForBills || out[1].DefaultForSearch {
+		t.Errorf("legacy is_default = %+v/%+v, want both purpose flags on the first", out[0], out[1])
 	}
 }
 
-func TestDefaultProvider(t *testing.T) {
+func TestDefaultProvidersPerPurpose(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("honors the flagged connector", func(t *testing.T) {
+	t.Run("honors the per-purpose flagged connector", func(t *testing.T) {
 		store := &fakeSettingsStore{data: map[string]string{}}
 		seedProviders(t, store, []domain.AIProvider{
-			{ID: "provider-1", Type: domain.AIProviderOllama, Model: "a"},
-			{ID: "provider-2", Type: domain.AIProviderOllama, Model: "b", IsDefault: true},
+			{ID: "provider-1", Type: domain.AIProviderOllama, Model: "a", DefaultForBills: true},
+			{ID: "provider-2", Type: domain.AIProviderOllama, Model: "b", DefaultForSearch: true},
 		})
 		svc := newSettingsServiceForTest(store)
-		p, err := svc.DefaultProvider(ctx)
+		bill, err := svc.DefaultBillProvider(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.ID != "provider-2" {
-			t.Errorf("DefaultProvider() = %q, want provider-2", p.ID)
+		search, err := svc.DefaultSearchProvider(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bill.ID != "provider-1" {
+			t.Errorf("DefaultBillProvider() = %q, want provider-1", bill.ID)
+		}
+		if search.ID != "provider-2" {
+			t.Errorf("DefaultSearchProvider() = %q, want provider-2", search.ID)
 		}
 	})
 
-	t.Run("falls back to the first for legacy lists", func(t *testing.T) {
+	t.Run("falls back to the first configured when the purpose is unflagged", func(t *testing.T) {
 		store := &fakeSettingsStore{data: map[string]string{}}
 		seedProviders(t, store, []domain.AIProvider{
 			{ID: "provider-1", Type: domain.AIProviderOllama, Model: "a"},
-			{ID: "provider-2", Type: domain.AIProviderOllama, Model: "b"},
+			{ID: "provider-2", Type: domain.AIProviderOllama, Model: "b", DefaultForBills: true},
 		})
 		svc := newSettingsServiceForTest(store)
-		p, err := svc.DefaultProvider(ctx)
+		search, err := svc.DefaultSearchProvider(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.ID != "provider-1" {
-			t.Errorf("DefaultProvider() = %q, want provider-1 fallback", p.ID)
+		if search.ID != "provider-1" {
+			t.Errorf("DefaultSearchProvider() = %q, want provider-1 fallback", search.ID)
+		}
+	})
+
+	t.Run("legacy is_default maps onto both purposes", func(t *testing.T) {
+		store := &fakeSettingsStore{data: map[string]string{}}
+		store.data[settingsKeyAIProviders] =
+			`[{"id":"provider-1","type":"ollama","model":"a","is_default":true}]`
+		svc := newSettingsServiceForTest(store)
+		bill, err := svc.DefaultBillProvider(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		search, err := svc.DefaultSearchProvider(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bill.ID != "provider-1" || search.ID != "provider-1" {
+			t.Errorf("legacy defaults = %q/%q, want provider-1 for both", bill.ID, search.ID)
 		}
 	})
 
 	t.Run("not found when none configured", func(t *testing.T) {
 		store := &fakeSettingsStore{data: map[string]string{}}
 		svc := newSettingsServiceForTest(store)
-		if _, err := svc.DefaultProvider(ctx); !errors.Is(err, domain.ErrNotFound) {
-			t.Errorf("error = %v, want domain.ErrNotFound", err)
+		if _, err := svc.DefaultBillProvider(ctx); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("bills error = %v, want domain.ErrNotFound", err)
+		}
+		if _, err := svc.DefaultSearchProvider(ctx); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("search error = %v, want domain.ErrNotFound", err)
 		}
 	})
 }
