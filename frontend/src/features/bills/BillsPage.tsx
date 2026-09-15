@@ -93,6 +93,13 @@ export function BillsPage() {
   // regardless of the bill's date, so no month filtering here.
   const budgets = useAsync(() => budgetsApi.list('open'), []);
 
+  /** Opens the edit view for the expanded bill (button at the top and bottom). */
+  function startEdit(current: Bill) {
+    setEditDraft(billToDraft(current));
+    setEditError(null);
+    setEditing(true);
+  }
+
   async function loadDetail(id: number) {
     setDetail(null);
     setDetailError(null);
@@ -113,7 +120,18 @@ export function BillsPage() {
     setSaving(true);
     setEditError(null);
     try {
-      const updated = await billsApi.update(detail.id, buildConfirmInput(editDraft, accountId));
+      const updated = await billsApi.update(
+        detail.id,
+        buildConfirmInput(
+          editDraft,
+          accountId,
+          (accounts.data ?? []).map((a) => ({
+            id: a.id,
+            type: a.type,
+            card_last_digits: a.card_last_digits,
+          })),
+        ),
+      );
       setDetail(updated);
       setEditing(false);
       setEditDraft(null);
@@ -353,15 +371,19 @@ export function BillsPage() {
                       />
                     ) : (
                       <>
+                        <div className="bill-actions">
+                          <Button
+                            variant="secondary"
+                            onClick={() => startEdit(detail)}
+                          >
+                            ✏️ Edit bill
+                          </Button>
+                        </div>
                         <BillDraftView bill={detail} categories={categories.data ?? []} />
                         <div className="camera-row">
                           <Button
                             variant="secondary"
-                            onClick={() => {
-                              setEditDraft(billToDraft(detail));
-                              setEditError(null);
-                              setEditing(true);
-                            }}
+                            onClick={() => startEdit(detail)}
                           >
                             ✏️ Edit bill
                           </Button>

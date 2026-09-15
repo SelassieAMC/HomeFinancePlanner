@@ -1063,9 +1063,11 @@ select:focus,
 }
 
 .stat-market  { background: rgba(88, 166, 255, 0.14); }
+.stat-date    { background: rgba(63, 185, 190, 0.14); }
 .stat-total   { background: rgba(46, 160, 67, 0.16); }
 .stat-account { background: rgba(137, 87, 229, 0.16); }
 .stat-savings { background: rgba(210, 153, 34, 0.16); }
+.stat-budget  { background: rgba(219, 106, 152, 0.14); }
 
 .stat-card-label {
   font-size: 0.72rem;

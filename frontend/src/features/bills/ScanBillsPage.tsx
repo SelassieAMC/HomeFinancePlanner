@@ -180,7 +180,18 @@ export function ScanBillsPage() {
         targetId = created.id;
         accounts.reload();
       }
-      const bill = await billsApi.confirm(scan.scan_token, buildConfirmInput(draft, targetId));
+      const bill = await billsApi.confirm(
+        scan.scan_token,
+        buildConfirmInput(
+          draft,
+          targetId,
+          (accounts.data ?? []).map((a) => ({
+            id: a.id,
+            type: a.type,
+            card_last_digits: a.card_last_digits,
+          })),
+        ),
+      );
       setAccepted(bill);
       setPhase('done');
     } catch (err) {

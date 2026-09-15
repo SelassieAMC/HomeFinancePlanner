@@ -49,8 +49,6 @@ export interface BillDraftEditorProps {
   stores?: Store[];
 }
 
-const paymentOptions = ['', 'cash', 'card', 'credit', 'debit', 'transfer', 'voucher', 'other'];
-
 /** Deposit/bottle return (e.g. "Leergut") — money back, negative amounts allowed. */
 function isDepositReturn(name: string): boolean {
   return name.toLowerCase().includes('leergut');
@@ -94,12 +92,37 @@ function normalizeUnit(raw: string | undefined): string {
   return map[u] ?? u;
 }
 
-export function buildConfirmInput(draft: BillDraft, accountId?: number): BillConfirmInput {
+/**
+ * Payment metadata the account implies: the wallet is cash money, an account
+ * with registered card digits pays by that card, and a credit account is a
+ * card even without digits recorded. Anything else keeps the method read off
+ * the receipt (transfer, voucher, …).
+ */
+function paymentForAccount(
+  account: { type: AccountType; card_last_digits?: string } | undefined,
+  draft: BillDraft,
+): { payment_method: string; card_last_digits: string } {
+  if (!account) {
+    return { payment_method: draft.payment_method, card_last_digits: draft.card_last_digits ?? '' };
+  }
+  if (account.type === 'cash') return { payment_method: 'cash', card_last_digits: '' };
+  if (account.card_last_digits) {
+    return { payment_method: 'card', card_last_digits: account.card_last_digits };
+  }
+  if (account.type === 'credit') return { payment_method: 'card', card_last_digits: '' };
+  return { payment_method: draft.payment_method, card_last_digits: '' };
+}
+
+export function buildConfirmInput(
+  draft: BillDraft,
+  accountId?: number,
+  accounts?: { id: number; type: AccountType; card_last_digits?: string }[],
+): BillConfirmInput {
+  const account = accountId ? accounts?.find((a) => a.id === accountId) : undefined;
   return {
     market_name: draft.market_name,
     date: draft.date,
-    payment_method: draft.payment_method,
-    card_last_digits: draft.card_last_digits ?? '',
+    ...paymentForAccount(account, draft),
     currency: draft.currency || 'USD',
     discount_cents: draft.discount_cents,
     vat_cents: draft.vat_cents,
@@ -217,15 +240,6 @@ export function BillDraftEditor({
     (a) => a.type === 'cash' && a.name.toLowerCase() === 'wallet',
   );
 
-  /** The account behind a picker choice ('' = wallet default). */
-  function accountForChoice(
-    value: string | null,
-  ): { id: number; name: string; type: AccountType; card_last_digits?: string } | undefined {
-    if (value === null || value === '__new_card__') return undefined;
-    if (value === '') return walletAccount;
-    return accounts?.find((a) => String(a.id) === value);
-  }
-
   // Preselect once the account options arrive: the saved bill's current
   // account, or (fresh scan) the card account matching the receipt's digits.
   useEffect(() => {
@@ -239,24 +253,12 @@ export function BillDraftEditor({
       );
     }
     setAccountChoice(initial);
-    if (accountForChoice(initial)?.type === 'cash') {
-      // Wallet money: legacy rows may still carry card digits — align the
-      // payment metadata with the account from the start.
-      updateHeader({ payment_method: 'cash', card_last_digits: '' });
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts, accountChoice]);
 
-  // Wallet money is a cash payment without card digits, so the payment fields
-  // follow the selected account.
-  const cashAccountSelected = accountForChoice(accountChoice)?.type === 'cash';
-
-  /** Picks an account: switching to wallet money forces a cash payment. */
+  /** Picks an account. */
   function handleAccountChange(value: string) {
     setAccountChoice(value);
-    if (accountForChoice(value)?.type === 'cash') {
-      updateHeader({ payment_method: 'cash', card_last_digits: '' });
-    }
   }
 
   // Deposit returns ("Leergut") and lines filed under a negative-allowed
@@ -343,7 +345,25 @@ export function BillDraftEditor({
     return (aMatch ? 0 : 1) - (bMatch ? 0 : 1);
   });
 
-  const paymentLocked = Boolean(draft.card_last_digits);
+  // The save/confirm actions render both above the articles (no scrolling
+  // needed on a first look) and below the totals.
+  const actions = (
+    <>
+      <Button onClick={confirm} disabled={isBusy}>
+        {isSaved ? (busy === 'confirm' ? 'Saving…' : 'Save changes') : 'Confirm bill'}
+      </Button>
+      {!isSaved && (
+        <>
+          <Button variant="secondary" onClick={() => onRetry?.()} disabled={isBusy}>
+            {busy === 'extract' ? 'Reading…' : 'Re-read'}
+          </Button>
+          <Button variant="danger" onClick={() => onDiscard?.()} disabled={isBusy}>
+            Discard
+          </Button>
+        </>
+      )}
+    </>
+  );
 
   return (
     <div className="bill-draft">
@@ -411,22 +431,16 @@ export function BillDraftEditor({
             </select>
           )}
         </div>
-        <div className="stat-card stat-total">
-          <span className="stat-card-label">
-            🧾 Total{' '}
-            {mismatch && (
-              <span
-                className="warn-icon"
-                title={`Printed on receipt: ${formatCents(printed, currency)}`}
-              >
-                ⚠️
-              </span>
-            )}
-          </span>
-          <span className="stat-card-value">{formatCents(computedTotal, currency)}</span>
-          <span className="stat-card-sub">
-            {mismatch ? `Printed: ${formatCents(printed, currency)}` : 'VAT included'}
-          </span>
+        <div className="stat-card stat-date">
+          <span className="stat-card-label">📅 Date</span>
+          <input
+            type="date"
+            className="stat-card-input"
+            defaultValue={draft.date || new Date().toISOString().slice(0, 10)}
+            aria-label="Bill date"
+            disabled={isBusy}
+            onBlur={(e) => e.target.value !== draft.date && updateHeader({ date: e.target.value })}
+          />
         </div>
         {accounts && accountChoice !== null && (
         <div className="stat-card stat-account">
@@ -455,11 +469,6 @@ export function BillDraftEditor({
           </select>
         </div>
         )}
-        <div className="stat-card stat-savings">
-          <span className="stat-card-label">🏷️ Total savings</span>
-          <span className="stat-card-value">{formatCents(savings, currency)}</span>
-          <span className="stat-card-sub">all discounts</span>
-        </div>
         <div className="stat-card stat-currency">
           <span className="stat-card-label">💱 Currency</span>
           <select
@@ -481,7 +490,51 @@ export function BillDraftEditor({
           </select>
           <span className="stat-card-sub">as printed on the receipt</span>
         </div>
+        <div className="stat-card stat-savings">
+          <span className="stat-card-label">🏷️ Total savings</span>
+          <span className="stat-card-value">{formatCents(savings, currency)}</span>
+          <span className="stat-card-sub">all discounts</span>
+        </div>
+        <div className="stat-card stat-total">
+          <span className="stat-card-label">
+            🧾 Total{' '}
+            {mismatch && (
+              <span
+                className="warn-icon"
+                title={`Printed on receipt: ${formatCents(printed, currency)}`}
+              >
+                ⚠️
+              </span>
+            )}
+          </span>
+          <span className="stat-card-value">{formatCents(computedTotal, currency)}</span>
+          <span className="stat-card-sub">
+            {mismatch ? `Printed: ${formatCents(printed, currency)}` : 'VAT included'}
+          </span>
+        </div>
+        <div className="stat-card stat-budget">
+          <span className="stat-card-label">🎯 Budget</span>
+          <select
+            className="stat-card-input"
+            value={draft.budget_id ?? ''}
+            aria-label="Budget the bill counts toward"
+            disabled={isBusy}
+            onChange={(e) =>
+              updateHeader({ budget_id: e.target.value ? Number(e.target.value) : null })
+            }
+          >
+            <option value="">No budget</option>
+            {budgets.map((b) => (
+              <option key={b.id} value={b.id}>
+                {budgetLabel(b, categories)} •{' '}
+                {formatCents(b.amount_cents, baseCurrency.data?.currency ?? currency)}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
+
+      <div className="bill-actions">{actions}</div>
 
       {mismatch && (
         <div className="bill-warning">
@@ -787,72 +840,6 @@ export function BillDraftEditor({
         </div>
       </div>
 
-      <div className="item-field-grid bill-meta-edit">
-        <div className="item-field">
-          <span>Date</span>
-          <input
-            type="date"
-            defaultValue={draft.date || new Date().toISOString().slice(0, 10)}
-            aria-label="Bill date"
-            onBlur={(e) => e.target.value !== draft.date && updateHeader({ date: e.target.value })}
-          />
-        </div>
-        <div className="item-field">
-          <span>Payment</span>
-          <select
-            value={cashAccountSelected ? 'cash' : paymentLocked ? 'card' : draft.payment_method}
-            disabled={cashAccountSelected || paymentLocked}
-            aria-label="Payment method"
-            onChange={(e) => updateHeader({ payment_method: e.target.value })}
-          >
-            {paymentOptions.map((p) => (
-              <option key={p || 'none'} value={p}>
-                {paymentLocked && p === 'card'
-                  ? 'card (by card digits)'
-                  : cashAccountSelected && p === 'cash'
-                    ? 'cash (wallet)'
-                    : p || '—'}
-              </option>
-            ))}
-          </select>
-        </div>
-        {!cashAccountSelected && (
-        <div className="item-field">
-          <span>Card digits</span>
-          <input
-            defaultValue={draft.card_last_digits ?? ''}
-            placeholder="—"
-            inputMode="numeric"
-            maxLength={4}
-            aria-label="Card last digits"
-            onBlur={(e) => {
-              const digits = e.target.value.replace(/\D/g, '').slice(-4);
-              if (digits !== (draft.card_last_digits ?? '')) {
-                updateHeader({ card_last_digits: digits, payment_method: 'card' });
-              }
-            }}
-          />
-        </div>
-        )}
-        <div className="item-field">
-          <span>Budget</span>
-          <select
-            value={draft.budget_id ?? ''}
-            aria-label="Budget the bill counts toward"
-            onChange={(e) =>
-              updateHeader({ budget_id: e.target.value ? Number(e.target.value) : null })
-            }
-          >
-            <option value="">No budget</option>
-            {budgets.map((b) => (
-              <option key={b.id} value={b.id}>
-                {budgetLabel(b, categories)} • {formatCents(b.amount_cents, baseCurrency.data?.currency ?? currency)}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
       <p className="hint-text">
         {isSaved
           ? 'Edits apply on leaving a field — press “Save changes” to persist them.'
@@ -861,21 +848,7 @@ export function BillDraftEditor({
 
       {error && <ErrorMessage message={error} />}
 
-      <div className="bill-actions">
-        <Button onClick={confirm} disabled={isBusy}>
-          {isSaved ? (busy === 'confirm' ? 'Saving…' : 'Save changes') : 'Confirm bill'}
-        </Button>
-        {!isSaved && (
-          <>
-            <Button variant="secondary" onClick={() => onRetry?.()} disabled={isBusy}>
-              {busy === 'extract' ? 'Reading…' : 'Re-read'}
-            </Button>
-            <Button variant="danger" onClick={() => onDiscard?.()} disabled={isBusy}>
-              Discard
-            </Button>
-          </>
-        )}
-      </div>
+      <div className="bill-actions">{actions}</div>
     </div>
   );
 }
