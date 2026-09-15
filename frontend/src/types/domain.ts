@@ -392,6 +392,59 @@ export interface BillScan {
   created_at?: string;
 }
 
+// --- Offer search (purchase cart) -------------------------------------------
+
+/** Pipeline state of one persisted offer search (runs in the background). */
+export type OfferSearchStatus = 'searching' | 'done' | 'failed';
+
+/** One cart line as sent to the model — a snapshot of the product at search
+ *  time, so the result stays renderable after product edits/merges. */
+export interface OfferSearchProduct {
+  product_id: number;
+  name: string;
+  brand?: string;
+  unit?: string;
+  quantity: number;
+  last_price_cents?: number; // calibration hint for the model
+  currency?: string;
+}
+
+/** One price found for one product in one market. best/worst are computed
+ *  backend-side (cheapest/most expensive of the product within one currency). */
+export interface OfferRow {
+  market: string;
+  brand?: string;
+  price_cents: number;
+  currency: string;
+  is_offer: boolean; // true = explicit promotion
+  note?: string;
+  best_price?: boolean;
+  worst_price?: boolean;
+}
+
+export interface OfferProductResult {
+  product_id: number;
+  name: string;
+  brand?: string; // requested brand, echoed
+  offers: OfferRow[];
+  note?: string; // e.g. "nothing found for this product"
+}
+
+export interface OfferResult {
+  products: OfferProductResult[];
+  searched_at: string; // RFC3339
+}
+
+export interface OfferSearch {
+  search_token: string;
+  status: OfferSearchStatus;
+  provider_id?: string;
+  products?: OfferSearchProduct[]; // request snapshot echoed back
+  result?: OfferResult; // absent while searching or failed
+  error?: string; // set when failed
+  created_at?: string;
+}
+
 export interface BillConfirmInput {
   market_name: string;
   date: string;

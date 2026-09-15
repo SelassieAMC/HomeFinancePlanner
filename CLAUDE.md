@@ -152,7 +152,18 @@ re-uploading the same image is a 409 conflict. Negative item prices are allowed
 only for "Leergut" lines or items under a category with `allows_negative` (the
 seeded "Deposit & Returns" product category covers Pfand/Leergut) — the same
 rule applies to manual transaction item lines, whose money-back lines also stay
-unlinked from products. When adding
+unlinked from products. The **purchase cart** keeps its items client-side only
+(React Context + `localStorage` under `hfp.cart.v1`); confirming it starts a
+persisted **offer search** (`offer_searches` table, token-polling pipeline like
+bill scans): the default AI provider is asked for current prices of the cart
+products in the user's local markets. Connector families with native web search
+(Gemini `google_search`, Anthropic `web_search`, OpenAI Responses API `web_search`)
+get the search tool attached; Ollama/openai_compatible are prompted only and any
+failure there becomes an actionable "configure a connector with web search"
+error. The normalized result is stored as JSON and rendered per product with
+backend-computed `best_price` (green) / `worst_price` (red) flags per product and
+currency; only failed searches are TTL-swept (done rows are the kept record).
+When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.

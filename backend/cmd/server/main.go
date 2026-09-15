@@ -74,10 +74,13 @@ func run() error {
 	productSvc := service.NewProductService(products, categories, cfg.ProductsPath)
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
 		accounts, categories, stores, products, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
+	offerSearches := repository.NewOfferSearchRepository(db)
+	cartSearchSvc := service.NewOfferSearchService(offerSearches, products, stores, settingsSvc,
+		billExtractor, cfg.LLMTimeout, log)
 	analyticsRepo := repository.NewAnalyticsRepository(db)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
-	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, transactions, budgets, summary, settingsSvc, billSvc, fxSvc, analyticsSvc)
+	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -115,6 +118,7 @@ func run() error {
 		// Stop the scan workers before the DB pool closes (never waits for a
 		// running extraction — those scans resume on the next start).
 		billSvc.Close()
+		cartSearchSvc.Close()
 	}
 	return nil
 }

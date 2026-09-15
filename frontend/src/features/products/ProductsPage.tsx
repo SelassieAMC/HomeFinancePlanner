@@ -6,6 +6,7 @@ import { formatCents } from '../../lib/money';
 import type { Product, ProductSort } from '../../types/domain';
 import { ProductDetailsModal } from './ProductDetailsModal';
 import { ProductEditModal } from './ProductEditModal';
+import { useCart } from '../cart/CartContext';
 import {
   CategorySelect,
   EmptyState,
@@ -59,6 +60,15 @@ export function ProductsPage() {
   // One product edited full-page at a time, one viewed in the details modal.
   const [editingId, setEditingId] = useState<number | null>(null);
   const [detailsProduct, setDetailsProduct] = useState<Product | null>(null);
+  // Purchase cart: the just-added row flips its icon for a moment as feedback
+  // (there is no toast system; the transient icon flip is the confirmation).
+  const cart = useCart();
+  const [justAdded, setJustAdded] = useState<number | null>(null);
+  useEffect(() => {
+    if (justAdded === null) return;
+    const t = setTimeout(() => setJustAdded(null), 1200);
+    return () => clearTimeout(t);
+  }, [justAdded]);
 
   const products = data?.items ?? [];
 
@@ -164,6 +174,18 @@ export function ProductsPage() {
                         onClick={() => setDetailsProduct(product)}
                       >
                         🔍
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title={cart.has(product.id) ? 'Already in the cart' : 'Add to the purchase cart'}
+                        aria-label={`Add ${product.name} to the purchase cart`}
+                        onClick={() => {
+                          cart.add(product);
+                          setJustAdded(product.id);
+                        }}
+                      >
+                        {justAdded === product.id ? '✅' : '🛒'}
                       </button>
                       <button
                         type="button"

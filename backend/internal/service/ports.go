@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -104,18 +105,38 @@ type ProductStore interface {
 	Merge(ctx context.Context, keepID, dropID int64, final domain.Product) (domain.Product, error)
 }
 
+// OfferSearchStore is the persistence contract for offer searches (the
+// purchase-cart pipeline). Rows are created in 'searching' state and written
+// by the background worker; done rows are the kept record.
+type OfferSearchStore interface {
+	Create(ctx context.Context, s domain.OfferSearch) (domain.OfferSearch, error)
+	GetByToken(ctx context.Context, token string) (domain.OfferSearch, error)
+	List(ctx context.Context, statuses []domain.OfferSearchStatus, limit int) ([]domain.OfferSearch, error)
+	// MarkDone stores the normalized result, guarded on status='searching'.
+	MarkDone(ctx context.Context, token string, res *domain.OfferResult) error
+	MarkFailed(ctx context.Context, token, msg string) error
+	// ClaimRetry atomically moves a finished search back to 'searching';
+	// returns false when the row is missing or still searching.
+	ClaimRetry(ctx context.Context, token, providerID string) (bool, error)
+	Delete(ctx context.Context, token string) error
+	// DeleteStale removes failed searches older than the cutoff (done rows are
+	// the kept record) and returns the removed tokens.
+	DeleteStale(ctx context.Context, olderThan time.Time) ([]string, error)
+}
+
 // Services bundles the business services for handler wiring.
 type Services struct {
-	Accounts     *AccountService
-	Categories   *CategoryService
-	Stores       *StoreService
-	Products     *ProductService
-	Transactions *TransactionService
-	Budgets      *BudgetService
-	Summary      *SummaryService
-	Settings     *SettingsService
-	Bills        *BillService
-	Analytics    *AnalyticsService
+	Accounts      *AccountService
+	Categories    *CategoryService
+	Stores        *StoreService
+	Products      *ProductService
+	Transactions  *TransactionService
+	Budgets       *BudgetService
+	Summary       *SummaryService
+	Settings      *SettingsService
+	Bills         *BillService
+	OfferSearches *OfferSearchService
+	Analytics     *AnalyticsService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -133,19 +154,21 @@ func New(
 	summary SummaryStore,
 	settings *SettingsService,
 	bills *BillService,
+	offerSearches *OfferSearchService,
 	fx *FXService,
 	analytics *AnalyticsService,
 ) *Services {
 	return &Services{
-		Accounts:     &AccountService{accounts: accounts},
-		Categories:   &CategoryService{categories: categories},
-		Stores:       storeSvc,
-		Products:     productSvc,
-		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, log: slog.Default()},
-		Budgets:      &BudgetService{budgets: budgets, categories: categories},
-		Summary:      &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},
-		Settings:     settings,
-		Bills:        bills,
-		Analytics:    analytics,
+		Accounts:      &AccountService{accounts: accounts},
+		Categories:    &CategoryService{categories: categories},
+		Stores:        storeSvc,
+		Products:      productSvc,
+		Transactions:  &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, log: slog.Default()},
+		Budgets:       &BudgetService{budgets: budgets, categories: categories},
+		Summary:       &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},
+		Settings:      settings,
+		Bills:         bills,
+		OfferSearches: offerSearches,
+		Analytics:     analytics,
 	}
 }

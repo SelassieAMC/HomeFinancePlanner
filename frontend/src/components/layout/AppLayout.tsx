@@ -14,6 +14,7 @@ const MORE_ITEMS: { to: string; label: string; icon: string; end?: boolean }[] =
   { to: '/accounts', label: 'Accounts', icon: '🏦' },
   { to: '/stores', label: 'Stores', icon: '🏪' },
   { to: '/products', label: 'Products', icon: '📦' },
+  { to: '/cart', label: 'Purchase cart', icon: '🛒' },
   { to: '/bills', label: 'Bills', icon: '🗂️' },
   { to: '/scan', label: 'Scan bill', icon: '📷' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },

@@ -2090,3 +2090,146 @@ select:focus,
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Purchase cart / offer results -------------------------------------------
+   Colored tints use rgba so they read in both light and dark themes. */
+
+/* Cart page */
+.cart-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cart-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.cart-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart-qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.cart-last-price {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cart-add-row {
+  margin: 0.6rem 0;
+  position: relative;
+}
+
+/* Offer result table: green = best price, red = worst, per product and
+   currency (flags computed backend-side). */
+.offer-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.offer-table th,
+.offer-table td {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+}
+
+.offer-table th.num,
+.offer-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.offer-best {
+  background: rgba(34, 160, 96, 0.16);
+  font-weight: 600;
+}
+
+.offer-worst {
+  background: rgba(220, 70, 70, 0.14);
+}
+
+.offer-tag {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: rgba(230, 150, 30, 0.18);
+}
+
+.offer-table-scroll {
+  overflow-x: auto;
+}
+
+.offer-notes {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Past searches list */
+.cart-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cart-history-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cart-history-link {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.offer-status {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.offer-status-done {
+  background: rgba(34, 160, 96, 0.16);
+}
+
+.offer-status-failed {
+  background: rgba(220, 70, 70, 0.14);
+}

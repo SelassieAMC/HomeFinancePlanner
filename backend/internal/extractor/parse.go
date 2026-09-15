@@ -38,21 +38,31 @@ type rawItem struct {
 
 var jsonFence = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)```")
 
-// ParseBillJSON extracts and normalizes the JSON object from a model response.
-func ParseBillJSON(raw string) (domain.BillDraft, error) {
+// extractJSONObject isolates the JSON object from a model response: a
+// ```json fence wins, otherwise the outermost braces survive (prose-wrapped
+// output from grounded searches).
+func extractJSONObject(raw string) (string, error) {
 	cleaned := strings.TrimSpace(raw)
 	if m := jsonFence.FindStringSubmatch(cleaned); m != nil {
 		cleaned = m[1]
 	}
-	// Some models wrap the object in prose; keep the outermost braces.
 	start := strings.Index(cleaned, "{")
 	end := strings.LastIndex(cleaned, "}")
 	if start < 0 || end <= start {
-		return domain.BillDraft{}, fmt.Errorf("no JSON object found in response")
+		return "", fmt.Errorf("no JSON object found in response")
+	}
+	return cleaned[start : end+1], nil
+}
+
+// ParseBillJSON extracts and normalizes the JSON object from a model response.
+func ParseBillJSON(raw string) (domain.BillDraft, error) {
+	cleaned, err := extractJSONObject(raw)
+	if err != nil {
+		return domain.BillDraft{}, err
 	}
 
 	var wire rawWire
-	if err := json.Unmarshal([]byte(cleaned[start:end+1]), &wire); err != nil {
+	if err := json.Unmarshal([]byte(cleaned), &wire); err != nil {
 		return domain.BillDraft{}, fmt.Errorf("decode JSON: %w", err)
 	}
 
@@ -121,6 +131,78 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 }
 
 var nonDigits = regexp.MustCompile(`\D`)
+
+// rawOfferWire mirrors the JSON schema pinned in offersPrompt. Price is a
+// decimal number in the offer's currency and is converted to cents here.
+type rawOfferWire struct {
+	CannotSearch *bool         `json:"cannot_search"`
+	Reason       string        `json:"reason"`
+	Products     []rawProductW `json:"products"`
+}
+
+type rawProductW struct {
+	ProductID *int64      `json:"product_id"`
+	Name      string      `json:"name"`
+	Brand     string      `json:"brand"`
+	Note      string      `json:"note"`
+	Offers    []rawOfferW `json:"offers"`
+}
+
+type rawOfferW struct {
+	Market   string   `json:"market"`
+	Brand    string   `json:"brand"`
+	Price    *float64 `json:"price"`
+	Currency string   `json:"currency"`
+	IsOffer  *bool    `json:"is_offer"`
+	Note     string   `json:"note"`
+}
+
+// ParseOffersJSON extracts and normalizes the offers JSON object from a model
+// response. Money arrives as decimal numbers in the market's currency and is
+// converted to cents.
+func ParseOffersJSON(raw string) (domain.OfferResult, error) {
+	cleaned, err := extractJSONObject(raw)
+	if err != nil {
+		return domain.OfferResult{}, err
+	}
+
+	var wire rawOfferWire
+	if err := json.Unmarshal([]byte(cleaned), &wire); err != nil {
+		return domain.OfferResult{}, fmt.Errorf("decode JSON: %w", err)
+	}
+
+	res := domain.OfferResult{
+		CannotSearch: wire.CannotSearch != nil && *wire.CannotSearch,
+		Reason:       strings.TrimSpace(wire.Reason),
+	}
+	for _, p := range wire.Products {
+		out := domain.OfferProductResult{
+			Name:  strings.TrimSpace(p.Name),
+			Brand: strings.TrimSpace(p.Brand),
+			Note:  strings.TrimSpace(p.Note),
+		}
+		if p.ProductID != nil {
+			out.ProductID = *p.ProductID
+		}
+		for _, o := range p.Offers {
+			market := strings.TrimSpace(o.Market)
+			if o.Price == nil || market == "" {
+				continue // an offer without a market or price is useless
+			}
+			currency := strings.ToUpper(strings.TrimSpace(o.Currency))
+			out.Offers = append(out.Offers, domain.OfferRow{
+				Market:     market,
+				Brand:      strings.TrimSpace(o.Brand),
+				PriceCents: toCents(*o.Price),
+				Currency:   currency,
+				IsOffer:    o.IsOffer != nil && *o.IsOffer,
+				Note:       strings.TrimSpace(o.Note),
+			})
+		}
+		res.Products = append(res.Products, out)
+	}
+	return res, nil
+}
 
 // isDepositReturn reports whether an article line is a bottle/crate deposit
 // return (e.g. German "Leergut") — money coming back, so its amount may be

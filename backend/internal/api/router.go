@@ -26,6 +26,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	productH := &handlers.ProductHandler{Svc: svc.Products}
 	settingsH := &handlers.SettingsHandler{Svc: svc.Settings}
 	analyticsH := &handlers.AnalyticsHandler{Svc: svc.Analytics}
+	cartSearchH := &handlers.OfferSearchHandler{Svc: svc.OfferSearches}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -109,6 +110,16 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("POST /api/v1/products/{id}/photo", productH.UploadPhoto)
 	mux.HandleFunc("GET /api/v1/products/{id}/photo", productH.Photo)
 	mux.HandleFunc("DELETE /api/v1/products/{id}/photo", productH.RemovePhoto)
+
+	// Offer search flow (purchase cart): one row per confirmed cart, result
+	// persisted in the row. POST returns immediately with status "searching";
+	// the client polls GET /{token}. Self-contained family — no {id} wildcard
+	// interactions.
+	mux.HandleFunc("POST   /api/v1/cart-searches", cartSearchH.Create)
+	mux.HandleFunc("GET    /api/v1/cart-searches", cartSearchH.List)
+	mux.HandleFunc("GET    /api/v1/cart-searches/{token}", cartSearchH.Get)
+	mux.HandleFunc("POST   /api/v1/cart-searches/{token}/retry", cartSearchH.Retry)
+	mux.HandleFunc("DELETE /api/v1/cart-searches/{token}", cartSearchH.Delete)
 
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)
