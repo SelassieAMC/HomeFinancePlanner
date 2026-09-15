@@ -68,11 +68,16 @@ func (s *OfferSearchService) processSearch(token string, log *slog.Logger) {
 	searchCtx, cancel := context.WithTimeout(parent, s.searchTimeout)
 	defer cancel()
 
+	searchLog := log.With("token", token)
+	start := time.Now()
 	provider, providerErr := s.providers.GetProvider(searchCtx, search.ProviderID)
 	var result domain.OfferResult
 	var searchErr error
 	if providerErr == nil {
-		searchErr = s.runSearch(searchCtx, provider, search, &result)
+		searchLog.Info("offer search started",
+			"provider", provider.Model, "family", provider.Type,
+			"products", len(search.Products), "timeout", s.searchTimeout)
+		searchErr = s.runSearch(searchCtx, provider, search, &result, searchLog)
 	}
 
 	// The result write uses a fresh background context so a finished result
@@ -82,10 +87,16 @@ func (s *OfferSearchService) processSearch(token string, log *slog.Logger) {
 
 	switch {
 	case providerErr != nil:
+		searchLog.Error("offer search failed to resolve provider",
+			"provider_id", search.ProviderID, "duration", time.Since(start), "err", providerErr)
 		s.persistSearchResult(writeCtx, token, log, nil, "AI provider unavailable: "+providerErr.Error())
 	case searchErr != nil:
+		searchLog.Warn("offer search finished with error",
+			"duration", time.Since(start), "err", searchErr)
 		s.persistSearchResult(writeCtx, token, log, nil, describeSearchError(searchErr, provider, s.searchTimeout))
 	default:
+		searchLog.Info("offer search succeeded",
+			"duration", time.Since(start), "products", len(result.Products))
 		markBestWorst(&result)
 		result.SearchedAt = time.Now().UTC().Format(time.RFC3339)
 		s.persistSearchResult(writeCtx, token, log, &result, "")
@@ -94,7 +105,7 @@ func (s *OfferSearchService) processSearch(token string, log *slog.Logger) {
 
 // runSearch builds the prompt from the cart snapshot plus the user's own
 // market names and runs the AI search.
-func (s *OfferSearchService) runSearch(ctx context.Context, provider domain.AIProvider, search domain.OfferSearch, out *domain.OfferResult) error {
+func (s *OfferSearchService) runSearch(ctx context.Context, provider domain.AIProvider, search domain.OfferSearch, out *domain.OfferResult, log *slog.Logger) error {
 	storeNames := []string{}
 	if stores, err := s.stores.List(ctx); err == nil {
 		for _, st := range stores {
@@ -104,7 +115,7 @@ func (s *OfferSearchService) runSearch(ctx context.Context, provider domain.AIPr
 		}
 	}
 	prompt := BuildOffersPrompt(search.Products, storeNames)
-	res, err := s.searcher.SearchOffers(ctx, provider, prompt)
+	res, err := s.searcher.SearchOffers(ctx, provider, prompt, log)
 	// The wire echoes product ids from the request; keep the snapshot's names
 	// authoritative so renamed products still render the result correctly.
 	for i := range res.Products {

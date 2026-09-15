@@ -174,12 +174,14 @@ func ParseOffersJSON(raw string) (domain.OfferResult, error) {
 	res := domain.OfferResult{
 		CannotSearch: wire.CannotSearch != nil && *wire.CannotSearch,
 		Reason:       strings.TrimSpace(wire.Reason),
+		Products:     []domain.OfferProductResult{}, // never null on the wire
 	}
 	for _, p := range wire.Products {
 		out := domain.OfferProductResult{
-			Name:  strings.TrimSpace(p.Name),
-			Brand: strings.TrimSpace(p.Brand),
-			Note:  strings.TrimSpace(p.Note),
+			Name:   strings.TrimSpace(p.Name),
+			Brand:  strings.TrimSpace(p.Brand),
+			Note:   strings.TrimSpace(p.Note),
+			Offers: []domain.OfferRow{}, // never null on the wire
 		}
 		if p.ProductID != nil {
 			out.ProductID = *p.ProductID

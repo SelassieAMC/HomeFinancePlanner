@@ -7,6 +7,9 @@ import { EmptyState } from '../../components/ui';
 // offers table inside. Best price per product is tinted green, worst red
 // (flags computed backend-side, per product and currency).
 export function OfferResultView({ result }: { result: OfferResult }) {
+  // Older persisted rows can carry null instead of an empty list (the model
+  // omitted the field and Go marshalled its nil slice as null) — guard reads.
+  const products = result.products ?? [];
   return (
     <div className="bill-draft">
       <p className="hint-text">
@@ -14,11 +17,13 @@ export function OfferResultView({ result }: { result: OfferResult }) {
         price, red the worst (per product and currency).
       </p>
 
-      {result.products.length === 0 ? (
+      {products.length === 0 ? (
         <EmptyState message="No offer data came back for the cart." />
       ) : (
         <div className="item-panels">
-          {result.products.map((product) => (
+          {products.map((product) => {
+            const offers = product.offers ?? [];
+            return (
             <details className="item-panel" key={product.product_id} open>
               <summary>
                 <span className="item-icon" aria-hidden="true">
@@ -29,14 +34,14 @@ export function OfferResultView({ result }: { result: OfferResult }) {
                   {product.brand && <span className="item-brand">{product.brand}</span>}
                 </span>
                 <span className="item-price">
-                  {product.offers.length > 0
-                    ? bestPriceLabel(product.offers)
+                  {offers.length > 0
+                    ? bestPriceLabel(offers)
                     : 'no offers'}
                 </span>
               </summary>
               <div className="item-detail">
                 {product.note && <p className="hint-text">{product.note}</p>}
-                {product.offers.length === 0 ? (
+                {offers.length === 0 ? (
                   <p className="hint-text">Nothing was found for this product.</p>
                 ) : (
                   <div className="offer-table-scroll">
@@ -50,7 +55,7 @@ export function OfferResultView({ result }: { result: OfferResult }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {product.offers.map((o, i) => (
+                        {offers.map((o, i) => (
                           <tr
                             key={`${o.market}-${o.brand}-${i}`}
                             className={
@@ -67,9 +72,9 @@ export function OfferResultView({ result }: { result: OfferResult }) {
                     </table>
                   </div>
                 )}
-                {product.offers.some((o) => o.note) && (
+                {offers.some((o) => o.note) && (
                   <ul className="offer-notes">
-                    {product.offers
+                    {offers
                       .filter((o) => o.note)
                       .map((o, i) => (
                         <li key={i}>
@@ -80,7 +85,8 @@ export function OfferResultView({ result }: { result: OfferResult }) {
                 )}
               </div>
             </details>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

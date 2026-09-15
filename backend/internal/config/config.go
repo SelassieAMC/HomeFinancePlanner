@@ -22,6 +22,7 @@ type Config struct {
 	ProductsPath       string     // directory for uploaded product photos
 	CORSAllowedOrigins []string   // allowed CORS origins (empty = same-origin only)
 	LogLevel           slog.Level // debug | info | warn | error
+	LogFile            string     // append target for logs; "none" = stdout only
 	AIEncryptionKey    string     // passphrase for encrypting AI API keys at rest
 	LLMTimeout         time.Duration
 	FXTimeout          time.Duration // outbound timeout for the exchange-rates API
@@ -64,6 +65,7 @@ func Load() (Config, error) {
 		ProductsPath:       envString("PRODUCTS_PATH", "./data/products"),
 		CORSAllowedOrigins: envList("CORS_ALLOWED_ORIGINS", ""),
 		LogLevel:           logLevel,
+		LogFile:            envString("LOG_FILE", "./data/server.log"),
 		AIEncryptionKey:    envString("AI_ENCRYPTION_KEY", ""),
 		LLMTimeout:         llmTimeout,
 		FXTimeout:          fxTimeout,

@@ -5,10 +5,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -153,10 +155,26 @@ func newEncryptionBox(cfg config.Config, log *slog.Logger) (*crypto.Box, error) 
 	return crypto.NewBox(key)
 }
 
+// newLogger builds the process logger. Records go to stdout and — unless
+// LOG_FILE is "none" — are appended to LOG_FILE (./data/server.log by
+// default) so searches and scans stay traceable across restarts. A log file
+// that cannot be opened degrades to stdout-only rather than blocking boot.
 func newLogger(cfg config.Config) *slog.Logger {
-	var handler slog.Handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})
+	writers := []io.Writer{os.Stdout}
+	if cfg.LogFile != "" && cfg.LogFile != "none" {
+		if err := os.MkdirAll(filepath.Dir(cfg.LogFile), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "server: create log directory %s: %v\n", filepath.Dir(cfg.LogFile), err)
+		} else if f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "server: open log file %s: %v\n", cfg.LogFile, err)
+		} else {
+			writers = append(writers, f)
+		}
+	}
+
+	out := io.MultiWriter(writers...)
+	var handler slog.Handler = slog.NewTextHandler(out, &slog.HandlerOptions{Level: cfg.LogLevel})
 	if cfg.IsProduction() {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})
+		handler = slog.NewJSONHandler(out, &slog.HandlerOptions{Level: cfg.LogLevel})
 	}
 	return slog.New(handler)
 }

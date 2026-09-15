@@ -89,7 +89,7 @@ func TestSearchOffers_OllamaWebSearch_ToolLoop(t *testing.T) {
 		chatFinalOffers(t, w)
 	})
 
-	res, err := New(0).SearchOffers(context.Background(), provider, "find offers")
+	res, err := New(0).SearchOffers(context.Background(), provider, "find offers", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSearchOffers_OllamaWebSearch_StringArguments(t *testing.T) {
 		chatFinalOffers(t, w)
 	})
 
-	if _, err := New(0).SearchOffers(context.Background(), provider, "find offers"); err != nil {
+	if _, err := New(0).SearchOffers(context.Background(), provider, "find offers", nil); err != nil {
 		t.Fatalf("string-form arguments should still work: %v", err)
 	}
 }
@@ -142,7 +142,7 @@ func TestSearchOffers_OllamaWebSearch_LoopCap(t *testing.T) {
 		chatJSON(t, w, `{"message":{"content":"","tool_calls":[{"function":{"name":"web_search","arguments":{"query":"more"}}}]}}`)
 	})
 
-	_, err := New(0).SearchOffers(context.Background(), provider, "find offers")
+	_, err := New(0).SearchOffers(context.Background(), provider, "find offers", nil)
 	if err == nil || !strings.Contains(err.Error(), "without producing a final answer") {
 		t.Errorf("error = %v, want loop-cap message", err)
 	}
@@ -156,7 +156,7 @@ func TestSearchOffers_OllamaWebSearch_BadKey(t *testing.T) {
 	// Fixture's web server rejects anything but "Bearer key-123"; use another.
 	provider.APIKey = "wrong-key"
 
-	_, err := New(0).SearchOffers(context.Background(), provider, "find offers")
+	_, err := New(0).SearchOffers(context.Background(), provider, "find offers", nil)
 	if err == nil || !strings.Contains(err.Error(), "check the Ollama API key in Settings") {
 		t.Errorf("error = %v, want the key-check message", err)
 	}
@@ -169,7 +169,7 @@ func TestSearchOffers_OllamaWebSearch_NoToolSupport(t *testing.T) {
 		fmt.Fprint(w, `{"error":"registry does not support tools"}`)
 	})
 
-	_, err := New(0).SearchOffers(context.Background(), provider, "find offers")
+	_, err := New(0).SearchOffers(context.Background(), provider, "find offers", nil)
 	if err == nil || !strings.Contains(err.Error(), "does not support tool calling") {
 		t.Errorf("error = %v, want the tool-support message", err)
 	}
@@ -187,7 +187,7 @@ func TestSearchOffers_OllamaWebSearch_WebFetch(t *testing.T) {
 		chatFinalOffers(t, w)
 	})
 
-	if _, err := New(0).SearchOffers(context.Background(), provider, "find offers"); err != nil {
+	if _, err := New(0).SearchOffers(context.Background(), provider, "find offers", nil); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := (*requests)[1]["messages"].([]any)

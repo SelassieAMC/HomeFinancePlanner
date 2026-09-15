@@ -1,6 +1,8 @@
 package extractor
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +90,28 @@ func TestParseOffersJSON_CannotSearchFlag(t *testing.T) {
 	}
 	if !res.CannotSearch || res.Reason != "no browsing capability" {
 		t.Errorf("cannot_search parse: %+v", res)
+	}
+}
+
+// A model answer that omits "offers" must decode to [] — not nil, which
+// Go marshals as null and which crashed the frontend result renderer.
+func TestParseOffersJSON_MissingOffersAreEmpty(t *testing.T) {
+	res, err := ParseOffersJSON(`{"products":[{"product_id":1,"name":"Milk"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Products == nil || len(res.Products) != 1 || res.Products[0].Offers == nil {
+		t.Fatalf("nil slices must be normalized to empty: %+v", res)
+	}
+	out, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "null") {
+		t.Errorf("wire output must not contain null: %s", out)
+	}
+	if !strings.Contains(string(out), `"offers":[]`) {
+		t.Errorf("wire output must carry an empty offers array: %s", out)
 	}
 }
 

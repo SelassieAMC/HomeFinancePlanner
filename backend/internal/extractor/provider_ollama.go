@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -107,14 +109,15 @@ type ollamaToolCall struct {
 // declares web_search/web_fetch calls, this server executes them against the
 // hosted Ollama web API (which requires an ollama.com API key), and the
 // results are fed back until the model produces its final answer.
-func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider, prompt string) (string, error) {
+func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider, prompt string, log *slog.Logger) (string, error) {
 	headers := map[string]string{}
 	if provider.APIKey != "" {
 		headers["Authorization"] = "Bearer " + provider.APIKey
 	}
 
 	messages := []map[string]any{{"role": "user", "content": prompt}}
-	for round := 0; round < ollamaSearchMaxRounds; round++ {
+	for round := 1; ; round++ {
+		roundStart := time.Now()
 		payload := map[string]any{
 			"model":    provider.Model,
 			"stream":   false,
@@ -136,11 +139,16 @@ func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider
 			return "", err
 		}
 		if len(resp.Message.ToolCalls) == 0 {
+			log.Info("ollama chat round finished",
+				"round", round, "duration", time.Since(roundStart), "final", true)
 			if strings.TrimSpace(resp.Message.Content) == "" {
 				return "", fmt.Errorf("response contained no message content")
 			}
 			return resp.Message.Content, nil
 		}
+		log.Info("ollama chat round finished",
+			"round", round, "duration", time.Since(roundStart), "final", false,
+			"tool_calls", len(resp.Message.ToolCalls))
 
 		// Echo the assistant turn, then one tool result message per call —
 		// in call order, per the Ollama tool-calling contract.
@@ -150,7 +158,12 @@ func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider
 			"tool_calls": resp.Message.ToolCalls,
 		})
 		for _, call := range resp.Message.ToolCalls {
+			toolStart := time.Now()
 			result, err := e.runOllamaWebTool(ctx, headers, call)
+			log.Info("ollama web tool finished",
+				"tool", call.Function.Name, "duration", time.Since(toolStart),
+				"bytes", len(result), "err", err != nil,
+			)
 			if err != nil {
 				// A rejected key cannot recover on retry within this loop.
 				msg := err.Error()
@@ -167,8 +180,10 @@ func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider
 				"content":   result,
 			})
 		}
+		if round >= ollamaSearchMaxRounds {
+			return "", fmt.Errorf("the model kept requesting web searches without producing a final answer after %d rounds", ollamaSearchMaxRounds)
+		}
 	}
-	return "", fmt.Errorf("the model kept requesting web searches without producing a final answer after %d rounds", ollamaSearchMaxRounds)
 }
 
 // runOllamaWebTool executes one web_search or web_fetch tool call against the

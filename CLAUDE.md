@@ -122,6 +122,7 @@ All configuration is env-driven (`internal/config`):
 | `PRODUCTS_PATH` | `./data/products` | uploaded product photo storage |
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | comma-separated; empty = same-origin only |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `LOG_FILE` | `./data/server.log` | log append target (records also go to stdout); `none` = stdout only |
 | `AI_ENCRYPTION_KEY` | *(empty)* | AES-256-GCM passphrase for AI provider keys; required in production |
 | `LLM_TIMEOUT` | `5m` | per-extraction timeout for AI bill scanning (large local vision models need minutes) |
 | `FX_TIMEOUT` | `10s` | outbound timeout for the exchange-rates API (Frankfurter/ECB), cached 24h |

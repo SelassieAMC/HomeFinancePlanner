@@ -3,8 +3,10 @@ package extractor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -19,7 +21,16 @@ import (
 // (plain ollama, openai_compatible) are prompted and asked to report when
 // they cannot browse the web; any failure there is turned into
 // domain.ErrCannotSearch so the UI can tell the user to switch providers.
-func (e *Extractor) SearchOffers(ctx context.Context, provider domain.AIProvider, prompt string) (domain.OfferResult, error) {
+//
+// log (may be nil) receives per-call tracing: which family ran, how long
+// each provider round trip took, and how many offers came back — the data
+// needed to explain a slow or empty search.
+func (e *Extractor) SearchOffers(ctx context.Context, provider domain.AIProvider, prompt string, log *slog.Logger) (domain.OfferResult, error) {
+	if log == nil {
+		log = slog.Default()
+	}
+	start := time.Now()
+
 	var raw string
 	var err error
 	textOnly := false // no search tool: failures likely mean "cannot browse"
@@ -32,13 +43,17 @@ func (e *Extractor) SearchOffers(ctx context.Context, provider domain.AIProvider
 	case domain.AIProviderOpenAI:
 		raw, err = e.openAISearch(ctx, provider, prompt)
 	case domain.AIProviderOllamaWebSearch:
-		raw, err = e.ollamaSearch(ctx, provider, prompt)
+		raw, err = e.ollamaSearch(ctx, provider, prompt, log)
 	case domain.AIProviderOpenAICompatible, domain.AIProviderOllama:
 		textOnly = true
 		raw, err = e.textChat(ctx, provider, prompt)
 	default:
 		err = fmt.Errorf("unsupported provider type %q", provider.Type)
 	}
+	log.Info("provider search call finished",
+		"family", provider.Type, "model", provider.Model,
+		"duration", time.Since(start), "err", err != nil,
+	)
 	if err != nil {
 		return domain.OfferResult{}, err
 	}
@@ -50,6 +65,7 @@ func (e *Extractor) SearchOffers(ctx context.Context, provider domain.AIProvider
 		}
 		return domain.OfferResult{}, fmt.Errorf("provider %s (%s) returned unreadable output: %w", provider.ID, provider.Type, parseErr)
 	}
+	log.Info("offer result parsed", "products", len(res.Products), "cannot_search", res.CannotSearch, "offers", countOfferRows(res))
 	if res.CannotSearch {
 		reason := res.Reason
 		if reason == "" {
@@ -78,6 +94,15 @@ func hasAnyOffers(res domain.OfferResult) bool {
 		}
 	}
 	return false
+}
+
+// countOfferRows totals the offers across all products (tracing only).
+func countOfferRows(res domain.OfferResult) int {
+	n := 0
+	for _, p := range res.Products {
+		n += len(p.Offers)
+	}
+	return n
 }
 
 // cannotSearchPhrases are refusal formulations models use when they cannot go

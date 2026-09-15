@@ -12,9 +12,10 @@ import (
 )
 
 // OfferSearcher abstracts the AI search engine (implemented by
-// internal/extractor).
+// internal/extractor). log receives the per-call tracing the worker includes
+// in its own logs.
 type OfferSearcher interface {
-	SearchOffers(ctx context.Context, provider domain.AIProvider, prompt string) (domain.OfferResult, error)
+	SearchOffers(ctx context.Context, provider domain.AIProvider, prompt string, log *slog.Logger) (domain.OfferResult, error)
 }
 
 // The search workers drain the token queue and run AI searches detached from
@@ -165,6 +166,9 @@ func (s *OfferSearchService) Search(ctx context.Context, in domain.OfferSearchIn
 	if err != nil {
 		return domain.OfferSearch{}, err
 	}
+	s.log.Info("offer search created",
+		"token", token, "provider", provider.Model, "family", provider.Type,
+		"products", len(snapshot))
 	if !s.enqueue(token) {
 		// Queue full: the row stays searching and the sweeper re-enqueues it
 		// within minutes — but say so, the search is not immediate.
