@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Store } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
-import { categoriesBySection } from '../../lib/categories';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
-import { Button, Spinner, ErrorMessage, EmptyState } from '../../components/ui';
+import {
+  Button,
+  CategorySelect,
+  Spinner,
+  ErrorMessage,
+  EmptyState,
+  UnitSelect,
+} from '../../components/ui';
 
 // BillDraftEditor edits the scan draft client-side — nothing is persisted
 // until Confirm. The layout is mobile-first: colored summary cards on top,
@@ -52,44 +58,6 @@ export interface BillDraftEditorProps {
 /** Deposit/bottle return (e.g. "Leergut") — money back, negative amounts allowed. */
 function isDepositReturn(name: string): boolean {
   return name.toLowerCase().includes('leergut');
-}
-
-/** Fixed measure vocabulary for the unit dropdown. */
-const MEASURE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'liters', label: 'Liters' },
-  { value: 'mililiters', label: 'Mililiters' },
-  { value: 'grams', label: 'Grams' },
-  { value: 'kilograms', label: 'Kilograms' },
-  { value: 'per unit', label: 'Per unit' },
-  { value: 'onzas', label: 'Onzas' },
-];
-
-/** Maps a receipt measure (kg, g, l, pcs, …) onto the fixed dropdown values. */
-function normalizeUnit(raw: string | undefined): string {
-  const u = (raw ?? '').trim().toLowerCase();
-  if (!u) return '';
-  const known = MEASURE_OPTIONS.find((m) => m.value === u);
-  if (known) return known.value;
-  const map: Record<string, string> = {
-    kg: 'kilograms',
-    kgs: 'kilograms',
-    kilo: 'kilograms',
-    kilos: 'kilograms',
-    g: 'grams',
-    gr: 'grams',
-    l: 'liters',
-    lt: 'liters',
-    ml: 'mililiters',
-    oz: 'onzas',
-    onza: 'onzas',
-    unit: 'per unit',
-    units: 'per unit',
-    pc: 'per unit',
-    pcs: 'per unit',
-    un: 'per unit',
-    u: 'per unit',
-  };
-  return map[u] ?? u;
 }
 
 /**
@@ -206,10 +174,6 @@ export function BillDraftEditor({
   const mismatch = printed > 0 && printed !== computedTotal;
   const savings =
     draft.items.reduce((sum, it) => sum + it.discount_cents, 0) + draft.discount_cents;
-
-  // Product storage categories grouped by section for the <select> optgroups
-  // (general expense categories are budget-level and stay out of item picks).
-  const sections = useMemo(() => categoriesBySection(categories, 'product'), [categories]);
 
   // Brand dropdown options: known brands from saved bills plus every brand
   // already typed in this draft.
@@ -667,27 +631,11 @@ export function BillDraftEditor({
                   </div>
                   <div className="item-field">
                     <span>Measure</span>
-                    {(() => {
-                      const current = normalizeUnit(it.unit);
-                      const extra =
-                        current && !MEASURE_OPTIONS.some((m) => m.value === current)
-                          ? [{ value: current, label: current }]
-                          : [];
-                      return (
-                        <select
-                          value={current}
-                          aria-label={`Measure for ${it.name}`}
-                          onChange={(e) => updateItem(it.id, { unit: e.target.value })}
-                        >
-                          <option value="">—</option>
-                          {[...MEASURE_OPTIONS, ...extra].map((m) => (
-                            <option key={m.value} value={m.value}>
-                              {m.label}
-                            </option>
-                          ))}
-                        </select>
-                      );
-                    })()}
+                    <UnitSelect
+                      value={it.unit}
+                      ariaLabel={`Measure for ${it.name}`}
+                      onChange={(unit) => updateItem(it.id, { unit })}
+                    />
                   </div>
                   <div className="item-field">
                     <span>Qty</span>
@@ -751,26 +699,14 @@ export function BillDraftEditor({
                 </div>
                 <div className="item-field">
                   <span>Category</span>
-                  <select
-                    value={it.category_id ?? ''}
-                    aria-label={`Category for ${it.name}`}
-                    onChange={(e) =>
-                      updateItem(it.id, {
-                        category_id: e.target.value ? Number(e.target.value) : null,
-                      })
-                    }
-                  >
-                    <option value="">Unclassified</option>
-                    {sections.map(([section, cats]) => (
-                      <optgroup key={section} label={section}>
-                        {cats.map((c) => (
-                          <option key={c.id} value={c.id} title={c.description}>
-                            {c.icon} {c.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
+                  <CategorySelect
+                    categories={categories}
+                    kind="product"
+                    value={it.category_id ?? null}
+                    ariaLabel={`Category for ${it.name}`}
+                    emptyLabel="Unclassified"
+                    onChange={(category_id) => updateItem(it.id, { category_id })}
+                  />
                 </div>
                 <div className="item-field">
                   <span>Budget</span>

@@ -119,6 +119,7 @@ All configuration is env-driven (`internal/config`):
 | `DB_PATH` | `./data/finance.db` | SQLite file location |
 | `BILLS_PATH` | `./data/bills` | uploaded receipt image storage |
 | `STORES_PATH` | `./data/stores` | uploaded store logo storage |
+| `PRODUCTS_PATH` | `./data/products` | uploaded product photo storage |
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | comma-separated; empty = same-origin only |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `AI_ENCRYPTION_KEY` | *(empty)* | AES-256-GCM passphrase for AI provider keys; required in production |
@@ -127,12 +128,18 @@ All configuration is env-driven (`internal/config`):
 
 ## Current State
 
-Accounts, categories, stores, transactions, budgets, the planning dashboard (daily
-expenses, budget progress, per-product-category spending), and AI bill
-scanning (upload → extract → review → confirm, saved-bill editing, stats) are
-implemented. Bills link to stores via `store_id`; on confirm/update the service
-find-or-creates the store from the (case-insensitive) market name, while
-`market_name` stays a denormalized snapshot. Receipt uploads are deduplicated by
+Accounts, categories, stores, products, transactions, budgets, the planning
+dashboard (daily expenses, budget progress, per-product-category spending), and
+AI bill scanning (upload → extract → review → confirm, saved-bill editing,
+stats) are implemented. Bills link to stores via `store_id`; on confirm/update
+the service find-or-creates the store from the (case-insensitive) market name,
+while `market_name` stays a denormalized snapshot. Bill items link to products
+via `product_id`: on confirm the service find-or-creates the product from the
+case-insensitive item name (deposit returns are never linked), and product
+edits (name/unit/category) propagate to the linked bill items. Products cannot
+be created or deleted through the API; `GET /api/v1/products` is the only
+paginated endpoint (`{items, total, limit, offset}` envelope, sort key
+whitelist). Receipt uploads are deduplicated by
 content: each upload's sha256 is stored on `bill_scans` and `bills`, and
 re-uploading the same image is a 409 conflict. Negative item prices are allowed
 only for "Leergut" lines or items under a category with `allows_negative` (the

@@ -73,11 +73,28 @@ type StoreStore interface {
 	Delete(ctx context.Context, id int64) error
 }
 
+// ProductStore is the persistence contract for the product catalogue. Rows
+// are find-or-created by BillService from bill item names; the UI never
+// creates or deletes them. Update rewrites the linked bill_items
+// (name/unit/category) in the same transaction.
+type ProductStore interface {
+	List(ctx context.Context, f domain.ProductFilters) (domain.ProductPage, error)
+	GetByID(ctx context.Context, id int64) (domain.Product, error)
+	FindByName(ctx context.Context, name string) (domain.Product, error)
+	Create(ctx context.Context, p domain.Product) (domain.Product, error)
+	Update(ctx context.Context, p domain.Product) (domain.Product, error)
+	SetPhoto(ctx context.Context, id int64, photoPath string) (domain.Product, error)
+	// StorePrices lists the latest per-store price of one product, scoped to
+	// the given currency (the product's latest purchase currency).
+	StorePrices(ctx context.Context, id int64, currency string) ([]domain.ProductStorePrice, error)
+}
+
 // Services bundles the business services for handler wiring.
 type Services struct {
 	Accounts     *AccountService
 	Categories   *CategoryService
 	Stores       *StoreService
+	Products     *ProductService
 	Transactions *TransactionService
 	Budgets      *BudgetService
 	Summary      *SummaryService
@@ -91,6 +108,7 @@ func New(
 	accounts AccountStore,
 	categories CategoryStore,
 	stores *StoreService,
+	products *ProductService,
 	transactions TransactionStore,
 	budgets BudgetStore,
 	summary SummaryStore,
@@ -103,6 +121,7 @@ func New(
 		Accounts:     &AccountService{accounts: accounts},
 		Categories:   &CategoryService{categories: categories},
 		Stores:       stores,
+		Products:     products,
 		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories},
 		Budgets:      &BudgetService{budgets: budgets, categories: categories},
 		Summary:      &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},

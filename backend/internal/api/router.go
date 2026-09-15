@@ -23,6 +23,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	summaryH := &handlers.SummaryHandler{Svc: svc.Summary}
 	billH := &handlers.BillHandler{Svc: svc.Bills}
 	storeH := &handlers.StoreHandler{Svc: svc.Stores}
+	productH := &handlers.ProductHandler{Svc: svc.Products}
 	settingsH := &handlers.SettingsHandler{Svc: svc.Settings}
 	analyticsH := &handlers.AnalyticsHandler{Svc: svc.Analytics}
 
@@ -94,6 +95,18 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("POST /api/v1/stores/{id}/logo", storeH.UploadLogo)
 	mux.HandleFunc("GET /api/v1/stores/{id}/logo", storeH.Logo)
 	mux.HandleFunc("DELETE /api/v1/stores/{id}/logo", storeH.RemoveLogo)
+
+	// Products: the catalogue of things ever bought (find-or-created from bill
+	// items on confirm; the UI only edits, never creates or deletes).
+	// /{id}/photo is 4 segments next to a 2-segment /{id} — unambiguous, like
+	// the store logo routes.
+	mux.HandleFunc("GET /api/v1/products", productH.List)
+	mux.HandleFunc("GET /api/v1/products/{id}", productH.Get)
+	mux.HandleFunc("GET /api/v1/products/{id}/prices", productH.StorePrices)
+	mux.HandleFunc("PUT /api/v1/products/{id}", productH.Update)
+	mux.HandleFunc("POST /api/v1/products/{id}/photo", productH.UploadPhoto)
+	mux.HandleFunc("GET /api/v1/products/{id}/photo", productH.Photo)
+	mux.HandleFunc("DELETE /api/v1/products/{id}/photo", productH.RemovePhoto)
 
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)

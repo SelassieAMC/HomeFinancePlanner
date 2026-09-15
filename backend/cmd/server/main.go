@@ -54,6 +54,7 @@ func run() error {
 	accounts := repository.NewAccountRepository(db)
 	categories := repository.NewCategoryRepository(db)
 	stores := repository.NewStoreRepository(db)
+	products := repository.NewProductRepository(db)
 	transactions := repository.NewTransactionRepository(db)
 	budgets := repository.NewBudgetRepository(db)
 	summary := repository.NewSummaryRepository(db)
@@ -70,12 +71,13 @@ func run() error {
 	settingsSvc := service.NewSettingsService(settingsRepo, box, billExtractor)
 	fxSvc := service.NewFXService(settingsRepo, fetcher, log)
 	storeSvc := service.NewStoreService(stores, cfg.StoresPath)
+	productSvc := service.NewProductService(products, categories, cfg.ProductsPath)
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
-		accounts, categories, stores, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
+		accounts, categories, stores, products, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
 	analyticsRepo := repository.NewAnalyticsRepository(db)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
-	svc := service.New(accounts, categories, storeSvc, transactions, budgets, summary, settingsSvc, billSvc, fxSvc, analyticsSvc)
+	svc := service.New(accounts, categories, storeSvc, productSvc, transactions, budgets, summary, settingsSvc, billSvc, fxSvc, analyticsSvc)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

@@ -5,6 +5,7 @@ import { AccountsPage } from '../features/accounts/AccountsPage';
 import { TransactionsPage } from '../features/transactions/TransactionsPage';
 import { BudgetsPage } from '../features/budgets/BudgetsPage';
 import { StoresPage } from '../features/stores/StoresPage';
+import { ProductsPage } from '../features/products/ProductsPage';
 import { ScanBillsPage } from '../features/bills/ScanBillsPage';
 import { BillsPage } from '../features/bills/BillsPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
@@ -19,6 +20,7 @@ export const router = createBrowserRouter([
       { path: 'transactions', element: <TransactionsPage /> },
       { path: 'budgets', element: <BudgetsPage /> },
       { path: 'stores', element: <StoresPage /> },
+      { path: 'products', element: <ProductsPage /> },
       { path: 'scan', element: <ScanBillsPage /> },
       { path: 'bills', element: <BillsPage /> },
       { path: 'settings', element: <SettingsPage /> },

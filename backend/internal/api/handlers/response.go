@@ -59,3 +59,20 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
+
+// pagedBody is the standard list envelope for endpoints that paginate. Bare
+// arrays stay the norm for unpaginated lists (stores, categories, budgets).
+type pagedBody[T any] struct {
+	Items  []T   `json:"items"`
+	Total  int64 `json:"total"`
+	Limit  int   `json:"limit"`
+	Offset int   `json:"offset"`
+}
+
+// respondPage writes the standard paged list envelope.
+func respondPage[T any](w http.ResponseWriter, r *http.Request, items []T, total int64, limit, offset int) {
+	if items == nil {
+		items = []T{}
+	}
+	respondJSON(w, r, http.StatusOK, pagedBody[T]{Items: items, Total: total, Limit: limit, Offset: offset})
+}

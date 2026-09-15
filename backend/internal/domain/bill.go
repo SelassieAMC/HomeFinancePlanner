@@ -74,6 +74,7 @@ type BillItem struct {
 	LineTotalCents int64   `json:"line_total_cents"` // may be negative for deposit returns
 	IsReturn       bool    `json:"is_return"`        // deposit/bottle return (e.g. "Leergut")
 	BudgetID       *int64  `json:"budget_id"`        // per-line budget override (nil = bill's budget)
+	ProductID      *int64  `json:"product_id"`       // catalogue product resolved from the name (nil for returns)
 }
 
 // BillItemDraft is one extracted line before persistence. ID is a session-local

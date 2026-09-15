@@ -23,12 +23,26 @@ export function EmptyState({ message }: { message: string }) {
 
 /**
  * Modal dialog. The backdrop is visual only — dismissal is wired to whatever
- * OK/confirm button the caller puts in the content.
+ * OK/confirm button the caller puts in the content. `wide` widens the box for
+ * forms that need more room than a confirmation.
  */
-export function Dialog({ title, children }: { title: string; children: ReactNode }) {
+export function Dialog({
+  title,
+  children,
+  wide = false,
+}: {
+  title: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
   return (
     <div className="dialog-backdrop">
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <div
+        className={wide ? 'dialog dialog-wide' : 'dialog'}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dialog-title"
+      >
         <h3 className="dialog-title" id="dialog-title">
           {title}
         </h3>

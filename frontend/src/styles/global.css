@@ -689,6 +689,192 @@ select:focus,
   border-radius: var(--radius);
 }
 
+/* Product photos: large preview inside the edit form, small square as the
+ * table thumbnail. */
+.product-photo {
+  display: block;
+  max-width: 100%;
+  max-height: 120px;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.product-photo-small {
+  width: 1.75rem;
+  height: 1.75rem;
+  max-height: none;
+  margin: 0;
+  object-fit: cover;
+  border-radius: var(--radius);
+}
+
+/* Products table: thumbnail + name cell, icon-only row actions. */
+.product-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 10rem;
+}
+
+.product-name {
+  font-weight: 600;
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.icon-btn {
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+  padding: 0.3rem 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+/* Product details modal: stat grid + per-store price breakdown. */
+.product-details-brand,
+.product-details-description {
+  margin: 0.35rem 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.product-details-heading {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.product-details-empty {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.store-prices-table {
+  min-width: 100%;
+}
+
+/* Product edit modal: a two-column mini editor page (basic information and
+ * purchase stats on the left; photo card and footer actions on the right),
+ * collapsing to one column on narrow screens. */
+.edit-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  margin-top: 0.25rem;
+}
+
+.edit-main,
+.edit-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.edit-card {
+  padding: 0.85rem 0.95rem;
+}
+
+.edit-section-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.edit-main .form-grid {
+  grid-template-columns: 1fr;
+  margin-top: 0;
+}
+
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.form-grid textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.product-photo-preview {
+  max-height: 180px;
+  margin: 0 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.product-photo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 180px;
+  margin-bottom: 0.5rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.photo-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.photo-dropzone.dragover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+@media (max-width: 800px) {
+  .edit-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Prev/Next pager for server-paginated lists. */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.pagination-status {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.sort-order {
+  padding: 0.35rem 0.6rem;
+}
+
 /* Per-file summary after a scan upload batch. */
 .upload-results {
   margin: 0.75rem 0 0;
@@ -1494,6 +1680,10 @@ select:focus,
 .dialog-title {
   margin: 0 0 0.4rem;
   font-size: 1.05rem;
+}
+
+.dialog-wide {
+  max-width: 760px;
 }
 
 .dialog-actions {

@@ -91,6 +91,7 @@ type BillService struct {
 	accounts       AccountStore
 	categories     CategoryStore
 	stores         StoreStore
+	products       ProductStore
 	budgets        BudgetStore
 	txStore        TransactionStore
 	rates          RateSource
@@ -117,6 +118,7 @@ func NewBillService(
 	accounts AccountStore,
 	categories CategoryStore,
 	stores StoreStore,
+	products ProductStore,
 	budgets BudgetStore,
 	txStore TransactionStore,
 	rates RateSource,
@@ -139,6 +141,7 @@ func NewBillService(
 		accounts:       accounts,
 		categories:     categories,
 		stores:         stores,
+		products:       products,
 		budgets:        budgets,
 		txStore:        txStore,
 		rates:          rates,
@@ -779,6 +782,12 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		return domain.Bill{}, err
 	}
 
+	// Link each line to its catalogue product, re-resolved on every build so a
+	// renamed/edited line re-points (BillRepository.Update re-inserts lines).
+	for i := range items {
+		items[i].ProductID = s.resolveProduct(ctx, items[i])
+	}
+
 	return domain.Bill{
 		MarketName:         canonicalMarket,
 		Date:               date,
@@ -856,6 +865,46 @@ func (s *BillService) resolveStore(ctx context.Context, market string) (*int64, 
 	}
 	id := store.ID
 	return &id, store.Name, nil
+}
+
+// resolveProduct links a bill item to its catalogue product, matched
+// case-insensitively on the (trimmed) item name and created on first use —
+// the same find-or-create shape as resolveStore, race-safe through the
+// unique name index. Deposit returns are skipped: they are money back, not a
+// purchase. Failures are non-fatal (logged, link left nil) — a product-link
+// problem must not block confirming an otherwise valid receipt; the next
+// confirm of the same item name retries.
+func (s *BillService) resolveProduct(ctx context.Context, it domain.BillItem) *int64 {
+	if s.products == nil || it.IsReturn {
+		return nil
+	}
+	name := strings.TrimSpace(it.Name)
+	if name == "" {
+		return nil
+	}
+	product, err := s.products.FindByName(ctx, name)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		product, err = s.products.Create(ctx, domain.Product{
+			Name:       name,
+			Brand:      it.Brand,
+			Unit:       it.Unit,
+			CategoryID: it.CategoryID,
+		})
+		if errors.Is(err, domain.ErrConflict) {
+			// Lost a race against a concurrent confirm — re-read the winner.
+			product, err = s.products.FindByName(ctx, name)
+		}
+		if err != nil {
+			s.log.Warn("create product from bill item", "name", name, "error", err)
+			return nil
+		}
+	case err != nil:
+		s.log.Warn("find product for bill item", "name", name, "error", err)
+		return nil
+	}
+	id := product.ID
+	return &id
 }
 
 // extractDraft runs the connector and resolves the AI's category names

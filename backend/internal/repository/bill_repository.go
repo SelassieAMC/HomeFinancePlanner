@@ -67,10 +67,10 @@ func (r *BillRepository) Create(ctx context.Context, b domain.Bill) (domain.Bill
 	for _, item := range b.Items {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO bill_items
-				(bill_id, name, brand, unit, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				(bill_id, name, brand, unit, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id, product_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, item.Name, item.Brand, item.Unit, item.CategoryID, item.Quantity, item.UnitPriceCents,
-			item.DiscountCents, item.LineTotalCents, item.IsReturn, item.BudgetID); err != nil {
+			item.DiscountCents, item.LineTotalCents, item.IsReturn, item.BudgetID, item.ProductID); err != nil {
 			tx.Rollback()
 			return domain.Bill{}, mapWriteError("create bill item", err)
 		}
@@ -115,10 +115,10 @@ func (r *BillRepository) Update(ctx context.Context, b domain.Bill) (domain.Bill
 	for _, item := range b.Items {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO bill_items
-				(bill_id, name, brand, unit, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				(bill_id, name, brand, unit, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id, product_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			b.ID, item.Name, item.Brand, item.Unit, item.CategoryID, item.Quantity, item.UnitPriceCents,
-			item.DiscountCents, item.LineTotalCents, item.IsReturn, item.BudgetID); err != nil {
+			item.DiscountCents, item.LineTotalCents, item.IsReturn, item.BudgetID, item.ProductID); err != nil {
 			tx.Rollback()
 			return domain.Bill{}, mapWriteError("update bill item", err)
 		}
@@ -321,7 +321,7 @@ func (r *BillRepository) Stats(ctx context.Context, groupBy, month, from, to str
 func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]domain.BillItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT bi.id, bi.bill_id, bi.name, bi.brand, bi.unit, bi.category_id, COALESCE(c.name, ''),
-		       bi.quantity, bi.unit_price_cents, bi.discount_cents, bi.line_total_cents, bi.is_return, bi.budget_id
+		       bi.quantity, bi.unit_price_cents, bi.discount_cents, bi.line_total_cents, bi.is_return, bi.budget_id, bi.product_id
 		FROM bill_items bi
 		LEFT JOIN categories c ON c.id = bi.category_id
 		WHERE bi.bill_id = ? ORDER BY bi.id`, billID)
@@ -334,7 +334,7 @@ func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]doma
 	for rows.Next() {
 		var it domain.BillItem
 		if err := rows.Scan(&it.ID, &it.BillID, &it.Name, &it.Brand, &it.Unit, &it.CategoryID, &it.CategoryName,
-			&it.Quantity, &it.UnitPriceCents, &it.DiscountCents, &it.LineTotalCents, &it.IsReturn, &it.BudgetID); err != nil {
+			&it.Quantity, &it.UnitPriceCents, &it.DiscountCents, &it.LineTotalCents, &it.IsReturn, &it.BudgetID, &it.ProductID); err != nil {
 			return nil, fmt.Errorf("scan bill item: %w", err)
 		}
 		out = append(out, it)

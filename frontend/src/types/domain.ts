@@ -114,6 +114,69 @@ export interface StoreInput {
   location?: string;
 }
 
+// --- Products (catalogue of things ever bought, from bill items) -------------
+
+export interface Product {
+  id: number;
+  name: string;
+  brand?: string;
+  unit?: string; // measure: kg, g, l, ml, pcs, …
+  category_id?: number | null;
+  category_name?: string;
+  description?: string;
+  has_image: boolean; // GET /products/{id}/photo returns an image
+  times_bought: number; // display-only, counted from accepted bill lines
+  last_purchase_date?: string; // YYYY-MM-DD of the most recent purchase
+  latest_price_cents?: number; // native-currency amount of the latest purchase
+  avg_price_cents?: number; // average over lines in the latest currency
+  best_price_cents?: number; // lowest price ever paid, in the latest currency
+  price_currency?: string; // currency latest/avg/best price are quoted in
+  created_at: string;
+  updated_at: string;
+}
+
+/** Latest price of a product at one store (details modal breakdown). */
+export interface ProductStorePrice {
+  store_id?: number | null;
+  store_name: string; // "—" when the bill had no store
+  latest_price_cents?: number | null;
+  last_purchase_date?: string;
+}
+
+export interface ProductInput {
+  name: string;
+  brand?: string;
+  unit?: string;
+  category_id?: number | null;
+  description?: string;
+}
+
+export type ProductSort =
+  | 'name'
+  | 'updated_at'
+  | 'created_at'
+  | 'times_bought'
+  | 'last_purchase'
+  | 'best_price'
+  | 'avg_price'
+  | 'latest_price';
+
+export interface ProductFilters {
+  name?: string;
+  category_id?: number;
+  sort?: ProductSort;
+  order?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface Summary {
   from: string; // YYYY-MM-DD, inclusive
   to: string; // YYYY-MM-DD, inclusive
@@ -157,6 +220,7 @@ export interface BillItem {
   line_total_cents: number; // may be negative for deposit returns
   is_return: boolean; // deposit/bottle return (e.g. "Leergut")
   budget_id?: number | null; // per-line budget override (null = bill's budget)
+  product_id?: number | null; // catalogue product resolved from the name (null for returns)
 }
 
 export interface Bill {

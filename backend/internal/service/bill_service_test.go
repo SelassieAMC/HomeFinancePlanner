@@ -170,8 +170,10 @@ func (f *fakeBillStore) Create(_ context.Context, b domain.Bill) (domain.Bill, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	b.ID = int64(len(f.items) + 1)
+	items := b.Items
 	b.Items = nil
 	f.items = append(f.items, b)
+	b.Items = items // stored without lines; the caller's copy keeps them
 	return b, nil
 }
 
@@ -275,6 +277,108 @@ func (f fakeCategoryStore) Create(_ context.Context, c domain.Category) (domain.
 }
 func (f fakeCategoryStore) Delete(context.Context, int64) error { return nil }
 
+// fakeProductStore is an in-memory ProductStore mirroring the SQLite
+// semantics: names are unique case-insensitively (Create returns ErrConflict
+// on a NOCASE duplicate) and conflictOnce forces one Create to lose the
+// find-or-create race, exercising the re-read path in resolveProduct.
+type fakeProductStore struct {
+	mu           sync.Mutex
+	items        map[int64]domain.Product
+	next         int64
+	failConflict bool
+}
+
+func newFakeProductStore() *fakeProductStore {
+	return &fakeProductStore{items: map[int64]domain.Product{}, next: 1}
+}
+
+func (f *fakeProductStore) List(context.Context, domain.ProductFilters) (domain.ProductPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []domain.Product{}
+	for _, p := range f.items {
+		out = append(out, p)
+	}
+	return domain.ProductPage{Items: out}, nil
+}
+
+func (f *fakeProductStore) GetByID(_ context.Context, id int64) (domain.Product, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.items[id]
+	if !ok {
+		return domain.Product{}, domain.ErrNotFound
+	}
+	return p, nil
+}
+
+func (f *fakeProductStore) FindByName(_ context.Context, name string) (domain.Product, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.items {
+		if strings.EqualFold(p.Name, name) {
+			return p, nil
+		}
+	}
+	return domain.Product{}, domain.ErrNotFound
+}
+
+func (f *fakeProductStore) Create(_ context.Context, p domain.Product) (domain.Product, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failConflict {
+		// Simulate a concurrent confirm winning the find-or-create: the row
+		// exists by the time the loser re-reads, which is what makes the
+		// ErrConflict → re-FindByName path observable.
+		f.failConflict = false
+		f.insert(p)
+		return domain.Product{}, domain.ErrConflict
+	}
+	for _, existing := range f.items {
+		if strings.EqualFold(existing.Name, p.Name) {
+			return domain.Product{}, domain.ErrConflict
+		}
+	}
+	p.ID = f.next
+	f.next++
+	f.items[p.ID] = p
+	return p, nil
+}
+
+// insert assigns the next id and stores p (caller holds the lock).
+func (f *fakeProductStore) insert(p domain.Product) {
+	p.ID = f.next
+	f.next++
+	f.items[p.ID] = p
+}
+
+func (f *fakeProductStore) Update(_ context.Context, p domain.Product) (domain.Product, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[p.ID]; !ok {
+		return domain.Product{}, domain.ErrNotFound
+	}
+	f.items[p.ID] = p
+	return p, nil
+}
+
+func (f *fakeProductStore) SetPhoto(_ context.Context, id int64, photoPath string) (domain.Product, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.items[id]
+	if !ok {
+		return domain.Product{}, domain.ErrNotFound
+	}
+	p.ImagePath = photoPath
+	f.items[id] = p
+	return p, nil
+}
+
+// StorePrices is unused by the bill workflow tests; it satisfies the interface.
+func (f *fakeProductStore) StorePrices(context.Context, int64, string) ([]domain.ProductStorePrice, error) {
+	return nil, nil
+}
+
 // fakeSettingsStore + passthrough box feed provider resolution.
 type fakeSettingsStore struct{ data map[string]string }
 
@@ -301,18 +405,28 @@ func testProviderJSON() string {
 
 func newTestBillService(t *testing.T, extractFn func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeStoreStore, *fakeCategoryStore) {
 	t.Helper()
+	svc, scanStore, billStore, storeStore, catStore, products := newTestBillServiceWithProducts(t, extractFn)
+	_ = products
+	return svc, scanStore, billStore, storeStore, catStore
+}
+
+// newTestBillServiceWithProducts also exposes the product store, for tests
+// that assert on the catalogue built from confirmed bills.
+func newTestBillServiceWithProducts(t *testing.T, extractFn func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeStoreStore, *fakeCategoryStore, *fakeProductStore) {
+	t.Helper()
 	scanStore := newFakeBillScanStore()
 	billStore := &fakeBillStore{}
 	storeStore := newFakeStoreStore()
 	catStore := &fakeCategoryStore{cats: map[int64]domain.Category{}}
+	products := newFakeProductStore()
 	extractor := &fakeBillExtractor{fn: extractFn}
 	settings := NewSettingsService(
 		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
 		passthroughBox{}, extractor)
 	svc := NewBillService(billStore, scanStore, extractor, settings,
-		newFakeAccountStore(), catStore, storeStore, nil, newFakeTxStore(), nil, t.TempDir(), 5*time.Second, nil)
+		newFakeAccountStore(), catStore, storeStore, products, nil, newFakeTxStore(), nil, t.TempDir(), 5*time.Second, nil)
 	t.Cleanup(svc.Close)
-	return svc, scanStore, billStore, storeStore, catStore
+	return svc, scanStore, billStore, storeStore, catStore, products
 }
 
 // waitFor polls until cond passes or the deadline hits (fail via t.Fatal).
@@ -942,7 +1056,7 @@ func newTestBillServiceCustom(t *testing.T, settingsData map[string]string, rate
 	}
 	svc := NewBillService(billStore, scanStore, extractor, settings,
 		accounts, &fakeCategoryStore{cats: map[int64]domain.Category{}}, storeStore,
-		nil, txs, rates, t.TempDir(), 5*time.Second, nil)
+		nil, nil, txs, rates, t.TempDir(), 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, store
 }
@@ -1532,5 +1646,118 @@ func TestDeleteBillToleratesVanishedTransaction(t *testing.T) {
 	}
 	if len(billStore.items) != 0 {
 		t.Errorf("billStore.items = %+v, want empty", billStore.items)
+	}
+}
+
+// confirmDraft scans a receipt, waits for the draft and confirms it — the
+// common scaffolding of the product-linking tests. image is caller-chosen:
+// identical bytes are rejected as duplicate receipts.
+func confirmDraft(t *testing.T, svc *BillService, scanStore *fakeBillScanStore, image []byte, in domain.BillConfirmInput) domain.Bill {
+	t.Helper()
+	ctx := context.Background()
+	res, err := svc.Scan(ctx, "image/jpeg", image, "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	bill, err := svc.Confirm(ctx, res.ScanToken, in)
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	return bill
+}
+
+func TestConfirmFindOrCreatesProducts(t *testing.T) {
+	draft := domain.BillDraft{
+		MarketName: "ALDI", Currency: "USD",
+		Items: []domain.BillItemDraft{
+			{Name: "Milk", Brand: "Weihenstephan", Unit: "l", Quantity: 1, UnitPriceCents: 200, LineTotalCents: 200},
+			{Name: "MILK", Quantity: 2, UnitPriceCents: 200, LineTotalCents: 400},     // same product, different casing
+			{Name: "Leergut", Quantity: 8, UnitPriceCents: -25, LineTotalCents: -200}, // deposit return: no product
+		},
+	}
+	svc, scanStore, billStore, _, catStore, products := newTestBillServiceWithProducts(t,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return draft, nil
+		})
+
+	confirmDraft(t, svc, scanStore, []byte("receipt-1"), domain.BillConfirmInput{MarketName: "ALDI", Currency: "USD", Items: draft.Items})
+	if len(billStore.items) != 1 {
+		t.Fatalf("expected one persisted bill, got %d", len(billStore.items))
+	}
+
+	if len(products.items) != 1 {
+		t.Fatalf("expected one product from two same-named lines, got %d: %+v", len(products.items), products.items)
+	}
+	milk, err := products.FindByName(context.Background(), "milk")
+	if err != nil {
+		t.Fatalf("product not findable case-insensitively: %v", err)
+	}
+	if milk.Name != "Milk" || milk.Brand != "Weihenstephan" || milk.Unit != "l" {
+		t.Fatalf("product not seeded from the first line: %+v", milk)
+	}
+
+	// Both non-return lines are linked; the Leergut line is not.
+	bill := billStore.items[0]
+	for _, it := range bill.Items {
+		if it.IsReturn {
+			if it.ProductID != nil {
+				t.Errorf("return line %q must not link to a product", it.Name)
+			}
+			continue
+		}
+		if it.ProductID == nil || *it.ProductID != milk.ID {
+			t.Errorf("line %q not linked to its product: %v", it.Name, it.ProductID)
+		}
+	}
+
+	// A second confirm of the same names reuses the product (no duplicates).
+	confirmDraft(t, svc, scanStore, []byte("receipt-2"), domain.BillConfirmInput{MarketName: "ALDI", Currency: "USD", Items: draft.Items})
+	if len(products.items) != 1 {
+		t.Fatalf("expected product reuse across confirms, got %d products", len(products.items))
+	}
+
+	// The item's category, when set, seeds the product's category.
+	catStore.cats = map[int64]domain.Category{7: {ID: 7, Name: "Fruits", Kind: "product"}}
+	cid := int64(7)
+	confirmDraft(t, svc, scanStore, []byte("receipt-3"), domain.BillConfirmInput{MarketName: "ALDI", Currency: "USD",
+		Items: []domain.BillItemDraft{{Name: "Banana", CategoryID: &cid, Quantity: 1, UnitPriceCents: 99, LineTotalCents: 99}}})
+	banana, err := products.FindByName(context.Background(), "Banana")
+	if err != nil {
+		t.Fatalf("Banana product missing: %v", err)
+	}
+	if banana.CategoryID == nil || *banana.CategoryID != 7 {
+		t.Fatalf("product category not seeded from the item: %+v", banana)
+	}
+}
+
+func TestConfirmProductRaceReFindsWinner(t *testing.T) {
+	svc, scanStore, _, _, _, products := newTestBillServiceWithProducts(t,
+		func(context.Context, []byte, string, domain.AIProvider) (domain.BillDraft, error) {
+			return domain.BillDraft{
+				MarketName: "ALDI", Currency: "USD",
+				Items: []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 200, LineTotalCents: 200}},
+			}, nil
+		})
+
+	// The first Create of this confirm loses the (simulated) race against a
+	// concurrent confirm — resolveProduct must re-read the winner instead of
+	// leaving the line unlinked.
+	products.failConflict = true
+	bill := confirmDraft(t, svc, scanStore, []byte("receipt-race"), domain.BillConfirmInput{MarketName: "ALDI", Currency: "USD",
+		Items: []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 200, LineTotalCents: 200}}})
+
+	if len(products.items) != 1 {
+		t.Fatalf("expected exactly one product after the race, got %d", len(products.items))
+	}
+	var productID int64
+	for _, p := range products.items {
+		productID = p.ID
+	}
+	if bill.Items[0].ProductID == nil || *bill.Items[0].ProductID != productID {
+		t.Fatalf("line not linked to the raced product: %v", bill.Items[0].ProductID)
 	}
 }
