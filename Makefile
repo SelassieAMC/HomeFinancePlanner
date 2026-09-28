@@ -43,5 +43,8 @@ down: ## Stop full stack
 logs: ## Tail stack logs
 	docker compose logs -f
 
-clean: ## Remove build artifacts and local db
+clean: ## Remove build artifacts
+	rm -rf backend/bin frontend/dist
+
+hard-clean: ## Remove build artifacts and local db
 	rm -rf backend/bin frontend/dist data
