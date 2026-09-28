@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
 import {
   settingsApi,
@@ -249,7 +250,9 @@ export function SettingsPage() {
         reads and/or one as default for web search; a purpose without a marked
         connector uses any configured one. Keys are encrypted server-side and
         never returned in full — the masked value (••••abcd) only shows the
-        last four characters. Leave the key field empty to keep the stored key.
+        last four characters. Leave the key field empty to keep the stored key.{' '}
+        <Link to="/settings/prompts">Manage AI prompts</Link> — the instruction
+        texts these connectors receive.
       </p>
 
       {current.length === 0 ? (

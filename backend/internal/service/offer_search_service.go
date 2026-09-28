@@ -42,6 +42,7 @@ type OfferSearchService struct {
 	products      ProductStore
 	stores        StoreStore
 	providers     *SettingsService
+	prompts       PromptResolver
 	searcher      OfferSearcher
 	searchTimeout time.Duration
 	log           *slog.Logger
@@ -64,6 +65,7 @@ func NewOfferSearchService(
 	products ProductStore,
 	stores StoreStore,
 	providers *SettingsService,
+	prompts PromptResolver,
 	searcher OfferSearcher,
 	llmTimeout time.Duration,
 	log *slog.Logger,
@@ -80,6 +82,7 @@ func NewOfferSearchService(
 		products:      products,
 		stores:        stores,
 		providers:     providers,
+		prompts:       prompts,
 		searcher:      searcher,
 		searchTimeout: llmTimeout * offerSearchTimeoutFactor,
 		log:           log,

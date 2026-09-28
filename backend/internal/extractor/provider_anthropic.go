@@ -14,7 +14,7 @@ const anthropicVersion = "2023-06-01"
 // anthropicMessages calls the Messages API with the receipt attached as a
 // base64 block: images use the "image" block, PDF receipts the "document"
 // block.
-func (e *Extractor) anthropicMessages(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string) (string, error) {
+func (e *Extractor) anthropicMessages(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string, prompt string) (string, error) {
 	url := baseURL(provider) + "/messages"
 
 	encoded := base64.StdEncoding.EncodeToString(image)
@@ -46,7 +46,7 @@ func (e *Extractor) anthropicMessages(ctx context.Context, provider domain.AIPro
 			{
 				"role": "user",
 				"content": []map[string]any{
-					{"type": "text", "text": extractionPrompt},
+					{"type": "text", "text": prompt},
 					attachment,
 				},
 			},

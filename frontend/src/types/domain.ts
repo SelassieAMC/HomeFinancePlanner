@@ -336,6 +336,36 @@ export interface AIProvider {
   default_for_search?: boolean;
 }
 
+export interface AIPrompt {
+  id: number;
+  /** Stable lookup key the processes resolve by (immutable after create). */
+  key: string;
+  name: string;
+  description: string;
+  /** Empty content means "use the built-in default" at resolve time. */
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A prompt plus the extras the management UI needs. */
+export interface AIPromptView extends AIPrompt {
+  /** Raw built-in template ({{categories}} NOT expanded) — the reset target. */
+  default_content: string;
+  /** True when the row resolves to the built-in default (content empty). */
+  uses_default: boolean;
+}
+
+export interface AIPromptInput {
+  name: string;
+  description?: string;
+  content?: string;
+}
+
+export interface AIPromptCreateInput extends AIPromptInput {
+  key: string;
+}
+
 export interface BillStatsRow {
   label: string;
   bill_count: number;

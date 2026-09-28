@@ -1,10 +1,25 @@
-package extractor
+-- AI prompts: the instruction texts sent to AI connectors, managed from the
+-- UI (settings/prompts) instead of being hard-coded. key is the stable lookup
+-- the processes resolve by ('bill_extraction', 'offer_search'); the seeded
+-- content matches the built-in defaults in internal/service/prompt_defaults.go
+-- exactly (guarded by a repository test). An empty or deleted row is safe --
+-- resolve falls back to the built-in default.
+CREATE TABLE ai_prompts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    key         TEXT    NOT NULL,
+    name        TEXT    NOT NULL,
+    description TEXT    NOT NULL DEFAULT '',
+    content     TEXT    NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
 
-// extractionPrompt instructs vision models to emit strict JSON for a receipt.
-// Field names are pinned so parse.go can rely on them across connectors.
-const extractionPrompt = `You are a receipt-parsing engine. Read the receipt (image or PDF) and return ONE JSON object and nothing else — no explanations, no markdown fences.
+CREATE UNIQUE INDEX idx_ai_prompts_key ON ai_prompts (key COLLATE NOCASE);
 
-Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.34 — never cents, never strings):
+INSERT INTO ai_prompts (key, name, description, content, created_at, updated_at) VALUES
+('bill_extraction', 'Bill extraction', 'Used by AI bill scanning: turns a receipt image or PDF into the structured bill draft (market, date, items, categories, totals). {{categories}} is replaced at run time with the live product-category list.', 'You are a receipt-parsing engine. Read the receipt (image or PDF) and return ONE JSON object and nothing else — no explanations, no markdown fences.
+
+Schema (all money values are decimal numbers in the receipt''s currency, e.g. 12.34 — never cents, never strings):
 {
   "market_name": "store or market name from the header",
   "date": "YYYY-MM-DD",
@@ -15,7 +30,7 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
     {
       "name": "article name as printed",
       "brand": "product brand if recognizable, else \"\"",
-      "category": "one of the fixed product categories, written EXACTLY as listed: Vegetables, Fruits, Dairy & Eggs, Cheese, Meats, Seafood, Deli & Ready-to-Eat, Chilled Condiments, "Pasta, Rice & Grains", Canned & Jarred, Oils & Vinegars, Spices & Baking, Breakfast & Spreads, Sweets & Chocolate, Salty Snacks, Nuts & Dried Fruits, Root Vegetables, Water & Iced Tea, Cola & Soda, Juice, Coffee & Tea, Milk Drinks & Alternatives, Beer, Wine, Spirits & Liqueurs, Frozen Vegetables, Frozen Fruits, Frozen Meat & Fish, Frozen Ready Meals, Frozen Breads, Paper Goods, Food Wrap & Storage, Cleaning & Dish, Deposit & Returns, Fuel & Gasoline, Car Oils & Fluids, Car Parts & Care, Medicines, Vitamins & Supplements, First Aid, Cosmetics, Hair & Body Care, Pet Supplies, Baby Care, Toys & Games, Hardware & Tools, Garden & Outdoor, Electronics & Accessories, Stationery & Office, Books & Media, Clothing & Footwear",
+      "category": "one of the fixed product categories, written EXACTLY as listed: {{categories}}",
       "unit": "measure unit printed with the quantity (kg, g, l, ml, pcs, …), or \"\" for plain counts",
       "quantity": 1.0,
       "unit_price": 2.5,
@@ -29,7 +44,7 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
 }
 
 Rules:
-- currency: detect the ISO 4217 code of the receipt's currency from the symbol or name printed next to any amount (€ → EUR, $ → USD, £ → GBP, zł → PLN, CHF → CHF, "kr" with a Swedish market → SEK, etc.). If no symbol is printed anywhere, use the currency of the country the market is in. Return "" ONLY when the currency is genuinely not determinable — never invent a code.
+- currency: detect the ISO 4217 code of the receipt''s currency from the symbol or name printed next to any amount (€ → EUR, $ → USD, £ → GBP, zł → PLN, CHF → CHF, "kr" with a Swedish market → SEK, etc.). If no symbol is printed anywhere, use the currency of the country the market is in. Return "" ONLY when the currency is genuinely not determinable — never invent a code.
 - "items" lists every article line, one entry per article, in receipt order.
 - quantity defaults to 1 when not printed; use decimals for weights (0.532 kg) and set "unit" to the printed measure (kg, g, l, ml, pcs, …).
 - classify every item into the fixed category list, choosing the MOST SPECIFIC category (the list is fine-grained so spending can be analyzed per product family):
@@ -49,4 +64,44 @@ Rules:
 - total_paid is the final amount EXACTLY as printed at the bottom of the receipt — the amount actually paid. Read it verbatim; never compute or derive it from the items or VAT.
 - card_last_digits: only the digits printed on the receipt (masked card numbers like ****4321 give "4321"); "" when not paid by card or no digits printed.
 - If a value is genuinely not printed, use 0 (or 1 for quantity) or "" for text. Do not invent values.
-- Respond with ONLY the JSON object.`
+- Respond with ONLY the JSON object.', strftime('%s', 'now'), strftime('%s', 'now')),
+('offer_search', 'Offer search', 'Used by the purchase-cart offer search: asks the AI for current market prices of the cart products. The product lines, market scope and name-match mode are appended automatically.', 'You are a grocery price research engine. For each product below, find its current prices in the local markets listed at the end. Use your web-search tool when you have one — search current offers, flyers and shop prices for the product''s country/region.
+
+Return ONE JSON object and nothing else — no explanations, no markdown fences.
+
+Schema (prices are decimal numbers in the market''s currency, e.g. 1.99 — never cents, never strings):
+{
+  "cannot_search": false,
+  "reason": "",
+  "products": [
+    {
+      "product_id": 1,
+      "name": "product name as requested",
+      "brand": "brand requested for the search, if any",
+      "note": "short note when nothing was found for this product, else \"\"",
+      "offers": [
+        {
+          "market": "market/store name where the offer was found (e.g. REWE, Lidl, Carrefour)",
+          "brand": "the brand actually found for this price",
+          "variety": "the exact product name/variety the market sells (e.g. \"Hass avocado\", \"XL\"); \"\" when identical to the requested name",
+          "price": 1.99,
+          "currency": "ISO 4217 code of the price (e.g. \"EUR\")",
+          "is_offer": false,
+          "availability": "available",
+          "note": "promotion details or \"\""
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- Search the web for CURRENT retail prices in the product''s local market. Never invent prices from memory.
+- "availability" is "available" when you found a price. Use "not_available" when a market in scope does not carry the product (currently or seasonally) and "not_published" when the market exists but publishes no price for it online. Rows with availability other than "available" must NOT carry a price or currency.
+- "is_offer" is true only for a real, currently advertised promotion (flyer/discount), not for the regular shelf price.
+- Only include offers whose price you actually found. No offers found → empty "offers" with a short "note".
+- If you cannot browse the web or have no search tool, return {"cannot_search": true, "reason": "…"} and no prices — never fabricate offers.
+- product_id: echo the id given below for each product.
+
+Product lines:
+', strftime('%s', 'now'), strftime('%s', 'now'));

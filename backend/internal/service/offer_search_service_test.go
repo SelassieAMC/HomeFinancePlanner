@@ -180,7 +180,7 @@ func TestBuildOffersPrompt_IncludesContext(t *testing.T) {
 	products := []domain.OfferSearchProduct{
 		{ProductID: 3, Name: "Olive Oil", Brand: "Basso", Unit: "l", Quantity: 2, LastPriceCents: &lastPrice, Currency: "EUR"},
 	}
-	prompt := BuildOffersPrompt(products, []string{"REWE", "Lidl"}, nil, domain.OfferNameStrict)
+	prompt := BuildOffersPrompt(defaultOffersPromptHead, products, []string{"REWE", "Lidl"}, nil, domain.OfferNameStrict)
 	for _, want := range []string{
 		`"product_id": 3`, `"name": "Olive Oil"`, `"brand_hint": "Basso"`,
 		`"quantity_to_buy": 2`, `1.99 EUR`, "REWE, Lidl", "STRICT",
@@ -190,7 +190,7 @@ func TestBuildOffersPrompt_IncludesContext(t *testing.T) {
 		}
 	}
 
-	empty := BuildOffersPrompt(nil, nil, nil, "")
+	empty := BuildOffersPrompt(defaultOffersPromptHead, nil, nil, nil, "")
 	if !strings.Contains(empty, "(none recorded)") {
 		t.Error("empty context should be spelled out")
 	}
@@ -203,7 +203,7 @@ func TestBuildOffersPrompt_IncludesContext(t *testing.T) {
 // market per product, unavailable markets reported, none added outside.
 func TestBuildOffersPrompt_PinnedStores(t *testing.T) {
 	products := []domain.OfferSearchProduct{{ProductID: 1, Name: "Avocado"}}
-	prompt := BuildOffersPrompt(products, []string{"REWE", "Lidl"}, []string{"REWE", "Edeka"}, domain.OfferNameStrict)
+	prompt := BuildOffersPrompt(defaultOffersPromptHead, products, []string{"REWE", "Lidl"}, []string{"REWE", "Edeka"}, domain.OfferNameStrict)
 	for _, want := range []string{
 		"ONLY these markets: REWE, Edeka",
 		"one offer entry per listed market",
@@ -220,7 +220,7 @@ func TestBuildOffersPrompt_PinnedStores(t *testing.T) {
 }
 
 func TestBuildOffersPrompt_LooseMatch(t *testing.T) {
-	prompt := BuildOffersPrompt(nil, nil, nil, domain.OfferNameLoose)
+	prompt := BuildOffersPrompt(defaultOffersPromptHead, nil, nil, nil, domain.OfferNameLoose)
 	for _, want := range []string{"LOOSE", `"variety"`, "Hass"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("loose prompt missing %q\n---\n%s", want, prompt)

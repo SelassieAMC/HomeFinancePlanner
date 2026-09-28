@@ -19,9 +19,17 @@ import (
 )
 
 // BillExtractor abstracts the AI extraction engine (implemented by
-// internal/extractor).
+// internal/extractor). The prompt is resolved by the caller — the managed
+// ai_prompts content or the built-in default.
 type BillExtractor interface {
-	Extract(ctx context.Context, image []byte, mimeType string, provider domain.AIProvider) (domain.BillDraft, error)
+	Extract(ctx context.Context, image []byte, mimeType string, provider domain.AIProvider, prompt string) (domain.BillDraft, error)
+}
+
+// PromptResolver supplies the rendered prompt content for a process key
+// (implemented by AIPromptService; nil falls back to the built-in defaults,
+// which keeps tests light).
+type PromptResolver interface {
+	ResolvePrompt(ctx context.Context, key string) (string, error)
 }
 
 // BillStore is the persistence contract for bills. Only accepted bills are
@@ -88,6 +96,7 @@ type BillService struct {
 	scans          BillScanStore
 	extractor      BillExtractor
 	providers      *SettingsService
+	prompts        PromptResolver
 	accounts       AccountStore
 	categories     CategoryStore
 	stores         StoreStore
@@ -115,6 +124,7 @@ func NewBillService(
 	scans BillScanStore,
 	extractor BillExtractor,
 	providers *SettingsService,
+	prompts PromptResolver,
 	accounts AccountStore,
 	categories CategoryStore,
 	stores StoreStore,
@@ -138,6 +148,7 @@ func NewBillService(
 		scans:          scans,
 		extractor:      extractor,
 		providers:      providers,
+		prompts:        prompts,
 		accounts:       accounts,
 		categories:     categories,
 		stores:         stores,
@@ -913,10 +924,15 @@ func (s *BillService) resolveProduct(ctx context.Context, it domain.BillItem) *i
 	return &id
 }
 
-// extractDraft runs the connector and resolves the AI's category names
-// against the existing categories, creating the missing ones.
+// extractDraft resolves the managed extraction prompt (built-in default when
+// the row is missing), runs the connector and resolves the AI's category
+// names against the existing categories, creating the missing ones.
 func (s *BillService) extractDraft(ctx context.Context, file []byte, mimeType string, provider domain.AIProvider) (*domain.BillDraft, error) {
-	draft, err := s.extractor.Extract(ctx, file, mimeType, provider)
+	prompt, err := s.resolveExtractionPrompt(ctx)
+	if err != nil {
+		return nil, err
+	}
+	draft, err := s.extractor.Extract(ctx, file, mimeType, provider, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("extraction failed: %w", err)
 	}
@@ -933,6 +949,20 @@ func (s *BillService) extractDraft(ctx context.Context, file []byte, mimeType st
 		return nil, err
 	}
 	return &draft, nil
+}
+
+// resolveExtractionPrompt returns the bill-extraction prompt content: the
+// managed ai_prompts row when the resolver is wired, the built-in default
+// otherwise (tests). The {{categories}} placeholder is expanded either way.
+func (s *BillService) resolveExtractionPrompt(ctx context.Context) (string, error) {
+	if s.prompts != nil {
+		prompt, err := s.prompts.ResolvePrompt(ctx, domain.PromptKeyBillExtraction)
+		if err != nil {
+			return "", fmt.Errorf("resolve extraction prompt: %w", err)
+		}
+		return prompt, nil
+	}
+	return renderPrompt(ctx, s.categories, defaultPrompt(domain.PromptKeyBillExtraction))
 }
 
 // categoryAliases maps loose AI category names onto the fixed product

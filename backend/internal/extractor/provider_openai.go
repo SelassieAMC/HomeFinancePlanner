@@ -11,7 +11,7 @@ import (
 // openAIChat calls the Chat Completions API with the image as a data URI.
 // Also used for openai_compatible providers (OpenRouter, Groq, Ollama's
 // OpenAI endpoint, …) since they share the wire format.
-func (e *Extractor) openAIChat(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string) (string, error) {
+func (e *Extractor) openAIChat(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string, prompt string) (string, error) {
 	url := baseURL(provider) + "/chat/completions"
 
 	payload := map[string]any{
@@ -20,7 +20,7 @@ func (e *Extractor) openAIChat(ctx context.Context, provider domain.AIProvider, 
 			{
 				"role": "user",
 				"content": []map[string]any{
-					{"type": "text", "text": extractionPrompt},
+					{"type": "text", "text": prompt},
 					{
 						"type": "image_url",
 						"image_url": map[string]string{

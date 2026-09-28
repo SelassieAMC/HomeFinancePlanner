@@ -17,7 +17,7 @@ import (
 
 // ollamaChat calls the native Ollama chat API with the image attached to the
 // message. Works with vision models (llama3.2-vision, gemma3, moondream, …).
-func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, image []byte) (string, error) {
+func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, image []byte, prompt string) (string, error) {
 	url := baseURL(provider) + "/api/chat"
 
 	payload := map[string]any{
@@ -26,7 +26,7 @@ func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, 
 		"messages": []map[string]any{
 			{
 				"role":    "user",
-				"content": extractionPrompt,
+				"content": prompt,
 				"images":  []string{base64.StdEncoding.EncodeToString(image)},
 			},
 		},

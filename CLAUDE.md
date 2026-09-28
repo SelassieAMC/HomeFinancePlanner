@@ -181,6 +181,18 @@ legacy rows) / `not_available` / `not_published` (priceless, muted in the UI,
 never flagged best/worst). The normalized result is stored as JSON and rendered per product with
 backend-computed `best_price` (green) / `worst_price` (red) flags per product and
 currency; only failed searches are TTL-swept (done rows are the kept record).
+The **AI prompts are database-driven**: the `ai_prompts` table (key, name,
+description, content) holds the instruction texts, resolved by key —
+`bill_extraction` (every receipt read; its `{{categories}}` placeholder is
+expanded at run time from the live product-kind categories, so the taxonomy
+in the prompt can no longer drift from the `categories` table) and
+`offer_search` (the search head; product lines, scope and name-match mode are
+appended in code). They are managed from `/settings/prompts` (full CRUD,
+"reset to default" via the `default_content`/`uses_default` view fields), with
+the built-in fallbacks in `internal/service/prompt_defaults.go` — an empty or
+deleted row never breaks a process. Prompt keys are immutable after create
+(processes resolve by key); the migration seed and the Go fallbacks are guarded
+byte-identical by a repository seed-sync test.
 When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend

@@ -124,6 +124,18 @@ type OfferSearchStore interface {
 	DeleteStale(ctx context.Context, olderThan time.Time) ([]string, error)
 }
 
+// AIPromptStore is the persistence contract for managed AI prompts. Keys are
+// unique case-insensitively; processes resolve prompts by key and fall back
+// to the built-in defaults when the row is missing or empty.
+type AIPromptStore interface {
+	List(ctx context.Context) ([]domain.AIPrompt, error)
+	GetByID(ctx context.Context, id int64) (domain.AIPrompt, error)
+	GetByKey(ctx context.Context, key string) (domain.AIPrompt, error)
+	Create(ctx context.Context, p domain.AIPrompt) (domain.AIPrompt, error)
+	Update(ctx context.Context, p domain.AIPrompt) (domain.AIPrompt, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 // Services bundles the business services for handler wiring.
 type Services struct {
 	Accounts      *AccountService
@@ -137,6 +149,7 @@ type Services struct {
 	Bills         *BillService
 	OfferSearches *OfferSearchService
 	Analytics     *AnalyticsService
+	Prompts       *AIPromptService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -157,6 +170,7 @@ func New(
 	offerSearches *OfferSearchService,
 	fx *FXService,
 	analytics *AnalyticsService,
+	prompts *AIPromptService,
 ) *Services {
 	return &Services{
 		Accounts:      &AccountService{accounts: accounts},
@@ -170,5 +184,6 @@ func New(
 		Bills:         bills,
 		OfferSearches: offerSearches,
 		Analytics:     analytics,
+		Prompts:       prompts,
 	}
 }

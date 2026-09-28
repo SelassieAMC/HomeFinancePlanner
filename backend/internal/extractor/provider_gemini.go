@@ -12,7 +12,7 @@ import (
 
 // geminiGenerate calls the Gemini generateContent endpoint with the image as
 // inline_data. JSON response mode is forced via response_mime_type.
-func (e *Extractor) geminiGenerate(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string) (string, error) {
+func (e *Extractor) geminiGenerate(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string, prompt string) (string, error) {
 	base := baseURL(provider)
 	endpoint := fmt.Sprintf("%s/models/%s:generateContent?key=%s",
 		base, url.PathEscape(provider.Model), url.QueryEscape(provider.APIKey))
@@ -21,7 +21,7 @@ func (e *Extractor) geminiGenerate(ctx context.Context, provider domain.AIProvid
 		"contents": []map[string]any{
 			{
 				"parts": []map[string]any{
-					{"text": extractionPrompt},
+					{"text": prompt},
 					{
 						"inline_data": map[string]string{
 							"mime_type": mimeType,

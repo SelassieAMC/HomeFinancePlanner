@@ -27,6 +27,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	settingsH := &handlers.SettingsHandler{Svc: svc.Settings}
 	analyticsH := &handlers.AnalyticsHandler{Svc: svc.Analytics}
 	cartSearchH := &handlers.OfferSearchHandler{Svc: svc.OfferSearches}
+	promptH := &handlers.PromptHandler{Svc: svc.Prompts}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -124,6 +125,13 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)
 	mux.HandleFunc("POST /api/v1/settings/ai/test/{id}", settingsH.TestAIProvider)
+
+	// Managed AI prompt texts (bill extraction, offer search, custom).
+	mux.HandleFunc("GET /api/v1/prompts", promptH.List)
+	mux.HandleFunc("POST /api/v1/prompts", promptH.Create)
+	mux.HandleFunc("GET /api/v1/prompts/{id}", promptH.Get)
+	mux.HandleFunc("PUT /api/v1/prompts/{id}", promptH.Update)
+	mux.HandleFunc("DELETE /api/v1/prompts/{id}", promptH.Delete)
 	mux.HandleFunc("GET /api/v1/settings/currency", settingsH.GetBaseCurrency)
 	mux.HandleFunc("PUT /api/v1/settings/currency", settingsH.SaveBaseCurrency)
 

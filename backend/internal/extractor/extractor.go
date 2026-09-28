@@ -28,9 +28,11 @@ func New(timeout time.Duration) *Extractor {
 	return &Extractor{client: &http.Client{Timeout: timeout}}
 }
 
-// Extract sends the receipt image to the provider and returns the normalized
-// draft plus the provider id that produced it.
-func (e *Extractor) Extract(ctx context.Context, image []byte, mimeType string, provider domain.AIProvider) (domain.BillDraft, error) {
+// Extract sends the receipt image to the provider with the given prompt and
+// returns the normalized draft plus the provider id that produced it. The
+// prompt is resolved by the service layer (managed ai_prompts row or the
+// built-in default); this package is transport only.
+func (e *Extractor) Extract(ctx context.Context, image []byte, mimeType string, provider domain.AIProvider, prompt string) (domain.BillDraft, error) {
 	if err := checkFileTypeSupport(provider, mimeType); err != nil {
 		return domain.BillDraft{}, err
 	}
@@ -40,13 +42,13 @@ func (e *Extractor) Extract(ctx context.Context, image []byte, mimeType string, 
 
 	switch provider.Type {
 	case domain.AIProviderOllama, domain.AIProviderOllamaWebSearch:
-		raw, err = e.ollamaChat(ctx, provider, image)
+		raw, err = e.ollamaChat(ctx, provider, image, prompt)
 	case domain.AIProviderOpenAI, domain.AIProviderOpenAICompatible:
-		raw, err = e.openAIChat(ctx, provider, image, mimeType)
+		raw, err = e.openAIChat(ctx, provider, image, mimeType, prompt)
 	case domain.AIProviderGemini:
-		raw, err = e.geminiGenerate(ctx, provider, image, mimeType)
+		raw, err = e.geminiGenerate(ctx, provider, image, mimeType, prompt)
 	case domain.AIProviderAnthropic:
-		raw, err = e.anthropicMessages(ctx, provider, image, mimeType)
+		raw, err = e.anthropicMessages(ctx, provider, image, mimeType, prompt)
 	default:
 		err = fmt.Errorf("unsupported provider type %q", provider.Type)
 	}

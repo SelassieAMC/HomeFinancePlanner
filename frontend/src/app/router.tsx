@@ -10,6 +10,7 @@ import { CartPage } from '../features/cart/CartPage';
 import { ScanBillsPage } from '../features/bills/ScanBillsPage';
 import { BillsPage } from '../features/bills/BillsPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
+import { PromptsPage } from '../features/prompts/PromptsPage';
 
 export const router = createBrowserRouter([
   {
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
       { path: 'scan', element: <ScanBillsPage /> },
       { path: 'bills', element: <BillsPage /> },
       { path: 'settings', element: <SettingsPage /> },
+      { path: 'settings/prompts', element: <PromptsPage /> },
     ],
   },
 ]);

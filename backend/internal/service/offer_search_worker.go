@@ -103,8 +103,23 @@ func (s *OfferSearchService) processSearch(token string, log *slog.Logger) {
 	}
 }
 
-// runSearch builds the prompt from the cart snapshot plus the user's own
-// market names and runs the AI search.
+// resolveOffersHead returns the offer-search prompt head: the managed
+// ai_prompts row when the resolver is wired, the built-in default otherwise
+// (tests). A resolve failure degrades to a failed search row via the
+// processSearch error path.
+func (s *OfferSearchService) resolveOffersHead(ctx context.Context) (string, error) {
+	if s.prompts != nil {
+		head, err := s.prompts.ResolvePrompt(ctx, domain.PromptKeyOfferSearch)
+		if err != nil {
+			return "", fmt.Errorf("resolve offer-search prompt: %w", err)
+		}
+		return head, nil
+	}
+	return defaultPrompt(domain.PromptKeyOfferSearch), nil
+}
+
+// runSearch builds the prompt from the managed offer-search head plus the
+// cart snapshot and the user's own market names and runs the AI search.
 func (s *OfferSearchService) runSearch(ctx context.Context, provider domain.AIProvider, search domain.OfferSearch, out *domain.OfferResult, log *slog.Logger) error {
 	storeNames := []string{}
 	if stores, err := s.stores.List(ctx); err == nil {
@@ -114,7 +129,11 @@ func (s *OfferSearchService) runSearch(ctx context.Context, provider domain.AIPr
 			}
 		}
 	}
-	prompt := BuildOffersPrompt(search.Products, storeNames, search.Stores, search.NameMatch)
+	head, err := s.resolveOffersHead(ctx)
+	if err != nil {
+		return err
+	}
+	prompt := BuildOffersPrompt(head, search.Products, storeNames, search.Stores, search.NameMatch)
 	res, err := s.searcher.SearchOffers(ctx, provider, prompt, log)
 	// The wire echoes product ids from the request; keep the snapshot's names
 	// authoritative so renamed products still render the result correctly.
