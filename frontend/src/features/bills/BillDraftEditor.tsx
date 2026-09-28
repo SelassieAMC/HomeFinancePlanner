@@ -98,6 +98,9 @@ export function buildConfirmInput(
     budget_id: draft.budget_id ?? undefined,
     items: draft.items.map((it) => ({
       name: it.name,
+      // Empty standardized name (old drafts, untouched lines) is the raw
+      // text itself — the identity mapping, never learned as a change.
+      standard_name: it.standard_name || it.name,
       brand: it.brand,
       unit: it.unit,
       category_id: it.category_id ?? undefined,
@@ -555,7 +558,13 @@ export function BillDraftEditor({
                   {it.is_return ? (
                     <span className="item-brand">♻️ deposit return</span>
                   ) : (
-                    it.brand && <span className="item-brand">{it.brand}</span>
+                    <>
+                      {it.brand && <span className="item-brand">{it.brand}</span>}
+                      {it.standard_name &&
+                        it.standard_name.toLowerCase() !== it.name.toLowerCase() && (
+                          <span className="item-brand">↳ {it.standard_name}</span>
+                        )}
+                    </>
                   )}
                 </span>
                 <span className="item-price">{formatCents(it.line_total_cents, currency)}</span>
@@ -589,6 +598,25 @@ export function BillDraftEditor({
                     }
                   />
                 </div>
+                {!it.is_return && (
+                  <div className="item-field">
+                    <span>
+                      Standardized name{' '}
+                      <span className="item-field-note">on receipt: {it.name || '—'}</span>
+                    </span>
+                    <input
+                      defaultValue={it.standard_name || it.name}
+                      placeholder="Human-readable name"
+                      aria-label={`Standardized name for ${it.name}`}
+                      onBlur={(e) => {
+                        const value = e.target.value.trim();
+                        if (value !== (it.standard_name || it.name)) {
+                          updateItem(it.id, { standard_name: value });
+                        }
+                      }}
+                    />
+                  </div>
+                )}
                 <div className="item-field-grid">
                   <div className="item-field">
                     <span>Brand</span>

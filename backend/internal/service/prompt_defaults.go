@@ -17,7 +17,8 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
   "card_last_digits": "last 4 digits of the card printed on the receipt (e.g. \"4321\"), or \"\" for cash/other",
   "items": [
     {
-      "name": "article name as printed",
+      "name": "article name exactly as printed on the receipt",
+      "standard_name": "standardized, human-readable name for this article (see rules)",
       "brand": "product brand if recognizable, else \"\"",
       "category": "one of the fixed product categories, written EXACTLY as listed: {{categories}}",
       "unit": "measure unit printed with the quantity (kg, g, l, ml, pcs, …), or \"\" for plain counts",
@@ -46,6 +47,7 @@ Rules:
   * Non-grocery receipts classify by store type: gas stations (petrol/diesel/E5/E10/Super/AdBlue at the pump → "Fuel & Gasoline"; engine/transmission oil, coolant, screenwash → "Car Oils & Fluids"; wiper blades, bulbs, filters, car wax → "Car Parts & Care"; food/drinks on the same receipt → their normal food categories). Drugstores/pharmacies: medicines and remedies → "Medicines"; vitamins, minerals, protein powder → "Vitamins & Supplements"; bandages/gauze/disinfectant → "First Aid"; makeup, skincare, perfume → "Cosmetics"; shampoo, soap, deodorant, toothpaste, shaving → "Hair & Body Care".
   * Pet food, litter and pet accessories → "Pet Supplies". Diapers, wipes, baby food and formula → "Baby Care"; toys, board games and video games (any age) → "Toys & Games". Screws, tools, light bulbs, glue, small electrical → "Hardware & Tools"; plants, seeds, soil, garden tools → "Garden & Outdoor". Chargers, cables, headphones, household batteries → "Electronics & Accessories"; pens, paper, printer ink → "Stationery & Office"; books, magazines, DVDs → "Books & Media". Clothes, shoes and accessories → "Clothing & Footwear".
   * Deposit lines ("Pfand", bottle/crate deposits) and bottle return lines ("Leergut", empty bottles) always go to "Deposit & Returns" — never to the drink family.
+- standard_name: based on the product in "name" and its category, provide a standardized, human-readable name for this product. Expand receipt abbreviations and store shorthand ("WHL MLK 1L" → "Whole Milk 1L", "TOMATOS" → "Tomatoes"), use Title Case, never put the brand into the name, and keep the size/quantity qualifiers printed on the line ("1L", "500G"). It must be the SAME article, only readable — never invent a different product. When the printed name is already plain, echo it unchanged. Deposit and bottle-return lines ("Deposit & Returns") echo the printed name unchanged.
 - unit_price is the printed price per unit (VAT/IVA already included — read the printed value verbatim); discount is the per-line market discount if printed (0 otherwise); line_total is what the line costs after its discount, VAT included. Discounts are informational only — never change the printed unit price.
 - Deposit/bottle returns ("Leergut" and other refund lines in "Deposit & Returns") are money BACK: read their amounts as NEGATIVE numbers exactly as printed (e.g. line_total -1.50 for an 8¢-bottle crate return). A "Pfand" deposit CHARGE is money spent: keep it POSITIVE, also under "Deposit & Returns". Do not drop deposit lines and do not flip their signs.
 - discount_total is any global/market-level discount printed on the receipt (0 if none). It is informational only.
@@ -100,6 +102,32 @@ Rules:
 Product lines:
 `
 
+// defaultProductNormalizationPrompt is the fallback for key
+// 'product_normalization'. The raw names to standardize are appended as a
+// JSON array; the model returns one JSON object mapping each input name to
+// its standardized form. Used by the "analyze existing products" job.
+const defaultProductNormalizationPrompt = `You are a product-name normalizer. You receive a JSON array of raw product names as printed on receipts or typed by hand. Return ONE JSON object and nothing else — no explanations, no markdown fences.
+
+Schema:
+{
+  "items": [
+    {
+      "name": "the input name, echoed verbatim",
+      "standard_name": "standardized, human-readable name for this product"
+    }
+  ]
+}
+
+Rules:
+- Based on each raw product name, provide a standardized, human-readable name. Expand receipt abbreviations and store shorthand ("WHL MLK 1L" → "Whole Milk 1L", "TOMATOS" → "Tomatoes"), use Title Case, never put the brand into the name, and keep the size/quantity qualifiers printed with the name ("1L", "500G").
+- It must be the SAME article, only readable — never invent a different product. When the name is already plain, echo it unchanged.
+- Cover every input name exactly once, echoing each "name" verbatim so the caller can match the answers back.
+- If a name is too ambiguous to standardize confidently, echo it unchanged.
+- Respond with ONLY the JSON object.
+
+Raw product names:
+`
+
 // defaultPrompt returns the built-in template content for a prompt key —
 // the fallback when the ai_prompts row is missing or empty. Custom keys
 // have no built-in; an empty result means "nothing to fall back to".
@@ -109,6 +137,8 @@ func defaultPrompt(key string) string {
 		return defaultBillExtractionPrompt
 	case domain.PromptKeyOfferSearch:
 		return defaultOffersPromptHead
+	case domain.PromptKeyProductNormalization:
+		return defaultProductNormalizationPrompt
 	default:
 		return ""
 	}

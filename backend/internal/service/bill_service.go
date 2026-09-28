@@ -101,6 +101,7 @@ type BillService struct {
 	categories     CategoryStore
 	stores         StoreStore
 	products       ProductStore
+	mappings       ProductMappingStore
 	budgets        BudgetStore
 	txStore        TransactionStore
 	rates          RateSource
@@ -129,6 +130,7 @@ func NewBillService(
 	categories CategoryStore,
 	stores StoreStore,
 	products ProductStore,
+	mappings ProductMappingStore,
 	budgets BudgetStore,
 	txStore TransactionStore,
 	rates RateSource,
@@ -153,6 +155,7 @@ func NewBillService(
 		categories:     categories,
 		stores:         stores,
 		products:       products,
+		mappings:       mappings,
 		budgets:        budgets,
 		txStore:        txStore,
 		rates:          rates,
@@ -357,6 +360,10 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 		return domain.Bill{}, err
 	}
 
+	// Learn the user's standardized-name corrections from the reviewed lines
+	// (non-fatal — the bill is already saved).
+	s.learnMappingOverrides(ctx, in.Items, priorStandardFromDraft(scan.Draft.Items))
+
 	// The bill exists — consume the scan row. (Deleting after Create keeps a
 	// crash between the two a redoable confirm.)
 	if _, err := s.scans.Delete(ctx, token); err != nil {
@@ -411,6 +418,10 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 			return domain.Bill{}, err
 		}
 	}
+	// Learn the user's standardized-name corrections from the edited lines
+	// (non-fatal — the bill is already saved).
+	s.learnMappingOverrides(ctx, in.Items, priorStandardFromItems(existing.Items))
+
 	// Re-read so the response reflects the (possibly re-pointed or newly
 	// linked) transaction's account.
 	return s.bills.GetByID(ctx, id)
@@ -948,7 +959,149 @@ func (s *BillService) extractDraft(ctx context.Context, file []byte, mimeType st
 	if err := s.resolveDraftCategories(ctx, &draft); err != nil {
 		return nil, err
 	}
+	s.applyMappingMemory(ctx, &draft)
 	return &draft, nil
+}
+
+// applyMappingMemory normalizes a freshly extracted draft against the
+// product-name normalization memory: a raw text that was already decided
+// keeps its remembered standard name and category (memory wins over a fresh
+// AI suggestion), and a raw text seen for the first time records the AI's
+// suggestion (source 'ai') so the next scan of the same text stays stable
+// without re-asking. Return/deposit lines are skipped — they are not
+// products. Failures are logged and non-fatal, like resolveProduct: a memory
+// problem must never fail an extraction.
+func (s *BillService) applyMappingMemory(ctx context.Context, draft *domain.BillDraft) {
+	if s.mappings == nil {
+		return
+	}
+	for i := range draft.Items {
+		it := &draft.Items[i]
+		raw := strings.TrimSpace(it.Name)
+		if raw == "" || it.IsReturn {
+			continue
+		}
+		standard := strings.TrimSpace(it.StandardName)
+		if standard == "" {
+			standard = raw
+		}
+		it.StandardName = standard
+		m, err := s.mappings.FindByRawName(ctx, raw)
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			if _, cerr := s.mappings.Create(ctx, domain.ProductNameMapping{
+				RawName:      raw,
+				StandardName: standard,
+				CategoryID:   it.CategoryID,
+				Source:       domain.MappingSourceAI,
+			}); cerr != nil && !errors.Is(cerr, domain.ErrConflict) {
+				s.log.Warn("record product mapping", "raw", raw, "error", cerr)
+			}
+		case err != nil:
+			s.log.Warn("lookup product mapping", "raw", raw, "error", err)
+		default:
+			// Memory wins: the remembered decision is what the user reviewed
+			// (or corrected) last time.
+			it.StandardName = m.StandardName
+			if m.CategoryID != nil {
+				it.CategoryID = m.CategoryID
+			}
+		}
+	}
+}
+
+// priorStandardLine is the pre-edit state of one raw text — the standard name
+// and category the review UI showed before the user's corrections.
+type priorStandardLine struct {
+	raw        string
+	standard   string
+	categoryID *int64
+}
+
+// priorStandardFromDraft captures the scan draft's lines (confirm flow).
+func priorStandardFromDraft(items []domain.BillItemDraft) []priorStandardLine {
+	prior := make([]priorStandardLine, 0, len(items))
+	for _, it := range items {
+		raw := strings.TrimSpace(it.Name)
+		if raw == "" || it.IsReturn {
+			continue
+		}
+		standard := strings.TrimSpace(it.StandardName)
+		if standard == "" {
+			standard = raw // pre-feature drafts carry no suggestion
+		}
+		prior = append(prior, priorStandardLine{raw: raw, standard: standard, categoryID: it.CategoryID})
+	}
+	return prior
+}
+
+// priorStandardFromItems captures a saved bill's lines (update flow); the
+// standard names come from the mapping join, which is exactly the state the
+// user saw when editing.
+func priorStandardFromItems(items []domain.BillItem) []priorStandardLine {
+	prior := make([]priorStandardLine, 0, len(items))
+	for _, it := range items {
+		raw := strings.TrimSpace(it.Name)
+		if raw == "" || it.IsReturn {
+			continue
+		}
+		standard := strings.TrimSpace(it.StandardName)
+		if standard == "" {
+			standard = raw
+		}
+		prior = append(prior, priorStandardLine{raw: raw, standard: standard, categoryID: it.CategoryID})
+	}
+	return prior
+}
+
+func findPriorStandardLine(prior []priorStandardLine, raw string) (priorStandardLine, bool) {
+	for _, p := range prior {
+		if strings.EqualFold(p.raw, raw) {
+			return p, true
+		}
+	}
+	return priorStandardLine{}, false
+}
+
+func sameInt64Ptr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// learnMappingOverrides records the user's standardized-name and category
+// corrections from a confirmed/updated bill into the normalization memory
+// (source 'user'), so the next scan of the same raw text starts from the
+// corrected decision. Lines whose standard name and category are unchanged
+// never write; lines without a prior (manually added in the editor) record
+// their submitted values. Non-fatal — a failed write never fails the bill.
+func (s *BillService) learnMappingOverrides(ctx context.Context, items []domain.BillItemDraft, prior []priorStandardLine) {
+	if s.mappings == nil {
+		return
+	}
+	for _, it := range items {
+		raw := strings.TrimSpace(it.Name)
+		if raw == "" || it.IsReturn {
+			continue
+		}
+		standard := strings.TrimSpace(it.StandardName)
+		if standard == "" {
+			standard = raw
+		}
+		p, found := findPriorStandardLine(prior, raw)
+		if found && strings.EqualFold(p.standard, standard) && sameInt64Ptr(p.categoryID, it.CategoryID) {
+			continue
+		}
+		if _, err := s.mappings.Upsert(ctx, domain.ProductNameMapping{
+			RawName:      raw,
+			StandardName: standard,
+			CategoryID:   it.CategoryID,
+			Source:       domain.MappingSourceUser,
+		}); err != nil {
+			s.log.Warn("learn product mapping override", "raw", raw, "error", err)
+		}
+	}
 }
 
 // resolveExtractionPrompt returns the bill-extraction prompt content: the

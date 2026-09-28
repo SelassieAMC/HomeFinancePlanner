@@ -482,6 +482,7 @@ function billToDraft(bill: Bill): BillDraft {
     items: (bill.items ?? []).map((it, i) => ({
       id: it.id || i + 1,
       name: it.name,
+      standard_name: it.standard_name || undefined,
       brand: it.brand || undefined,
       unit: it.unit || undefined,
       category_name: it.category_name || undefined,

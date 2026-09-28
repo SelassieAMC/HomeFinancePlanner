@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -18,6 +21,22 @@ type ProductService struct {
 	products   ProductStore
 	categories CategoryStore
 	photosDir  string
+	// mappings is the product-name normalization memory: NormalizeName looks
+	// raw texts up in it, and the backfill job fills it from existing product
+	// names. nil disables the endpoints (tests).
+	mappings ProductMappingStore
+	// normalizer runs the text-only AI calls of the backfill job
+	// (implemented by the extractor). nil disables the job.
+	normalizer TextNormalizer
+	// providers resolves the AI connector used by the backfill job (the same
+	// default_for_bills policy as bill scans). nil disables the job.
+	providers *SettingsService
+	// prompts resolves the managed product_normalization prompt. nil falls
+	// back to the built-in default.
+	prompts PromptResolver
+	// timeout bounds one AI call of the backfill job.
+	timeout time.Duration
+	log     *slog.Logger
 }
 
 // ProductFilters re-exports the shared domain filter type.
@@ -34,9 +53,48 @@ type ProductInput struct {
 }
 
 // NewProductService wires the product workflow. photosDir is where photo
-// files are stored.
-func NewProductService(products ProductStore, categories CategoryStore, photosDir string) *ProductService {
-	return &ProductService{products: products, categories: categories, photosDir: photosDir}
+// files are stored. The remaining deps power the normalization layer:
+// mappings (memory), normalizer (text-only AI calls), providers (connector
+// resolution, default_for_bills policy), prompts (managed
+// product_normalization prompt) and the per-call timeout. A nil normalizer
+// or providers disables the backfill job; a nil mappings disables the
+// normalization endpoints. A job left "running" by a previous process is
+// marked failed at boot — the user simply runs it again.
+func NewProductService(
+	products ProductStore,
+	categories CategoryStore,
+	photosDir string,
+	mappings ProductMappingStore,
+	normalizer TextNormalizer,
+	providers *SettingsService,
+	prompts PromptResolver,
+	timeout time.Duration,
+	log *slog.Logger,
+) *ProductService {
+	if log == nil {
+		log = slog.Default()
+	}
+	s := &ProductService{
+		products:   products,
+		categories: categories,
+		photosDir:  photosDir,
+		mappings:   mappings,
+		normalizer: normalizer,
+		providers:  providers,
+		prompts:    prompts,
+		timeout:    timeout,
+		log:        log,
+	}
+	if s.mappings != nil {
+		if job, err := s.mappings.GetJob(context.Background()); err == nil && job.Status == domain.ProductNormalizationRunning {
+			job.Status = domain.ProductNormalizationFailed
+			job.Error = "interrupted by a restart — run the analysis again"
+			if err := s.mappings.UpdateJob(context.Background(), job); err != nil {
+				log.Warn("reset stale product normalization job", "error", err)
+			}
+		}
+	}
+	return s
 }
 
 // List returns the paged product list.
@@ -428,4 +486,233 @@ func (s *ProductService) build(ctx context.Context, in ProductInput) (domain.Pro
 		CategoryID:  in.CategoryID,
 		Description: description,
 	}, nil
+}
+
+// normalizationBatch bounds one AI call of the backfill job: small enough for
+// any model's context window and for a single-call retry, large enough that
+// even a slow local model covers the catalogue in a few round trips.
+const normalizationBatch = 40
+
+// ProductNormalizeResult is the GET /products/normalize response: does this
+// raw text already resolve to a standardized name (+ category)? matched is
+// false when nothing is remembered yet — the caller keeps the raw name.
+type ProductNormalizeResult struct {
+	RawName      string               `json:"raw_name"`
+	StandardName string               `json:"standard_name,omitempty"`
+	CategoryID   *int64               `json:"category_id,omitempty"`
+	CategoryName string               `json:"category_name,omitempty"`
+	Source       domain.MappingSource `json:"source,omitempty"`
+	Matched      bool                 `json:"matched"`
+}
+
+// NormalizeName looks a raw text up in the normalization memory. It never
+// calls the AI — the lookup is the memory's whole point.
+func (s *ProductService) NormalizeName(ctx context.Context, raw string) (ProductNormalizeResult, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return ProductNormalizeResult{}, validationError("name must not be empty")
+	}
+	res := ProductNormalizeResult{RawName: name}
+	if s.mappings == nil {
+		return res, nil
+	}
+	m, err := s.mappings.FindByRawName(ctx, name)
+	if errors.Is(err, domain.ErrNotFound) {
+		return res, nil
+	}
+	if err != nil {
+		return res, err
+	}
+	res.StandardName = m.StandardName
+	res.CategoryID = m.CategoryID
+	res.CategoryName = m.CategoryName
+	res.Source = m.Source
+	res.Matched = true
+	return res, nil
+}
+
+// NormalizationStatus reports the state of the "analyze existing products"
+// job — status, progress counters and the last error.
+func (s *ProductService) NormalizationStatus(ctx context.Context) (domain.ProductNormalizationJob, error) {
+	if s.mappings == nil {
+		return domain.ProductNormalizationJob{}, validationError("product normalization is not available")
+	}
+	return s.mappings.GetJob(ctx)
+}
+
+// RunNormalization starts the backfill job: every product whose raw name has
+// no mapping yet is sent to the AI (in batches) to be standardized, and the
+// results are recorded in the normalization memory. Products themselves are
+// never modified. The job runs in the background; poll NormalizationStatus.
+func (s *ProductService) RunNormalization(ctx context.Context) (domain.ProductNormalizationJob, error) {
+	if s.mappings == nil || s.normalizer == nil || s.providers == nil {
+		return domain.ProductNormalizationJob{}, validationError("product normalization is not available")
+	}
+	job, err := s.mappings.GetJob(ctx)
+	if err != nil {
+		return domain.ProductNormalizationJob{}, err
+	}
+	if job.Status == domain.ProductNormalizationRunning {
+		return domain.ProductNormalizationJob{}, fmt.Errorf("an analysis is already running — wait for it to finish: %w", domain.ErrConflict)
+	}
+	// Resolve the connector up front so the user gets an actionable error
+	// instead of a job that immediately fails in the background.
+	if _, err := s.providers.DefaultBillProvider(ctx); err != nil {
+		return domain.ProductNormalizationJob{}, err
+	}
+	total, err := s.mappings.CountUnmappedProductNames(ctx)
+	if err != nil {
+		return domain.ProductNormalizationJob{}, err
+	}
+	job.Status = domain.ProductNormalizationRunning
+	job.TotalNames = total
+	job.ProcessedNames = 0
+	job.MappedNames = 0
+	job.Error = ""
+	if err := s.mappings.UpdateJob(ctx, job); err != nil {
+		return domain.ProductNormalizationJob{}, err
+	}
+	go s.runNormalizationJob()
+	return job, nil
+}
+
+// runNormalizationJob drains the unmapped product names in batches until the
+// catalogue is covered, then marks the job done. Any failure marks it failed
+// with the error — the job is idempotent, so the user simply runs it again.
+//
+// Names the model leaves unanswered stay unmapped, so they would come back in
+// the next batch forever (one AI call per round trip). Every raw text gets a
+// single ask per run: `asked` excludes them from later batches, and the job
+// finishes once everything still unmapped has already been asked.
+func (s *ProductService) runNormalizationJob() {
+	ctx := context.Background()
+	job, err := s.mappings.GetJob(ctx)
+	if err != nil {
+		s.log.Error("product normalization job lost its status row", "error", err)
+		return
+	}
+	asked := make(map[string]bool)
+	for {
+		remaining, err := s.mappings.CountUnmappedProductNames(ctx)
+		if err != nil {
+			s.failNormalizationJob(ctx, job, err)
+			return
+		}
+		// Nothing left, or everything left was asked (and skipped by the
+		// model) in an earlier batch of this run.
+		if remaining == 0 || remaining <= int64(len(asked)) {
+			job.Status = domain.ProductNormalizationDone
+			job.Error = ""
+			if err := s.mappings.UpdateJob(ctx, job); err != nil {
+				s.log.Error("finish product normalization job", "error", err)
+			}
+			s.log.Info("product normalization job done",
+				"processed", job.ProcessedNames, "mapped", job.MappedNames)
+			return
+		}
+		// Already-asked names sort ahead of fresh ones (id order), so widen
+		// the limit to keep full fresh batches coming through.
+		names, err := s.mappings.UnmappedProductNames(ctx, normalizationBatch+len(asked))
+		if err != nil {
+			s.failNormalizationJob(ctx, job, err)
+			return
+		}
+		var fresh []domain.Product
+		for _, p := range names {
+			key := strings.ToLower(p.Name)
+			if asked[key] {
+				continue
+			}
+			asked[key] = true
+			fresh = append(fresh, p)
+		}
+		if err := s.normalizeBatch(ctx, fresh, &job); err != nil {
+			s.failNormalizationJob(ctx, job, err)
+			return
+		}
+	}
+}
+
+// normalizeBatch standardizes one batch of product names through the AI and
+// records the results (source 'ai'). Progress counters are persisted after
+// every batch so the status endpoint can show live progress.
+func (s *ProductService) normalizeBatch(ctx context.Context, products []domain.Product, job *domain.ProductNormalizationJob) error {
+	provider, err := s.providers.DefaultBillProvider(ctx)
+	if err != nil {
+		return err
+	}
+	prompt, err := s.resolveNormalizationPrompt(ctx)
+	if err != nil {
+		return err
+	}
+	rawNames := make([]string, len(products))
+	for i, p := range products {
+		rawNames[i] = p.Name
+	}
+	encoded, err := json.Marshal(rawNames)
+	if err != nil {
+		return fmt.Errorf("encode product names: %w", err)
+	}
+	prompt += string(encoded)
+
+	callCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	answers, err := s.normalizer.NormalizeNames(callCtx, provider, prompt)
+	if err != nil {
+		return err
+	}
+	byRaw := make(map[string]string, len(answers))
+	for _, a := range answers {
+		byRaw[strings.ToLower(a.RawName)] = a.StandardName
+	}
+	mapped := int64(0)
+	for _, p := range products {
+		standard, ok := byRaw[strings.ToLower(p.Name)]
+		if !ok {
+			continue
+		}
+		// Create, not Upsert: a mapping that appeared while the job was
+		// queued (a scan, a manual entry) already holds a reviewed decision.
+		_, err := s.mappings.Create(ctx, domain.ProductNameMapping{
+			RawName:      p.Name,
+			StandardName: standard,
+			CategoryID:   p.CategoryID,
+			Source:       domain.MappingSourceAI,
+		})
+		if errors.Is(err, domain.ErrConflict) {
+			continue
+		}
+		if err != nil {
+			s.log.Warn("record normalized product name", "raw", p.Name, "error", err)
+			continue
+		}
+		mapped++
+	}
+	job.ProcessedNames += int64(len(products))
+	job.MappedNames += mapped
+	return s.mappings.UpdateJob(ctx, *job)
+}
+
+// resolveNormalizationPrompt returns the product-normalization prompt head:
+// the managed ai_prompts row when the resolver is wired, the built-in
+// default otherwise (tests).
+func (s *ProductService) resolveNormalizationPrompt(ctx context.Context) (string, error) {
+	if s.prompts != nil {
+		prompt, err := s.prompts.ResolvePrompt(ctx, domain.PromptKeyProductNormalization)
+		if err != nil {
+			return "", fmt.Errorf("resolve product normalization prompt: %w", err)
+		}
+		return prompt, nil
+	}
+	return defaultPrompt(domain.PromptKeyProductNormalization), nil
+}
+
+// failNormalizationJob records a terminal job failure with the last progress.
+func (s *ProductService) failNormalizationJob(ctx context.Context, job domain.ProductNormalizationJob, cause error) {
+	job.Status = domain.ProductNormalizationFailed
+	job.Error = cause.Error()
+	if err := s.mappings.UpdateJob(ctx, job); err != nil {
+		s.log.Error("fail product normalization job", "cause", cause, "error", err)
+	}
+	s.log.Warn("product normalization job failed", "processed", job.ProcessedNames, "error", cause)
 }

@@ -139,7 +139,13 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
                     {it.is_return ? (
                       <span className="item-brand">♻️ deposit return</span>
                     ) : (
-                      it.brand && <span className="item-brand">{it.brand}</span>
+                      <>
+                        {it.brand && <span className="item-brand">{it.brand}</span>}
+                        {it.standard_name &&
+                          it.standard_name.toLowerCase() !== it.name.toLowerCase() && (
+                            <span className="item-brand">↳ {it.standard_name}</span>
+                          )}
+                      </>
                     )}
                   </span>
                   <span className="item-price">{formatCents(it.line_total_cents, currency)}</span>

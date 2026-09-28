@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
+import { usePolling } from '../../hooks/usePolling';
 import {
   settingsApi,
   type AIProviderInput,
   type ConnectionTestResult,
 } from '../../api/settings';
-import type { AIProvider, AIProviderType } from '../../types/domain';
+import { productsApi } from '../../api/products';
+import type { AIProvider, AIProviderType, NormalizationJob } from '../../types/domain';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
@@ -198,6 +200,45 @@ export function SettingsPage() {
     }
   }
 
+  // --- Product normalization backfill job -----------------------------------
+  // The job row is fetched once on load; while a run is in progress the
+  // status is polled until it leaves "running".
+  const initialJob = useAsync(() => productsApi.normalizationStatus(), []);
+  const [jobRunning, setJobRunning] = useState(false);
+  const [jobStarting, setJobStarting] = useState(false);
+  const [jobError, setJobError] = useState<string | null>(null);
+  const jobPoll = usePolling(() => productsApi.normalizationStatus(), {
+    intervalMs: 2000,
+    enabled: jobRunning,
+  });
+  const job: NormalizationJob | null = jobPoll.data ?? initialJob.data ?? null;
+
+  // A job found already running (page opened mid-run) resumes polling.
+  useEffect(() => {
+    if (initialJob.data && !jobRunning) {
+      setJobRunning(initialJob.data.status === 'running');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialJob.data]);
+
+  // The poll flips itself off once the job leaves "running".
+  useEffect(() => {
+    if (jobPoll.data && jobPoll.data.status !== 'running') setJobRunning(false);
+  }, [jobPoll.data]);
+
+  async function handleRunNormalization() {
+    setJobStarting(true);
+    setJobError(null);
+    try {
+      await productsApi.runNormalization();
+      setJobRunning(true);
+    } catch (err) {
+      setJobError(err instanceof Error ? err.message : 'Failed to start the analysis.');
+    } finally {
+      setJobStarting(false);
+    }
+  }
+
   if (saved.loading) return <Spinner />;
   if (saved.error) return <ErrorMessage message={saved.error.message} />;
 
@@ -382,6 +423,47 @@ export function SettingsPage() {
           {saving ? 'Saving…' : 'Save all'}
         </Button>
       </div>
+
+      <h2 className="page-title">Product normalization</h2>
+
+      <Card title="Analyze existing products">
+        <p className="hint-text">
+          Raw product names stay exactly as the market printed them — the
+          normalization memory maps each raw text to a standardized,
+          human-readable name (e.g. “WHL MLK 1L” → “Whole Milk 1L”). This
+          analysis sends the raw names of products that have no mapping yet to
+          the connector flagged as default for bill reads, in batches, and
+          records the suggestions. Product rows are never modified.
+        </p>
+        {job?.status === 'running' ? (
+          <p className="hint-text">
+            ⏳ Standardizing… {job.processed_names} of {job.total_names} raw
+            names ({job.mapped_names} mapped so far)
+          </p>
+        ) : job?.status === 'done' ? (
+          <p className="hint-text">
+            ✓ Last run finished: {job.mapped_names} of {job.total_names} raw
+            names mapped.
+          </p>
+        ) : job?.status === 'failed' ? (
+          <ErrorMessage message={job.error || 'The last analysis failed.'} />
+        ) : (
+          <p className="hint-text">No analysis has been run yet.</p>
+        )}
+        {jobError && <ErrorMessage message={jobError} />}
+        <div className="camera-row">
+          <Button
+            onClick={handleRunNormalization}
+            disabled={jobStarting || jobRunning || job?.status === 'running'}
+          >
+            {jobRunning || job?.status === 'running'
+              ? 'Analyzing…'
+              : job?.status === 'done'
+                ? 'Run again (new products only)'
+                : 'Analyze existing products'}
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }

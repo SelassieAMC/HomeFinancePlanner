@@ -64,10 +64,11 @@ type BillItem struct {
 	ID             int64   `json:"id"`
 	BillID         int64   `json:"bill_id"`
 	Name           string  `json:"name"`
-	Brand          string  `json:"brand,omitempty"` // optional, editable in the draft
-	Unit           string  `json:"unit,omitempty"`  // measure: kg, g, l, ml, pcs, …
-	CategoryID     *int64  `json:"category_id"`     // nullable; resolved from the AI category name
-	CategoryName   string  `json:"category_name"`   // display-only, joined from categories
+	StandardName   string  `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
+	Brand          string  `json:"brand,omitempty"`         // optional, editable in the draft
+	Unit           string  `json:"unit,omitempty"`          // measure: kg, g, l, ml, pcs, …
+	CategoryID     *int64  `json:"category_id"`             // nullable; resolved from the AI category name
+	CategoryName   string  `json:"category_name"`           // display-only, joined from categories
 	Quantity       float64 `json:"quantity"`
 	UnitPriceCents int64   `json:"unit_price_cents"` // may be negative for deposit returns
 	DiscountCents  int64   `json:"discount_cents"`
@@ -84,6 +85,7 @@ type BillItem struct {
 type BillItemDraft struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`
+	StandardName   string  `json:"standard_name,omitempty"` // AI-suggested (or user-corrected) standardized name; empty on pre-feature drafts
 	Brand          string  `json:"brand,omitempty"`
 	Unit           string  `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
 	CategoryName   string  `json:"category_name,omitempty"`

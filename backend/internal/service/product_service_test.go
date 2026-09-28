@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -19,7 +21,7 @@ func newMergeTestService(t *testing.T) (*ProductService, *fakeProductStore) {
 	cats := &fakeCategoryStore{cats: map[int64]domain.Category{
 		1: {ID: 1, Name: "Fruits", Kind: "product"},
 	}}
-	return NewProductService(products, cats, t.TempDir()), products
+	return NewProductService(products, cats, t.TempDir(), nil, nil, nil, nil, 0, nil), products
 }
 
 func TestProductServiceCheckMerge(t *testing.T) {
@@ -251,7 +253,7 @@ func TestProductServiceValidatesInput(t *testing.T) {
 		1: {ID: 1, Name: "Fruits", Kind: "product"},
 		2: {ID: 2, Name: "Rent", Kind: "expense"},
 	}}
-	svc := NewProductService(products, cats, t.TempDir())
+	svc := NewProductService(products, cats, t.TempDir(), nil, nil, nil, nil, 0, nil)
 	ctx := context.Background()
 	seeded, err := products.Create(ctx, domain.Product{Name: "Milk"})
 	if err != nil {
@@ -295,4 +297,318 @@ func longString(n int) string {
 		out[i] = 'x'
 	}
 	return string(out)
+}
+
+// --- normalization memory & backfill job -------------------------------------
+
+// fakeTextNormalizer is a TextNormalizer stub delegating to a function; every
+// prompt handed over is recorded for assertions.
+type fakeTextNormalizer struct {
+	fn      func(ctx context.Context, p domain.AIProvider, prompt string) ([]domain.ProductNameMapping, error)
+	prompts []string
+}
+
+func (f *fakeTextNormalizer) NormalizeNames(ctx context.Context, p domain.AIProvider, prompt string) ([]domain.ProductNameMapping, error) {
+	f.prompts = append(f.prompts, prompt)
+	return f.fn(ctx, p, prompt)
+}
+
+// newNormalizationJobService wires a ProductService whose backfill job can
+// actually run: a mapping memory, a text normalizer and a settings service
+// that resolves the configured connector (the same default_for_bills policy
+// as bill scans).
+func newNormalizationJobService(t *testing.T, mappings *fakeProductMappingStore, normalizer TextNormalizer) *ProductService {
+	t.Helper()
+	settings := NewSettingsService(
+		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
+		passthroughBox{}, nil)
+	return NewProductService(newFakeProductStore(), &fakeCategoryStore{cats: map[int64]domain.Category{}},
+		t.TempDir(), mappings, normalizer, settings, nil, 5*time.Second, nil)
+}
+
+func TestProductServiceNormalizeName(t *testing.T) {
+	ctx := context.Background()
+	mappings := newFakeProductMappingStore()
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Milk 1L",
+		CategoryID: idp(3), CategoryName: "Dairy & Eggs", Source: domain.MappingSourceUser,
+	})
+	svc := NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
+		mappings, nil, nil, nil, time.Second, nil)
+
+	// Empty input is a validation error, not a lookup.
+	if _, err := svc.NormalizeName(ctx, "   "); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("empty name = %v, want ErrValidation", err)
+	}
+
+	// Unmapped name: no match, no error, the raw name is echoed back.
+	res, err := svc.NormalizeName(ctx, "  TOMATOS ")
+	if err != nil {
+		t.Fatalf("unmapped lookup: %v", err)
+	}
+	if res.Matched || res.RawName != "TOMATOS" || res.StandardName != "" {
+		t.Fatalf("unmapped result = %+v, want unmatched TOMATOS", res)
+	}
+
+	// Mapped name: the remembered standard name, category and source.
+	res, err = svc.NormalizeName(ctx, " whl mlk 1l ")
+	if err != nil {
+		t.Fatalf("mapped lookup: %v", err)
+	}
+	if !res.Matched {
+		t.Fatalf("mapped result = %+v, want matched", res)
+	}
+	if res.StandardName != "Milk 1L" || res.CategoryID == nil || *res.CategoryID != 3 ||
+		res.CategoryName != "Dairy & Eggs" || res.Source != domain.MappingSourceUser {
+		t.Fatalf("mapped result = %+v, want Milk 1L / cat 3 / Dairy & Eggs / user", res)
+	}
+
+	// A store failure surfaces (this lookup path is allowed to fail loudly).
+	mappings.findErr = errors.New("database is locked")
+	if _, err := svc.NormalizeName(ctx, "TOMATOS"); err == nil {
+		t.Fatal("store failure was swallowed by NormalizeName")
+	}
+}
+
+func TestProductServiceRunNormalizationJobCompletes(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	mappings.products = []domain.Product{
+		{ID: 1, Name: "WHL MLK 1L", CategoryID: idp(7)}, // already mapped below → excluded
+		{ID: 2, Name: "TOMATOS"},
+		{ID: 3, Name: "JOGHURT 500G", CategoryID: idp(4)},
+	}
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Milk 1L", Source: domain.MappingSourceUser,
+	})
+	normalizer := &fakeTextNormalizer{fn: func(context.Context, domain.AIProvider, string) ([]domain.ProductNameMapping, error) {
+		return []domain.ProductNameMapping{
+			{RawName: "TOMATOS", StandardName: "Tomatoes"},
+			{RawName: "JOGHURT 500G", StandardName: "Yoghurt 500g"},
+		}, nil
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	job, err := svc.RunNormalization(ctx)
+	if err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	if job.Status != domain.ProductNormalizationRunning || job.TotalNames != 2 {
+		t.Fatalf("started job = %+v, want running with 2 unmapped names", job)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationDone
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.TotalNames != 2 || st.ProcessedNames != 2 || st.MappedNames != 2 || st.Error != "" {
+		t.Fatalf("finished job = %+v, want 2/2/2 without error", st)
+	}
+
+	// Every unmapped name was recorded with source 'ai', keeping its product
+	// category; the already-mapped name was never re-asked.
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.creates) != 2 {
+		t.Fatalf("creates = %+v, want one per unmapped name", mappings.creates)
+	}
+	tomatoes := mappings.creates[0]
+	if tomatoes.RawName != "TOMATOS" || tomatoes.StandardName != "Tomatoes" ||
+		tomatoes.Source != domain.MappingSourceAI || tomatoes.CategoryID != nil {
+		t.Fatalf("tomatoes mapping = %+v, want TOMATOS → Tomatoes (ai, no category)", tomatoes)
+	}
+	yoghurt := mappings.creates[1]
+	if yoghurt.RawName != "JOGHURT 500G" || yoghurt.StandardName != "Yoghurt 500g" ||
+		yoghurt.Source != domain.MappingSourceAI || yoghurt.CategoryID == nil || *yoghurt.CategoryID != 4 {
+		t.Fatalf("yoghurt mapping = %+v, want JOGHURT 500G → Yoghurt 500g (ai, cat 4)", yoghurt)
+	}
+	if m := mappings.items["whl mlk 1l"]; m.Source != domain.MappingSourceUser || m.StandardName != "Milk 1L" {
+		t.Errorf("the user's existing decision was overwritten: %+v", m)
+	}
+
+	// The prompt is the built-in head with the raw-name JSON array appended
+	// (unmapped products only, id order).
+	if len(normalizer.prompts) != 1 {
+		t.Fatalf("normalizer calls = %d, want exactly one batch", len(normalizer.prompts))
+	}
+	prompt := normalizer.prompts[0]
+	if !strings.HasPrefix(prompt, defaultProductNormalizationPrompt) {
+		t.Errorf("prompt does not start with the product-normalization head: %.60q", prompt)
+	}
+	if !strings.HasSuffix(prompt, `["TOMATOS","JOGHURT 500G"]`) {
+		t.Errorf("prompt does not end with the raw-name array: ...%q", prompt[min(len(prompt), 200):])
+	}
+}
+
+func TestProductServiceRunNormalizationSkipsUnansweredNames(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	mappings.products = []domain.Product{
+		{ID: 2, Name: "TOMATOS"},
+		{ID: 3, Name: "JOGHURT 500G"},
+	}
+	// The model answers TOMATOS but never JOGHURT 500G: a raw text the AI
+	// skips must be asked once, not re-queued forever (the old drain loop
+	// spun on it — one AI call per round trip).
+	normalizer := &fakeTextNormalizer{fn: func(_ context.Context, _ domain.AIProvider, _ string) ([]domain.ProductNameMapping, error) {
+		return []domain.ProductNameMapping{{RawName: "TOMATOS", StandardName: "Tomatoes"}}, nil
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	if _, err := svc.RunNormalization(ctx); err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationDone
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.MappedNames != 1 || st.ProcessedNames != 2 {
+		t.Fatalf("finished job = %+v, want 2 processed / 1 mapped", st)
+	}
+	// The skipped name got exactly its one batch ask, then the job converged.
+	if calls := len(normalizer.prompts); calls != 1 {
+		t.Fatalf("normalizer calls = %d, want exactly 1 (skipped names are not re-asked)", calls)
+	}
+	// And it was not silently recorded: a later bill scan can still give
+	// JOGHURT 500G a real mapping (memory would win over a bogus identity).
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if m, ok := mappings.items["joghurt 500g"]; ok {
+		t.Fatalf("unanswered name was recorded anyway: %+v", m)
+	}
+}
+
+func TestProductServiceRunNormalizationSingleFlight(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	mappings.products = []domain.Product{
+		{ID: 1, Name: "TOMATOS"},
+		{ID: 2, Name: "BANANE"},
+	}
+	answers := []domain.ProductNameMapping{
+		{RawName: "TOMATOS", StandardName: "Tomatoes"},
+		{RawName: "BANANE", StandardName: "Bananas"},
+	}
+	block := make(chan struct{})
+	normalizer := &fakeTextNormalizer{fn: func(context.Context, domain.AIProvider, string) ([]domain.ProductNameMapping, error) {
+		<-block // hold the job in its first AI call
+		return answers, nil
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	if _, err := svc.RunNormalization(ctx); err != nil {
+		t.Fatalf("first RunNormalization: %v", err)
+	}
+	// While the job sits in its AI call, a second start must conflict.
+	_, err := svc.RunNormalization(ctx)
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("second RunNormalization while running = %v, want ErrConflict", err)
+	}
+
+	close(block)
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationDone
+	})
+	// After the job finished, the next run is allowed again.
+	if _, err := svc.RunNormalization(ctx); err != nil {
+		t.Fatalf("RunNormalization after done: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationDone
+	})
+}
+
+func TestProductServiceRunNormalizationFailsOnNormalizerError(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	mappings.products = []domain.Product{{ID: 1, Name: "TOMATOS"}}
+	normalizer := &fakeTextNormalizer{fn: func(context.Context, domain.AIProvider, string) ([]domain.ProductNameMapping, error) {
+		return nil, errors.New("model exploded")
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	if _, err := svc.RunNormalization(ctx); err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationFailed
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(st.Error, "model exploded") {
+		t.Fatalf("job error = %q, want the normalizer failure recorded", st.Error)
+	}
+	if st.TotalNames != 1 || st.ProcessedNames != 0 || st.MappedNames != 0 {
+		t.Fatalf("failed job counters = %+v, want total 1, processed/mapped 0", st)
+	}
+	// Nothing was recorded for the failed batch.
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.creates) != 0 {
+		t.Fatalf("creates = %+v, want none on a failed job", mappings.creates)
+	}
+}
+
+func TestProductServiceRunNormalizationUnavailableWithoutDeps(t *testing.T) {
+	ctx := context.Background()
+	// No mapping memory wired → the job endpoints are unavailable.
+	svc := NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
+		nil, nil, nil, nil, time.Second, nil)
+	if _, err := svc.RunNormalization(ctx); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("RunNormalization without mappings = %v, want ErrValidation", err)
+	}
+	if _, err := svc.NormalizationStatus(ctx); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("NormalizationStatus without mappings = %v, want ErrValidation", err)
+	}
+	// Memory wired but no normalizer → still unavailable.
+	svc = NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
+		newFakeProductMappingStore(), nil, nil, nil, time.Second, nil)
+	if _, err := svc.RunNormalization(ctx); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("RunNormalization without normalizer = %v, want ErrValidation", err)
+	}
+}
+
+func TestNewProductServiceResetsStaleRunningJob(t *testing.T) {
+	ctx := context.Background()
+
+	// A job left "running" by a previous process is marked failed at boot.
+	stale := newFakeProductMappingStore()
+	stale.job.Status = domain.ProductNormalizationRunning
+	NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
+		stale, nil, nil, nil, time.Second, nil)
+	st, err := stale.GetJob(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.Status != domain.ProductNormalizationFailed {
+		t.Fatalf("stale job status = %q, want failed", st.Status)
+	}
+	if !strings.Contains(st.Error, "interrupted by a restart") {
+		t.Fatalf("stale job error = %q, want the restart explanation", st.Error)
+	}
+
+	// A job in any other state (idle here) is left untouched.
+	fresh := newFakeProductMappingStore()
+	NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
+		fresh, nil, nil, nil, time.Second, nil)
+	st, err = fresh.GetJob(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.Status != domain.ProductNormalizationIdle {
+		t.Fatalf("idle job status = %q, want idle", st.Status)
+	}
 }

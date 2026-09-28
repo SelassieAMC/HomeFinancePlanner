@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -475,7 +476,7 @@ func newTestBillServiceWithProducts(t *testing.T, extractFn func(context.Context
 		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
 		passthroughBox{}, extractor)
 	svc := NewBillService(billStore, scanStore, extractor, settings,
-		nil, newFakeAccountStore(), catStore, storeStore, products, nil, newFakeTxStore(), nil, t.TempDir(), 5*time.Second, nil)
+		nil, newFakeAccountStore(), catStore, storeStore, products, nil, nil, newFakeTxStore(), nil, t.TempDir(), 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, storeStore, catStore, products
 }
@@ -1140,7 +1141,7 @@ func newTestBillServiceCustom(t *testing.T, settingsData map[string]string, rate
 	}
 	svc := NewBillService(billStore, scanStore, extractor, settings,
 		nil, accounts, &fakeCategoryStore{cats: map[int64]domain.Category{}}, storeStore,
-		nil, nil, txs, rates, t.TempDir(), 5*time.Second, nil)
+		nil, nil, nil, txs, rates, t.TempDir(), 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, store
 }
@@ -1845,6 +1846,345 @@ func TestConfirmFindOrCreatesProducts(t *testing.T) {
 	if banana.CategoryID == nil || *banana.CategoryID != 7 {
 		t.Fatalf("product category not seeded from the item: %+v", banana)
 	}
+}
+
+// fakeProductMappingStore is an in-memory ProductMappingStore mirroring the
+// SQLite semantics: raw_name is unique case-insensitively (Create reports
+// domain.ErrConflict on a duplicate, Upsert overwrites), and the single job
+// row starts idle like the migration-seeded database. products feeds the
+// unmapped-name queries of the backfill job; creates/upserts/lookups record
+// every call for assertions; findErr/createErr/upsertErr inject store
+// failures so the tolerance paths can be exercised.
+type fakeProductMappingStore struct {
+	mu       sync.Mutex
+	items    map[string]domain.ProductNameMapping // keyed by lower(raw_name)
+	next     int64
+	products []domain.Product
+	job      domain.ProductNormalizationJob
+
+	creates   []domain.ProductNameMapping
+	upserts   []domain.ProductNameMapping
+	lookups   []string
+	findErr   error
+	createErr error
+	upsertErr error
+}
+
+func newFakeProductMappingStore() *fakeProductMappingStore {
+	return &fakeProductMappingStore{
+		items: map[string]domain.ProductNameMapping{},
+		job:   domain.ProductNormalizationJob{Status: domain.ProductNormalizationIdle},
+	}
+}
+
+// seedMapping stores a mapping decision directly (bypasses the call records).
+func (f *fakeProductMappingStore) seedMapping(m domain.ProductNameMapping) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	m.ID = f.next
+	f.items[strings.ToLower(m.RawName)] = m
+}
+
+func (f *fakeProductMappingStore) FindByRawName(_ context.Context, raw string) (domain.ProductNameMapping, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookups = append(f.lookups, raw)
+	if f.findErr != nil {
+		return domain.ProductNameMapping{}, f.findErr
+	}
+	m, ok := f.items[strings.ToLower(raw)]
+	if !ok {
+		return domain.ProductNameMapping{}, domain.ErrNotFound
+	}
+	return m, nil
+}
+
+func (f *fakeProductMappingStore) Create(_ context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.creates = append(f.creates, m)
+	if f.createErr != nil {
+		return domain.ProductNameMapping{}, f.createErr
+	}
+	key := strings.ToLower(m.RawName)
+	if _, ok := f.items[key]; ok {
+		return domain.ProductNameMapping{}, fmt.Errorf("create product mapping: unique constraint failed: %w", domain.ErrConflict)
+	}
+	f.next++
+	m.ID = f.next
+	f.items[key] = m
+	return m, nil
+}
+
+func (f *fakeProductMappingStore) Upsert(_ context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.upserts = append(f.upserts, m)
+	if f.upsertErr != nil {
+		return domain.ProductNameMapping{}, f.upsertErr
+	}
+	key := strings.ToLower(m.RawName)
+	if _, ok := f.items[key]; !ok {
+		f.next++
+		m.ID = f.next
+	}
+	m.UpdatedAt = time.Now().UTC()
+	f.items[key] = m
+	return m, nil
+}
+
+// UnmappedProductNames lists the seeded products whose name has no mapping
+// yet, in seed order, mirroring the repository's id-ordered query.
+func (f *fakeProductMappingStore) UnmappedProductNames(_ context.Context, limit int) ([]domain.Product, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []domain.Product{}
+	for _, p := range f.products {
+		if _, ok := f.items[strings.ToLower(p.Name)]; ok {
+			continue
+		}
+		if len(out) == limit {
+			break
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (f *fakeProductMappingStore) CountUnmappedProductNames(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var n int64
+	for _, p := range f.products {
+		if _, ok := f.items[strings.ToLower(p.Name)]; !ok {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeProductMappingStore) GetJob(context.Context) (domain.ProductNormalizationJob, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.job, nil
+}
+
+func (f *fakeProductMappingStore) UpdateJob(_ context.Context, j domain.ProductNormalizationJob) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.job = j
+	return nil
+}
+
+// --- product-name normalization memory ----------------------------------------
+
+// newTestBillServiceWithMappings wires a BillService with the normalization
+// memory attached, for mapping behavior exercised through the scan pipeline.
+func newTestBillServiceWithMappings(t *testing.T, mappings ProductMappingStore, extractFn func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore) {
+	t.Helper()
+	scanStore := newFakeBillScanStore()
+	extractor := &fakeBillExtractor{fn: extractFn}
+	settings := NewSettingsService(
+		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
+		passthroughBox{}, extractor)
+	svc := NewBillService(&fakeBillStore{}, scanStore, extractor, settings,
+		nil, newFakeAccountStore(), &fakeCategoryStore{cats: map[int64]domain.Category{}},
+		newFakeStoreStore(), newFakeProductStore(), mappings, nil, newFakeTxStore(), nil,
+		t.TempDir(), 5*time.Second, nil)
+	t.Cleanup(svc.Close)
+	return svc, scanStore
+}
+
+// TestScanAppliesMappingMemoryToDraft drives the memory through the public
+// scan pipeline: a mapped raw text keeps the remembered standard name and
+// category (memory wins over the fresh AI suggestion), an unmapped raw text
+// records the AI's suggestion with source 'ai', and deposit-return lines are
+// skipped entirely.
+func TestScanAppliesMappingMemoryToDraft(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Milk 1L",
+		CategoryID: ptrInt64(7), Source: domain.MappingSourceUser,
+	})
+	draft := domain.BillDraft{
+		MarketName: "REWE", Currency: "EUR",
+		Items: []domain.BillItemDraft{
+			// Already mapped: the memory's decision replaces the suggestion.
+			{Name: " WHL MLK 1L ", StandardName: "Whole Milk 1L", Quantity: 1, UnitPriceCents: 189, LineTotalCents: 189},
+			// First sight: the AI suggestion is kept and recorded as 'ai'.
+			{Name: "TOMATOS", StandardName: "Tomatoes", Quantity: 1, UnitPriceCents: 99, LineTotalCents: 99},
+			// Return line: never touches the memory.
+			{Name: "LEERGUT 0.25", StandardName: "Leergut 0.25", IsReturn: true, Quantity: 1, UnitPriceCents: -25, LineTotalCents: -25},
+		},
+	}
+	svc, scanStore := newTestBillServiceWithMappings(t, mappings,
+		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+			return draft, nil
+		})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	row, _ := scanStore.GetByToken(ctx, res.ScanToken)
+
+	items := row.Draft.Items
+	if items[0].StandardName != "Milk 1L" {
+		t.Errorf("mapped raw: standard name = %q, want the memory's %q", items[0].StandardName, "Milk 1L")
+	}
+	if items[0].CategoryID == nil || *items[0].CategoryID != 7 {
+		t.Errorf("mapped raw: category = %v, want the memory's 7", items[0].CategoryID)
+	}
+	if items[1].StandardName != "Tomatoes" {
+		t.Errorf("unmapped raw: standard name = %q, want the AI suggestion kept", items[1].StandardName)
+	}
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.creates) != 1 {
+		t.Fatalf("creates = %+v, want exactly the TOMATOS suggestion recorded", mappings.creates)
+	}
+	created := mappings.creates[0]
+	if created.RawName != "TOMATOS" || created.StandardName != "Tomatoes" || created.Source != domain.MappingSourceAI {
+		t.Fatalf("recorded mapping = %+v, want TOMATOS → Tomatoes (ai)", created)
+	}
+	for _, looked := range mappings.lookups {
+		if strings.Contains(strings.ToLower(looked), "leergut") {
+			t.Errorf("return line %q must not be looked up in the memory", looked)
+		}
+	}
+}
+
+// TestApplyMappingMemoryFallbacksAndTolerance covers the unexported method
+// directly: a draft line without a suggestion falls back to its raw name, and
+// store failures (duplicate Create from a concurrent confirm, a locked db on
+// lookup or write) are logged and non-fatal.
+func TestApplyMappingMemoryFallbacksAndTolerance(t *testing.T) {
+	ctx := context.Background()
+
+	// No AI suggestion → the trimmed raw name becomes the standard name and
+	// is recorded with source 'ai'.
+	mappings := newFakeProductMappingStore()
+	svc := &BillService{mappings: mappings, log: slog.Default()}
+	draft := domain.BillDraft{Items: []domain.BillItemDraft{
+		{Name: "  BANANE  ", StandardName: ""},
+	}}
+	svc.applyMappingMemory(ctx, &draft)
+	if draft.Items[0].StandardName != "BANANE" {
+		t.Fatalf("standard name = %q, want raw fallback %q", draft.Items[0].StandardName, "BANANE")
+	}
+	mappings.mu.Lock()
+	if len(mappings.creates) != 1 || mappings.creates[0].StandardName != "BANANE" ||
+		mappings.creates[0].Source != domain.MappingSourceAI {
+		t.Fatalf("creates = %+v, want the BANANE identity recorded as 'ai'", mappings.creates)
+	}
+	mappings.mu.Unlock()
+
+	// A concurrent Create (ErrConflict) and a hard store failure on Create
+	// are both tolerated — the draft keeps its suggestion either way.
+	mappings.createErr = fmt.Errorf("create product mapping: unique constraint failed: %w", domain.ErrConflict)
+	draft = domain.BillDraft{Items: []domain.BillItemDraft{
+		{Name: "TOMATOS", StandardName: "Tomatoes"},
+	}}
+	svc.applyMappingMemory(ctx, &draft)
+	if draft.Items[0].StandardName != "Tomatoes" {
+		t.Fatalf("standard name after Create conflict = %q, want the suggestion kept", draft.Items[0].StandardName)
+	}
+
+	mappings.createErr = errors.New("database is locked")
+	draft = domain.BillDraft{Items: []domain.BillItemDraft{
+		{Name: "TOMATOS", StandardName: "Tomatoes"},
+	}}
+	svc.applyMappingMemory(ctx, &draft)
+	if draft.Items[0].StandardName != "Tomatoes" {
+		t.Fatalf("standard name after Create failure = %q, want the suggestion kept", draft.Items[0].StandardName)
+	}
+
+	// A lookup failure is non-fatal too: the suggestion stands, nothing is
+	// recorded.
+	mappings.createErr = nil
+	mappings.findErr = errors.New("database is locked")
+	draft = domain.BillDraft{Items: []domain.BillItemDraft{
+		{Name: "TOMATOS", StandardName: "Tomatoes"},
+	}}
+	svc.applyMappingMemory(ctx, &draft)
+	if draft.Items[0].StandardName != "Tomatoes" {
+		t.Fatalf("standard name after lookup failure = %q, want the suggestion kept", draft.Items[0].StandardName)
+	}
+}
+
+// TestLearnMappingOverrides records the review corrections of a confirmed
+// bill: a changed standard name, a changed category, and a manually added
+// line are upserted with source 'user' (an added line without a suggestion
+// falls back to its raw name); unchanged lines never write; return lines are
+// skipped; a failing Upsert never fails the bill.
+func TestLearnMappingOverrides(t *testing.T) {
+	ctx := context.Background()
+	mappings := newFakeProductMappingStore()
+	svc := &BillService{mappings: mappings, log: slog.Default()}
+
+	prior := []priorStandardLine{
+		{raw: "WHL MLK 1L", standard: "Whole Milk 1L", categoryID: nil},
+		{raw: "TOMATOS", standard: "Tomatoes", categoryID: nil},
+		{raw: "OATS", standard: "Oats", categoryID: nil},
+		{raw: "LEERGUT PALETTE", standard: "Leergut Palette", categoryID: nil},
+	}
+	items := []domain.BillItemDraft{
+		// Standard name corrected by the user.
+		{Name: "WHL MLK 1L", StandardName: "Milk 1L", CategoryID: ptrInt64(7), Quantity: 1, UnitPriceCents: 189, LineTotalCents: 189},
+		// Unchanged line — must not write.
+		{Name: "TOMATOS", StandardName: "tomatoes", Quantity: 1, UnitPriceCents: 99, LineTotalCents: 99},
+		// Category-only correction.
+		{Name: "OATS", StandardName: "Oats", CategoryID: ptrInt64(8), Quantity: 1, UnitPriceCents: 49, LineTotalCents: 49},
+		// Manually added line with a submitted standard name.
+		{Name: "Butter 250g", StandardName: "Butter", Quantity: 1, UnitPriceCents: 289, LineTotalCents: 289},
+		// Manually added line without a suggestion — raw name fallback.
+		{Name: "  Eggs  ", StandardName: "", Quantity: 1, UnitPriceCents: 259, LineTotalCents: 259},
+		// Return line with a "changed" name — skipped.
+		{Name: "LEERGUT PALETTE", StandardName: "Crate Return", IsReturn: true, Quantity: 1, UnitPriceCents: -300, LineTotalCents: -300},
+	}
+	svc.learnMappingOverrides(ctx, items, prior)
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.upserts) != 4 {
+		t.Fatalf("upserts = %+v, want exactly the 4 corrected/added lines", mappings.upserts)
+	}
+	want := map[string]domain.ProductNameMapping{
+		"WHL MLK 1L":  {RawName: "WHL MLK 1L", StandardName: "Milk 1L", CategoryID: ptrInt64(7)},
+		"OATS":        {RawName: "OATS", StandardName: "Oats", CategoryID: ptrInt64(8)},
+		"Butter 250g": {RawName: "Butter 250g", StandardName: "Butter"},
+		"Eggs":        {RawName: "Eggs", StandardName: "Eggs"},
+	}
+	for _, up := range mappings.upserts {
+		if up.Source != domain.MappingSourceUser {
+			t.Errorf("upsert %+v: source = %q, want 'user'", up, up.Source)
+		}
+		w, ok := want[up.RawName]
+		if !ok {
+			t.Errorf("unexpected upsert for raw %q", up.RawName)
+			continue
+		}
+		if up.StandardName != w.StandardName {
+			t.Errorf("raw %q: standard = %q, want %q", up.RawName, up.StandardName, w.StandardName)
+		}
+		if !sameInt64Ptr(up.CategoryID, w.CategoryID) {
+			t.Errorf("raw %q: category = %v, want %v", up.RawName, up.CategoryID, w.CategoryID)
+		}
+	}
+
+	// A failing Upsert is tolerated (logged, never fails the bill).
+	mappings.upsertErr = errors.New("database is locked")
+	mappings.mu.Unlock()
+	svc.learnMappingOverrides(ctx, items, prior)
+	mappings.mu.Lock()
+	mappings.upsertErr = nil
 }
 
 func TestConfirmProductRaceReFindsWinner(t *testing.T) {

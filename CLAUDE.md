@@ -192,7 +192,29 @@ appended in code). They are managed from `/settings/prompts` (full CRUD,
 the built-in fallbacks in `internal/service/prompt_defaults.go` — an empty or
 deleted row never breaks a process. Prompt keys are immutable after create
 (processes resolve by key); the migration seed and the Go fallbacks are guarded
-byte-identical by a repository seed-sync test.
+byte-identical by a repository seed-sync test. **Product name normalization**
+keeps every raw product text untouched — product rows and bill lines keep
+exactly what the receipt printed — and maps raw texts to standardized,
+human-readable names through the `product_name_mappings` memory (raw_name
+UNIQUE NOCASE → standard_name + category, source `ai`/`user`/`manual`;
+several raw texts may share one standard name). The `bill_extraction` prompt
+asks for a per-item `standard_name` in the same extraction call
+(`ParseBillJSON` falls back to the raw name, keeping custom prompts working);
+on extraction the memory wins (mapped raw texts reuse their remembered name
+and category, unmapped ones record the AI suggestion as `ai`), and
+confirm/update learn real per-line edits permanently (upsert as `user`) —
+deposit/return lines are never normalized or remembered. Manual purchases look
+the memory up per typed line (category filled only when unset, typed name
+never rewritten; unknown names record identity mappings as `manual`). The
+standardized name is exposed read-only (`standard_name`) on bill items,
+transaction items and products via LEFT JOIN on the raw name. The frontend
+uses `GET /products/normalize?name=` for the blur lookup; the user-triggered
+backfill job (`POST /products/normalization/run`, status on
+`GET /products/normalization`, single-row `product_normalization_jobs`) sends
+unmapped product names to the `default_for_bills` connector in batches of 40
+under the `product_normalization` prompt key — products are never modified,
+names the AI skips are asked once per run, and a job interrupted by a restart
+is marked failed at boot and can simply be run again.
 When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend

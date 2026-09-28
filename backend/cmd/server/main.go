@@ -63,6 +63,7 @@ func run() error {
 	bills := repository.NewBillRepository(db)
 	billScans := repository.NewBillScanRepository(db)
 	settingsRepo := repository.NewSettingsRepository(db)
+	productMappings := repository.NewProductNameMappingRepository(db)
 
 	box, err := newEncryptionBox(cfg, log)
 	if err != nil {
@@ -75,16 +76,17 @@ func run() error {
 	promptRepo := repository.NewAIPromptRepository(db)
 	promptSvc := service.NewAIPromptService(promptRepo, categories)
 	storeSvc := service.NewStoreService(stores, cfg.StoresPath)
-	productSvc := service.NewProductService(products, categories, cfg.ProductsPath)
+	productSvc := service.NewProductService(products, categories, cfg.ProductsPath,
+		productMappings, billExtractor, settingsSvc, promptSvc, cfg.LLMTimeout, log)
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
-		promptSvc, accounts, categories, stores, products, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
+		promptSvc, accounts, categories, stores, products, productMappings, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
 	offerSearches := repository.NewOfferSearchRepository(db)
 	cartSearchSvc := service.NewOfferSearchService(offerSearches, products, stores, settingsSvc,
 		promptSvc, billExtractor, cfg.LLMTimeout, log)
 	analyticsRepo := repository.NewAnalyticsRepository(db)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
-	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc, promptSvc)
+	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, productMappings, transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc, promptSvc)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

@@ -2,14 +2,20 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	"home-finance-planner/backend/internal/domain"
 	"home-finance-planner/backend/internal/repository"
+	"home-finance-planner/backend/migrations"
+
+	_ "modernc.org/sqlite" // register the "sqlite" driver for the raw-migration tests
 )
 
 // fakeAIPromptStore is an in-memory AIPromptStore mirroring the SQLite
@@ -289,7 +295,9 @@ func TestAIPromptMigrationSeedMatchesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get seeded bill prompt: %v", err)
 	}
-	if bill.Content != defaultBillExtractionPrompt {
+	// The NEW default from prompt_defaults.go — a fresh database runs
+	// migration 0023's guarded refresh, which rewrites the old 0022 seed.
+	if bill.Content != defaultPrompt(domain.PromptKeyBillExtraction) {
 		t.Errorf("seeded bill_extraction drifted from the built-in default")
 	}
 	offers, err := repo.GetByKey(ctx, domain.PromptKeyOfferSearch)
@@ -298,5 +306,123 @@ func TestAIPromptMigrationSeedMatchesDefaults(t *testing.T) {
 	}
 	if offers.Content != defaultOffersPromptHead {
 		t.Errorf("seeded offer_search drifted from the built-in default")
+	}
+	// Migration 0023 seeds the normalization prompt byte-identically to its
+	// built-in fallback.
+	normalization, err := repo.GetByKey(ctx, domain.PromptKeyProductNormalization)
+	if err != nil {
+		t.Fatalf("get seeded normalization prompt: %v", err)
+	}
+	if normalization.Content != defaultPrompt(domain.PromptKeyProductNormalization) {
+		t.Errorf("seeded product_normalization drifted from the built-in default")
+	}
+}
+
+// openRawSQLite opens a plain SQLite database without applying migrations
+// (the driver is registered by the blank import below, mirroring the
+// repository package).
+func openRawSQLite(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/migrations.db")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.Ping(); err != nil {
+		t.Fatalf("ping sqlite: %v", err)
+	}
+	return db
+}
+
+// applyEmbeddedMigrations executes the embedded migration files in order,
+// starting strictly after afterName ("" = from the first file) up to and
+// including lastName, mirroring repository.Open's sequential application
+// without the schema_migrations bookkeeping.
+func applyEmbeddedMigrations(t *testing.T, db *sql.DB, afterName, lastName string) {
+	t.Helper()
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		t.Fatalf("read embedded migrations: %v", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".sql") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	started := afterName == ""
+	found := false
+	for _, name := range names {
+		if !started {
+			if name == afterName {
+				started = true
+			}
+			continue
+		}
+		sqlBytes, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", name, err)
+		}
+		if _, err := db.ExecContext(context.Background(), string(sqlBytes)); err != nil {
+			t.Fatalf("apply migration %s: %v", name, err)
+		}
+		if name == lastName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("migration %s not found among %v", lastName, names)
+	}
+}
+
+// promptContent reads the raw ai_prompts content of one key straight from the
+// database (no repository involved).
+func promptContent(t *testing.T, db *sql.DB, key string) string {
+	t.Helper()
+	var content string
+	if err := db.QueryRow(`SELECT content FROM ai_prompts WHERE key = ?`, key).Scan(&content); err != nil {
+		t.Fatalf("read prompt %s: %v", key, err)
+	}
+	return content
+}
+
+// TestMigration0023RefreshesOnlyUnmodifiedBillExtractionSeed executes
+// migration 0023's guarded UPDATE against SQLite databases in the two states
+// it can meet: (i) a row still carrying the OLD default seeded by migration
+// 0022 → rewritten to the new default, (ii) a user-customized row → left
+// untouched.
+func TestMigration0023RefreshesOnlyUnmodifiedBillExtractionSeed(t *testing.T) {
+	// (i) The 0022-seeded default (read from 0022_ai_prompts.sql through the
+	// migrations themselves) is refreshed to the new default.
+	db := openRawSQLite(t)
+	applyEmbeddedMigrations(t, db, "", "0022_ai_prompts.sql")
+	oldContent := promptContent(t, db, domain.PromptKeyBillExtraction)
+	if oldContent == "" {
+		t.Fatal("0022 did not seed bill_extraction")
+	}
+	if oldContent == defaultBillExtractionPrompt {
+		t.Fatal("0022 seed already equals the new default; the guarded UPDATE under test would be a no-op")
+	}
+	applyEmbeddedMigrations(t, db, "0022_ai_prompts.sql", "0023_product_name_mappings.sql")
+	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != defaultBillExtractionPrompt {
+		t.Fatalf("old default not refreshed: got %q, want the new default byte-for-byte", got[:min(len(got), 120)])
+	}
+	// 0023 also seeds the normalization prompt with its built-in default.
+	if got := promptContent(t, db, domain.PromptKeyProductNormalization); got != defaultPrompt(domain.PromptKeyProductNormalization) {
+		t.Errorf("product_normalization seed drifted from the built-in default")
+	}
+
+	// (ii) A customized prompt survives the guarded refresh byte-for-byte.
+	db = openRawSQLite(t)
+	applyEmbeddedMigrations(t, db, "", "0022_ai_prompts.sql")
+	const custom = "my own receipt prompt"
+	if _, err := db.Exec(`UPDATE ai_prompts SET content = ? WHERE key = 'bill_extraction'`, custom); err != nil {
+		t.Fatalf("customize bill_extraction: %v", err)
+	}
+	applyEmbeddedMigrations(t, db, "0022_ai_prompts.sql", "0023_product_name_mappings.sql")
+	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != custom {
+		t.Fatalf("custom prompt must survive the guarded refresh: got %q, want %q", got, custom)
 	}
 }

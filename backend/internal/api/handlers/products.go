@@ -251,3 +251,38 @@ func (h *ProductHandler) Photo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	_, _ = w.Write(data)
 }
+
+// NormalizeName looks a raw text up in the product-name normalization memory
+// (GET /api/v1/products/normalize?name=…). Never calls the AI — the lookup is
+// the mapping memory's whole point.
+func (h *ProductHandler) NormalizeName(w http.ResponseWriter, r *http.Request) {
+	res, err := h.Svc.NormalizeName(r.Context(), r.URL.Query().Get("name"))
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, res)
+}
+
+// RunNormalization starts the "analyze existing products" job: the AI
+// standardizes the raw names of unmapped products and the results are
+// recorded in the normalization memory. Products are never modified.
+func (h *ProductHandler) RunNormalization(w http.ResponseWriter, r *http.Request) {
+	job, err := h.Svc.RunNormalization(r.Context())
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusAccepted, job)
+}
+
+// NormalizationStatus reports the state of the analysis job (status,
+// progress counters, last error) — the polling endpoint of RunNormalization.
+func (h *ProductHandler) NormalizationStatus(w http.ResponseWriter, r *http.Request) {
+	job, err := h.Svc.NormalizationStatus(r.Context())
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, job)
+}

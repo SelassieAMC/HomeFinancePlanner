@@ -13,6 +13,7 @@ import "time"
 type Product struct {
 	ID           int64  `json:"id"`
 	Name         string `json:"name"`
+	StandardName string `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
 	Brand        string `json:"brand,omitempty"`
 	Unit         string `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
 	CategoryID   *int64 `json:"category_id"`
@@ -36,6 +37,60 @@ type Product struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// MappingSource records who decided a raw→standard name mapping.
+type MappingSource string
+
+const (
+	// MappingSourceAI marks suggestions recorded by AI extraction or the
+	// "analyze existing products" job.
+	MappingSourceAI MappingSource = "ai"
+	// MappingSourceUser marks explicit corrections from the bill draft review.
+	MappingSourceUser MappingSource = "user"
+	// MappingSourceManual marks names typed in the manual expense form.
+	MappingSourceManual MappingSource = "manual"
+)
+
+// ProductNameMapping is one remembered normalization decision: the raw text
+// as printed on a receipt (or typed by hand) resolves to StandardName (+ an
+// optional category) until the user overrides it in review. RawName is unique
+// case-insensitively; several raw texts may share one StandardName — product
+// rows keep their raw names and only link to the standardized form through
+// this table.
+type ProductNameMapping struct {
+	ID           int64         `json:"id"`
+	RawName      string        `json:"raw_name"`
+	StandardName string        `json:"standard_name"`
+	CategoryID   *int64        `json:"category_id,omitempty"`
+	CategoryName string        `json:"category_name,omitempty"` // display-only, joined from categories
+	Source       MappingSource `json:"source"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+}
+
+// ProductNormalizationJobStatus is the state of the user-triggered
+// "analyze existing products" job (single row, id 1).
+type ProductNormalizationJobStatus string
+
+const (
+	ProductNormalizationIdle    ProductNormalizationJobStatus = "idle"
+	ProductNormalizationRunning ProductNormalizationJobStatus = "running"
+	ProductNormalizationDone    ProductNormalizationJobStatus = "done"
+	ProductNormalizationFailed  ProductNormalizationJobStatus = "failed"
+)
+
+// ProductNormalizationJob reports the progress of the backfill job that
+// asks the AI to standardize the raw names of existing products and stores
+// the mappings. Products themselves are never modified.
+type ProductNormalizationJob struct {
+	Status         ProductNormalizationJobStatus `json:"status"`
+	TotalNames     int64                         `json:"total_names"`
+	ProcessedNames int64                         `json:"processed_names"`
+	MappedNames    int64                         `json:"mapped_names"`
+	Error          string                        `json:"error,omitempty"`
+	CreatedAt      time.Time                     `json:"created_at"`
+	UpdatedAt      time.Time                     `json:"updated_at"`
 }
 
 // ProductFilters narrows the paged product list. Sort must be one of the

@@ -721,6 +721,12 @@ select:focus,
   font-weight: 600;
 }
 
+/* Standardized (normalized) name of a product, muted next to the raw text. */
+.product-standard {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
 .row-actions {
   display: flex;
   gap: 0.25rem;
@@ -1459,6 +1465,14 @@ select:focus,
   color: var(--text-muted);
 }
 
+/* Muted inline note inside an item-field label (e.g. the raw receipt text
+   next to the standardized-name override). */
+.item-field-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .item-field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -1998,6 +2012,14 @@ select:focus,
 .transaction-line .product-autocomplete {
   flex: 3;
   min-width: 180px;
+}
+
+/* Normalization-memory hint under a manual item line: the standardized name
+   the typed raw text maps to (wraps to its own row inside the flex line). */
+.transaction-line-normalized {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }
 
 .transaction-line-num {

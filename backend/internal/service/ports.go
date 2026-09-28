@@ -136,6 +136,33 @@ type AIPromptStore interface {
 	Delete(ctx context.Context, id int64) error
 }
 
+// ProductMappingStore is the persistence contract for the product-name
+// normalization memory. RawName is unique case-insensitively; Create reports
+// ErrConflict on a duplicate (the AI and manual paths never overwrite an
+// existing decision), Upsert overwrites (explicit user overrides only).
+type ProductMappingStore interface {
+	FindByRawName(ctx context.Context, raw string) (domain.ProductNameMapping, error)
+	Create(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error)
+	Upsert(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error)
+	// UnmappedProductNames lists products whose raw name has no mapping yet —
+	// the input of the "analyze existing products" backfill job.
+	UnmappedProductNames(ctx context.Context, limit int) ([]domain.Product, error)
+	// CountUnmappedProductNames totals those products (job progress).
+	CountUnmappedProductNames(ctx context.Context) (int64, error)
+	// GetJob/UpdateJob read and write the single product-normalization job
+	// row (id 1) — status, progress counters and the last error.
+	GetJob(ctx context.Context) (domain.ProductNormalizationJob, error)
+	UpdateJob(ctx context.Context, j domain.ProductNormalizationJob) error
+}
+
+// TextNormalizer runs the product-name normalization prompt against an AI
+// connector and returns the parsed raw→standard pairs (implemented by the
+// extractor: a prompt-only text completion plus JSON parsing — no image, no
+// web-search tool).
+type TextNormalizer interface {
+	NormalizeNames(ctx context.Context, provider domain.AIProvider, prompt string) ([]domain.ProductNameMapping, error)
+}
+
 // Services bundles the business services for handler wiring.
 type Services struct {
 	Accounts      *AccountService
@@ -154,7 +181,8 @@ type Services struct {
 
 // New wires services onto their stores. storeStore/productStore are the raw
 // repositories (find-or-create targets for manual purchases), alongside the
-// service wrappers the API handlers use.
+// service wrappers the API handlers use. mappings is the normalization memory
+// consulted by manual item lines (may be nil in tests).
 func New(
 	accounts AccountStore,
 	categories CategoryStore,
@@ -162,6 +190,7 @@ func New(
 	productSvc *ProductService,
 	storeStore StoreStore,
 	productStore ProductStore,
+	mappings ProductMappingStore,
 	transactions TransactionStore,
 	budgets BudgetStore,
 	summary SummaryStore,
@@ -177,7 +206,7 @@ func New(
 		Categories:    &CategoryService{categories: categories},
 		Stores:        storeSvc,
 		Products:      productSvc,
-		Transactions:  &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, log: slog.Default()},
+		Transactions:  &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, log: slog.Default()},
 		Budgets:       &BudgetService{budgets: budgets, categories: categories},
 		Summary:       &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},
 		Settings:      settings,

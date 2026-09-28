@@ -6,8 +6,9 @@ import "time"
 // need a managed prompt should add a constant here and a default in the
 // service layer; the key is the stable lookup the processes resolve by.
 const (
-	PromptKeyBillExtraction = "bill_extraction"
-	PromptKeyOfferSearch    = "offer_search"
+	PromptKeyBillExtraction       = "bill_extraction"
+	PromptKeyOfferSearch          = "offer_search"
+	PromptKeyProductNormalization = "product_normalization"
 )
 
 // AIPrompt is a managed instruction text sent to an AI connector. Key is the

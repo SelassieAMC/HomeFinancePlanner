@@ -154,6 +154,72 @@ func TestParseBillJSON_DepositReturnIsNegative(t *testing.T) {
 	}
 }
 
+func TestParseBillJSON_StandardNameFromModel(t *testing.T) {
+	// standard_name is part of the pinned schema: the raw printed text stays
+	// authoritative on the line, the readable form rides alongside it.
+	raw := `{"market_name":"REWE","date":"2026-05-03","payment_method":"card",
+		"items":[{"name":"WHL MLK 1L","standard_name":"Whole Milk 1L","quantity":1,"unit_price":1.20,"line_total":1.20}]}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Items) != 1 {
+		t.Fatalf("items: %d (want 1)", len(draft.Items))
+	}
+	if draft.Items[0].Name != "WHL MLK 1L" {
+		t.Errorf("raw name: %q (want the printed text verbatim)", draft.Items[0].Name)
+	}
+	if draft.Items[0].StandardName != "Whole Milk 1L" {
+		t.Errorf("standard name: %q (want %q)", draft.Items[0].StandardName, "Whole Milk 1L")
+	}
+}
+
+func TestParseBillJSON_StandardNameFallsBackToRawName(t *testing.T) {
+	// A model (or a user-customized prompt without the rule) may omit or blank
+	// the field — downstream code treats it as optional and sees the printed
+	// text instead.
+	raw := `{"market_name":"M","date":"2026-05-03","payment_method":"cash",
+		"items":[
+			{"name":"TOMATOS","quantity":1,"unit_price":2.00,"line_total":2.00},
+			{"name":"BREAD","standard_name":"","quantity":1,"unit_price":1.50,"line_total":1.50},
+			{"name":"EGGS","standard_name":"   ","quantity":1,"unit_price":2.50,"line_total":2.50}
+		]}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Items) != 3 {
+		t.Fatalf("items: %d (want 3)", len(draft.Items))
+	}
+	for _, it := range draft.Items {
+		if it.StandardName != it.Name {
+			t.Errorf("standard name for %q: %q (want fallback to the raw name)", it.Name, it.StandardName)
+		}
+	}
+}
+
+func TestParseBillJSON_StandardNameDepositReturnFallback(t *testing.T) {
+	// Deposit-return lines get no special-casing at parse level: the generic
+	// fallback applies, so a "Leergut" line without the field carries its raw
+	// printed text as the standardized name.
+	raw := `{"market_name":"REWE","date":"2026-05-03","payment_method":"card",
+		"items":[{"name":"LEERGUT 8","quantity":1,"unit_price":-1.60,"line_total":-1.60}]}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Items) != 1 {
+		t.Fatalf("items: %d (want 1)", len(draft.Items))
+	}
+	ret := draft.Items[0]
+	if !ret.IsReturn {
+		t.Error("leergut line not marked as deposit return")
+	}
+	if ret.StandardName != "LEERGUT 8" {
+		t.Errorf("standard name: %q (want fallback to %q)", ret.StandardName, "LEERGUT 8")
+	}
+}
+
 func TestNormalizeCardDigits(t *testing.T) {
 	cases := map[string]string{
 		"4321":      "4321",

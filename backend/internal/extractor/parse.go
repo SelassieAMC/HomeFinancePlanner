@@ -26,14 +26,15 @@ type rawWire struct {
 }
 
 type rawItem struct {
-	Name      string   `json:"name"`
-	Brand     string   `json:"brand"`
-	Unit      string   `json:"unit"`
-	Category  string   `json:"category"`
-	Quantity  *float64 `json:"quantity"`
-	UnitPrice *float64 `json:"unit_price"`
-	Discount  *float64 `json:"discount"`
-	LineTotal *float64 `json:"line_total"`
+	Name         string   `json:"name"`
+	StandardName string   `json:"standard_name"`
+	Brand        string   `json:"brand"`
+	Unit         string   `json:"unit"`
+	Category     string   `json:"category"`
+	Quantity     *float64 `json:"quantity"`
+	UnitPrice    *float64 `json:"unit_price"`
+	Discount     *float64 `json:"discount"`
+	LineTotal    *float64 `json:"line_total"`
 }
 
 var jsonFence = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)```")
@@ -84,6 +85,13 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 		if it.Quantity != nil && *it.Quantity > 0 {
 			qty = *it.Quantity
 		}
+		// The standardized name is a prompt-contract field: a model (or a
+		// user-customized prompt without the rule) may omit it — fall back to
+		// the printed text so downstream code can treat it as optional.
+		standardName := strings.TrimSpace(it.StandardName)
+		if standardName == "" {
+			standardName = name
+		}
 		var unit, disc, line float64
 		if it.UnitPrice != nil {
 			unit = *it.UnitPrice
@@ -100,6 +108,7 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 		draft.Items = append(draft.Items, domain.BillItemDraft{
 			Name:           name,
 			Brand:          strings.TrimSpace(it.Brand),
+			StandardName:   standardName,
 			Unit:           strings.ToLower(strings.TrimSpace(it.Unit)),
 			CategoryName:   strings.ToLower(strings.TrimSpace(it.Category)),
 			Quantity:       qty,

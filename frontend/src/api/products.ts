@@ -1,11 +1,13 @@
 import { apiClient } from './client';
 import type {
+  NormalizationJob,
   Paged,
   Product,
   ProductFilters,
   ProductInput,
   ProductMergeCheck,
   ProductMergeInput,
+  ProductNormalizeResult,
   ProductStorePrice,
 } from '../types/domain';
 
@@ -27,6 +29,18 @@ function toQuery(filters: ProductFilters): string {
 export const productsApi = {
   list: (filters: ProductFilters = {}, init?: { signal?: AbortSignal }) =>
     apiClient.get<Paged<Product>>(`${BASE}/products${toQuery(filters)}`, init),
+  /** Normalization memory lookup for one raw text (no AI call): what the
+   *  standardized name is, if any mapping exists. matched:false → unmapped. */
+  normalizeName: (name: string) =>
+    apiClient.get<ProductNormalizeResult>(
+      `${BASE}/products/normalize?name=${encodeURIComponent(name)}`,
+    ),
+  /** Starts the "analyze existing products" backfill job (202; poll status). */
+  runNormalization: () =>
+    apiClient.post<NormalizationJob>(`${BASE}/products/normalization/run`, {}),
+  /** Polls the backfill job: status, progress counters, last error. */
+  normalizationStatus: () =>
+    apiClient.get<NormalizationJob>(`${BASE}/products/normalization`),
   get: (id: number) => apiClient.get<Product>(`${BASE}/products/${id}`),
   /** Latest price per store (details modal), scoped to the product's latest
    *  purchase currency. */

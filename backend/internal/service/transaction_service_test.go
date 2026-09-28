@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"home-finance-planner/backend/internal/domain"
@@ -223,6 +224,98 @@ func TestTransactionBillGuard(t *testing.T) {
 	}
 	if err := svc.Delete(ctx, manual.ID); err != nil {
 		t.Fatalf("delete manual: %v", err)
+	}
+}
+
+// TestTransactionCreateAppliesMappingMemory covers the normalization memory
+// on manual purchases: a typed name that is already mapped fills its category
+// only when the input left it open (an explicit input category wins), an
+// unmapped name records an identity mapping with source 'manual', and return
+// lines never touch the memory at all.
+func TestTransactionCreateAppliesMappingMemory(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newTestTransactionService(t)
+	mappings := newFakeProductMappingStore()
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "Milk", StandardName: "Milk 1L", CategoryID: ptrInt64(8), Source: domain.MappingSourceUser,
+	})
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "Oats", StandardName: "Oats", CategoryID: ptrInt64(8), Source: domain.MappingSourceManual,
+	})
+	svc.mappings = mappings
+
+	in := validTransactionInput()
+	in.Items = []TransactionItemInput{
+		{Name: "Milk", Quantity: 1, UnitPriceCents: 139},                         // category filled from the memory (8)
+		{Name: "Oats", CategoryID: ptrInt64(7), Quantity: 1, UnitPriceCents: 99}, // input category wins (7, not the memory's 8)
+		{Name: "Bread", Quantity: 1, UnitPriceCents: 250},                        // unmapped → identity mapping recorded
+		{Name: "Leergut", Quantity: 8, UnitPriceCents: -25},                      // return line: skipped
+	}
+	created, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// The stored lines carry the resolved categories.
+	if c := created.Items[0].CategoryID; c == nil || *c != 8 {
+		t.Errorf("milk category = %v, want the mapping's 8", created.Items[0].CategoryID)
+	}
+	if c := created.Items[1].CategoryID; c == nil || *c != 7 {
+		t.Errorf("oats category = %v, want the input's 7 to win over the mapping's 8", created.Items[1].CategoryID)
+	}
+	if c := created.Items[2].CategoryID; c != nil {
+		t.Errorf("bread category = %v, want nil (no mapping, no input)", c)
+	}
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	// The identity-mapping Creates: every non-return purchase line, including
+	// the already-mapped ones (their Create conflicts and is tolerated).
+	if len(mappings.creates) != 3 {
+		t.Fatalf("creates = %+v, want one per non-return line (Milk, Oats, Bread)", mappings.creates)
+	}
+	bread := mappings.creates[2]
+	if bread.RawName != "Bread" || bread.StandardName != "Bread" || bread.Source != domain.MappingSourceManual {
+		t.Fatalf("bread identity mapping = %+v, want raw=standard=Bread (manual)", bread)
+	}
+	for _, looked := range mappings.lookups {
+		if strings.Contains(strings.ToLower(looked), "leergut") {
+			t.Errorf("return line %q must not be looked up in the memory", looked)
+		}
+	}
+	// The existing decisions were never overwritten by the identity Creates.
+	if m := mappings.items["milk"]; m.StandardName != "Milk 1L" || m.Source != domain.MappingSourceUser {
+		t.Errorf("existing Milk decision was overwritten: %+v", m)
+	}
+}
+
+// TestTransactionCreateRecordsIdentityMappings pins the identity-mapping
+// shape of a fresh typed name: raw = standard, the line's resolved category,
+// source 'manual'.
+func TestTransactionCreateRecordsIdentityMappings(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newTestTransactionService(t)
+	mappings := newFakeProductMappingStore()
+	svc.mappings = mappings
+
+	in := validTransactionInput()
+	in.Items = []TransactionItemInput{
+		{Name: "Yoghurt", CategoryID: ptrInt64(8), Quantity: 1, UnitPriceCents: 159},
+		{Name: "Leergut 0.25", Quantity: 4, UnitPriceCents: -25},
+	}
+	if _, err := svc.Create(ctx, in); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.creates) != 1 {
+		t.Fatalf("creates = %+v, want only the Yoghurt identity mapping (return lines are skipped)", mappings.creates)
+	}
+	m := mappings.creates[0]
+	if m.RawName != "Yoghurt" || m.StandardName != "Yoghurt" ||
+		m.CategoryID == nil || *m.CategoryID != 8 || m.Source != domain.MappingSourceManual {
+		t.Fatalf("identity mapping = %+v, want Yoghurt→Yoghurt cat 8 (manual)", m)
 	}
 }
 

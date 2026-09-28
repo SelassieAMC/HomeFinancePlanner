@@ -119,6 +119,57 @@ func TestTransactionRepositoryCreateWithItems(t *testing.T) {
 	}
 }
 
+func TestTransactionRepositoryItemsCarryStandardName(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	mappings := NewProductNameMappingRepository(db)
+	accountID := seedTransactionBase(t, db)
+
+	// One line's raw text has a remembered normalization, the other's does not.
+	if _, err := mappings.Create(ctx, domain.ProductNameMapping{
+		RawName:      "WHL MLK 1L",
+		StandardName: "Whole Milk 1L",
+		Source:       domain.MappingSourceManual,
+	}); err != nil {
+		t.Fatalf("seed mapping: %v", err)
+	}
+
+	created, err := repo.CreateWithItems(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 370,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+	}, []domain.TransactionItem{
+		{Name: "WHL MLK 1L", Quantity: 1, UnitPriceCents: 120, LineTotalCents: 120},
+		{Name: "Bread", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250},
+	})
+	if err != nil {
+		t.Fatalf("create with items: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("items: %d (want 2)", len(got.Items))
+	}
+	// The mapped line carries the standardized name alongside the raw text.
+	if got.Items[0].Name != "WHL MLK 1L" {
+		t.Fatalf("raw name = %q; want the typed text verbatim", got.Items[0].Name)
+	}
+	if got.Items[0].StandardName != "Whole Milk 1L" {
+		t.Fatalf("standard name = %q; want the mapping's %q", got.Items[0].StandardName, "Whole Milk 1L")
+	}
+	// The unmapped line has no standard name to join.
+	if got.Items[1].StandardName != "" {
+		t.Fatalf("unmapped standard name = %q; want empty", got.Items[1].StandardName)
+	}
+}
+
 func TestTransactionRepositoryBillIDRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

@@ -18,6 +18,8 @@ interface Props {
   currency?: string;
   placeholder?: string;
   ariaLabel: string;
+  /** Fires when the input loses focus (before any suggestion pick). */
+  onBlur?: () => void;
 }
 
 const DEBOUNCE_MS = 300;
@@ -30,6 +32,7 @@ export function ProductAutocomplete({
   currency = '',
   placeholder,
   ariaLabel,
+  onBlur,
 }: Props) {
   const [matches, setMatches] = useState<Product[]>([]);
   const [open, setOpen] = useState(false);
@@ -140,6 +143,7 @@ export function ProductAutocomplete({
         }}
         onFocus={() => value.trim() !== '' && setOpen(true)}
         onKeyDown={onKeyDown}
+        onBlur={onBlur}
       />
       {showList && (
         <ul

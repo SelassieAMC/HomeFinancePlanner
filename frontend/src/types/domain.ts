@@ -58,6 +58,7 @@ export interface TransactionItem {
   product_id?: number | null;
   product_name?: string; // display-only join
   name: string;
+  standard_name?: string; // display-only join: raw text → standardized name
   brand?: string;
   unit?: string;
   category_id?: number | null;
@@ -156,6 +157,7 @@ export interface StoreInput {
 export interface Product {
   id: number;
   name: string;
+  standard_name?: string; // display-only join: raw text → standardized name
   brand?: string;
   unit?: string; // measure: kg, g, l, ml, pcs, …
   category_id?: number | null;
@@ -278,6 +280,7 @@ export interface BillItem {
   id: number;
   bill_id: number;
   name: string;
+  standard_name?: string; // display-only join: raw text → standardized name
   brand?: string; // optional, editable in the draft
   unit?: string; // measure: kg, g, l, ml, pcs, …
   category_id?: number | null;
@@ -386,6 +389,7 @@ export interface BillStatsResponse {
 export interface BillDraftItem {
   id: number; // session-local line number (1..n)
   name: string;
+  standard_name?: string; // AI/memory suggestion, editable (learned at confirm)
   brand?: string;
   unit?: string; // measure: kg, g, l, ml, pcs, …
   category_name?: string;
@@ -498,6 +502,7 @@ export interface BillConfirmInput {
   budget_id?: number; // optional budget this bill counts toward
   items: {
     name: string;
+    standard_name?: string; // per-line override (empty = raw name)
     brand?: string;
     unit?: string;
     category_id?: number | null;
@@ -507,4 +512,28 @@ export interface BillConfirmInput {
     budget_id?: number | null; // per-line override (omitted = bill's budget)
   }[];
   account_id?: number;
+}
+
+// --- Product name normalization (canonical name mapping memory) ------------
+
+/** GET /products/normalize — memory lookup for one raw text (no AI call). */
+export interface ProductNormalizeResult {
+  raw_name: string;
+  standard_name?: string;
+  category_id?: number | null;
+  category_name?: string;
+  source?: 'ai' | 'user' | 'manual';
+  /** False when the raw text has no mapping yet. */
+  matched: boolean;
+}
+
+/** Single-row status of the "analyze existing products" backfill job. */
+export interface NormalizationJob {
+  status: 'idle' | 'running' | 'done' | 'failed';
+  total_names: number;
+  processed_names: number;
+  mapped_names: number;
+  error?: string;
+  created_at: string;
+  updated_at: string;
 }

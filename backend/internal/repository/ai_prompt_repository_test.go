@@ -13,13 +13,13 @@ func TestAIPromptRepository_CRUD(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewAIPromptRepository(db)
 
-	// The migration seeds the two known prompts.
+	// The migration seeds the three known prompts.
 	seeded, err := repo.List(ctx)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(seeded) != 2 {
-		t.Fatalf("expected 2 seeded prompts, got %d", len(seeded))
+	if len(seeded) != 3 {
+		t.Fatalf("expected 3 seeded prompts, got %d", len(seeded))
 	}
 
 	created, err := repo.Create(ctx, domain.AIPrompt{

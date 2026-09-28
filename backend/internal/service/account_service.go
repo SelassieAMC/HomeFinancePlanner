@@ -131,7 +131,12 @@ type TransactionService struct {
 	categories   CategoryStore
 	stores       StoreStore
 	products     ProductStore
-	log          *slog.Logger
+	// mappings is the product-name normalization memory: a typed name that is
+	// already mapped fills its category from the mapping, and an unmapped
+	// name records an identity mapping so the next entry normalizes without
+	// asking. nil disables the layer (tests).
+	mappings ProductMappingStore
+	log      *slog.Logger
 }
 
 // maxTransactionItems caps the item lines of one manual transaction, like the
@@ -269,6 +274,9 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	// category with allows_negative (the seeded "Deposit & Returns" / Pfand
 	// family) are money back — their unit price and line total may be
 	// negative and reduce the items total.
+	if s.log == nil {
+		s.log = slog.Default()
+	}
 	items := make([]domain.TransactionItem, 0, len(in.Items))
 	itemsTotal := int64(0)
 	for _, it := range in.Items {
@@ -279,11 +287,25 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		if it.Quantity <= 0 {
 			return domain.Transaction{}, validationError("quantity for %q must be positive", name)
 		}
+		// Normalization memory: a typed name that is already mapped fills its
+		// category when the user left it open. The typed name itself stays
+		// untouched — it is the raw text the product catalogue keys on.
+		categoryID := it.CategoryID
+		isReturn := isDepositReturn(name)
+		if s.mappings != nil && !isReturn {
+			if m, err := s.mappings.FindByRawName(ctx, name); err == nil {
+				if categoryID == nil {
+					categoryID = m.CategoryID
+				}
+			} else if !errors.Is(err, domain.ErrNotFound) {
+				s.log.Warn("lookup product mapping", "raw", name, "error", err)
+			}
+		}
 		// The negative rule needs the line's category, so it is resolved
 		// before the price checks — like buildBill.
-		allowsNegative := isDepositReturn(name)
-		if it.CategoryID != nil {
-			cat, err := s.categories.GetByID(ctx, *it.CategoryID)
+		allowsNegative := isReturn
+		if categoryID != nil {
+			cat, err := s.categories.GetByID(ctx, *categoryID)
 			if err != nil {
 				return domain.Transaction{}, fmt.Errorf("validate category for %q: %w", name, err)
 			}
@@ -302,7 +324,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 			Name:           name,
 			Brand:          strings.TrimSpace(it.Brand),
 			Unit:           strings.ToLower(strings.TrimSpace(it.Unit)),
-			CategoryID:     it.CategoryID,
+			CategoryID:     categoryID,
 			Quantity:       it.Quantity,
 			UnitPriceCents: it.UnitPriceCents,
 			DiscountCents:  it.DiscountCents,
@@ -320,14 +342,25 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	// and the line stays unlinked, never blocking the financial record.
 	// Money-back lines (Leergut / negative prices) stay unlinked, like bill
 	// returns, so purchase stats and store prices stay about real purchases.
-	if s.log == nil {
-		s.log = slog.Default()
-	}
 	for i := range items {
 		if items[i].UnitPriceCents < 0 || isDepositReturn(items[i].Name) {
 			continue
 		}
 		items[i].ProductID = s.resolveTransactionProduct(ctx, items[i])
+		// Record the typed name into the normalization memory (identity
+		// mapping, source 'manual'): a name that matches nothing today is its
+		// own standard form until a scan or the analysis job decides
+		// otherwise. ErrConflict means it is already mapped — fine.
+		if s.mappings != nil {
+			if _, err := s.mappings.Create(ctx, domain.ProductNameMapping{
+				RawName:      items[i].Name,
+				StandardName: items[i].Name,
+				CategoryID:   items[i].CategoryID,
+				Source:       domain.MappingSourceManual,
+			}); err != nil && !errors.Is(err, domain.ErrConflict) {
+				s.log.Warn("record manual product mapping", "raw", items[i].Name, "error", err)
+			}
+		}
 	}
 
 	return domain.Transaction{

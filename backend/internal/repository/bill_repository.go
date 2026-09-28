@@ -320,10 +320,11 @@ func (r *BillRepository) Stats(ctx context.Context, groupBy, month, from, to str
 
 func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]domain.BillItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT bi.id, bi.bill_id, bi.name, bi.brand, bi.unit, bi.category_id, COALESCE(c.name, ''),
+		SELECT bi.id, bi.bill_id, bi.name, COALESCE(pnm.standard_name, ''), bi.brand, bi.unit, bi.category_id, COALESCE(c.name, ''),
 		       bi.quantity, bi.unit_price_cents, bi.discount_cents, bi.line_total_cents, bi.is_return, bi.budget_id, bi.product_id
 		FROM bill_items bi
 		LEFT JOIN categories c ON c.id = bi.category_id
+		LEFT JOIN product_name_mappings pnm ON pnm.raw_name = bi.name COLLATE NOCASE
 		WHERE bi.bill_id = ? ORDER BY bi.id`, billID)
 	if err != nil {
 		return nil, fmt.Errorf("list bill items: %w", err)
@@ -333,7 +334,7 @@ func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]doma
 	out := []domain.BillItem{}
 	for rows.Next() {
 		var it domain.BillItem
-		if err := rows.Scan(&it.ID, &it.BillID, &it.Name, &it.Brand, &it.Unit, &it.CategoryID, &it.CategoryName,
+		if err := rows.Scan(&it.ID, &it.BillID, &it.Name, &it.StandardName, &it.Brand, &it.Unit, &it.CategoryID, &it.CategoryName,
 			&it.Quantity, &it.UnitPriceCents, &it.DiscountCents, &it.LineTotalCents, &it.IsReturn, &it.BudgetID, &it.ProductID); err != nil {
 			return nil, fmt.Errorf("scan bill item: %w", err)
 		}

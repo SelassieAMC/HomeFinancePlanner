@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Account, Category, Store, Transaction, TransactionInput, TransactionKind } from '../../types/domain';
+import { productsApi } from '../../api/products';
 import { dollarsToCents, formatCents } from '../../lib/money';
 import { categoriesBySection } from '../../lib/categories';
 import {
@@ -35,6 +36,10 @@ interface LineDraft {
   qty: string;
   price: string;
   discount: string;
+  /** Name the last normalization lookup ran for (repeat blurs are free). */
+  normalizedFor?: string;
+  /** Standardized name the raw text maps to — display-only hint. */
+  normalizedName?: string;
 }
 
 let nextLineKey = 1;
@@ -126,6 +131,42 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
 
   function updateLine(key: number, patch: Partial<LineDraft>) {
     setLines((ls) => ls.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  }
+
+  // Normalization-memory lookup when the name field is left: shows the
+  // standardized name the raw text maps to and fills the product category
+  // when unset. The typed name is never changed — unknown names are recorded
+  // as identity mappings server-side on save. Deposit/return lines are
+  // never normalized.
+  async function lookupNormalization(line: LineDraft) {
+    const name = line.name.trim();
+    if (
+      !name ||
+      name.toLowerCase().includes('leergut') ||
+      line.normalizedFor === name
+    ) {
+      return;
+    }
+    updateLine(line.key, { normalizedFor: name, normalizedName: undefined });
+    try {
+      const res = await productsApi.normalizeName(name);
+      if (!res.matched) return;
+      // Apply only when the name is still the one looked up — the line may
+      // have been edited (or picked from the autocomplete) in the meantime.
+      setLines((ls) =>
+        ls.map((l) =>
+          l.key === line.key && l.name.trim() === name
+            ? {
+                ...l,
+                normalizedName: res.standard_name,
+                category_id: l.category_id ?? (res.category_id ?? null),
+              }
+            : l,
+        ),
+      );
+    } catch {
+      // Best-effort hint; failures just leave it hidden.
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -301,14 +342,18 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 onPick={(p) => {
                   // Picking an existing product seeds its brand/unit and
                   // canonicalizes the name; an Escape-kept name is
-                  // auto-created on save.
+                  // auto-created on save. A pick wins over the
+                  // normalization hint, which is cleared.
                   updateLine(line.key, {
                     name: p ? p.name : line.name,
                     brand: p?.brand || line.brand,
                     unit: p?.unit || line.unit,
                     category_id: p?.category_id ?? line.category_id,
+                    normalizedFor: undefined,
+                    normalizedName: undefined,
                   });
                 }}
+                onBlur={() => void lookupNormalization(line)}
                 currency={currency}
                 placeholder={`Item ${i + 1} name`}
                 ariaLabel={`Item ${i + 1} name`}
@@ -362,6 +407,12 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               >
                 ✕
               </Button>
+              {line.normalizedName &&
+                line.normalizedName.toLowerCase() !== line.name.trim().toLowerCase() && (
+                  <span className="transaction-line-normalized">
+                    ↳ known as “{line.normalizedName}”
+                  </span>
+                )}
             </div>
           );
         })}
