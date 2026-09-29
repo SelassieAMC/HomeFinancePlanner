@@ -2,7 +2,6 @@ package extractor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -137,7 +136,8 @@ func (e *Extractor) openAIText(ctx context.Context, provider domain.AIProvider, 
 }
 
 // NormalizeNames runs the prompt-only normalization call and parses the
-// {"items":[…]} answer into raw→standard pairs (service-facing wrapper).
+// {"items":[…]} answer into raw→standard(+generic) mappings (service-facing
+// wrapper).
 func (e *Extractor) NormalizeNames(ctx context.Context, provider domain.AIProvider, prompt string) ([]domain.ProductNameMapping, error) {
 	raw, err := e.CompleteText(ctx, provider, prompt)
 	if err != nil {
@@ -149,31 +149,35 @@ func (e *Extractor) NormalizeNames(ctx context.Context, provider domain.AIProvid
 	}
 	out := make([]domain.ProductNameMapping, 0, len(items))
 	for _, it := range items {
-		out = append(out, domain.ProductNameMapping{RawName: it.Name, StandardName: it.StandardName})
+		out = append(out, domain.ProductNameMapping{RawName: it.Name, StandardName: it.StandardName, GenericName: it.GenericName})
 	}
 	return out, nil
 }
 
-// NormalizedName is one raw→standard answer of the normalization prompt.
+// NormalizedName is one raw→standard(+generic) answer of the normalization
+// prompt.
 type NormalizedName struct {
 	Name         string `json:"name"`
 	StandardName string `json:"standard_name"`
+	GenericName  string `json:"generic_name"`
 }
 
 // ParseNormalizationJSON extracts the {"items":[…]} object from a model
-// response and returns the raw→standard pairs. Names are matched back to
-// the prompt inputs case-insensitively by the caller; entries missing a
-// standard name are dropped (the raw name then stays unmapped).
+// response and returns the raw→standard(+generic) pairs. Names are matched
+// back to the prompt inputs case-insensitively by the caller; entries
+// missing a standard name are dropped (the raw name then stays unmapped).
+// The generic name is optional — a custom prompt without the field yields
+// empty generics.
 func ParseNormalizationJSON(raw string) ([]NormalizedName, error) {
-	cleaned, err := extractJSONObject(raw)
-	if err != nil {
-		return nil, err
-	}
 	var wire struct {
 		Items []NormalizedName `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(cleaned), &wire); err != nil {
-		return nil, fmt.Errorf("decode JSON: %w", err)
+	if err := decodeBestObject(raw, &wire, func(w *struct {
+		Items []NormalizedName `json:"items"`
+	}) bool {
+		return len(w.Items) > 0
+	}); err != nil {
+		return nil, err
 	}
 	out := []NormalizedName{}
 	for _, it := range wire.Items {
@@ -182,7 +186,7 @@ func ParseNormalizationJSON(raw string) ([]NormalizedName, error) {
 		if name == "" || standard == "" {
 			continue
 		}
-		out = append(out, NormalizedName{Name: name, StandardName: standard})
+		out = append(out, NormalizedName{Name: name, StandardName: standard, GenericName: strings.TrimSpace(it.GenericName)})
 	}
 	return out, nil
 }

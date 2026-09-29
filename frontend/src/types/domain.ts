@@ -59,6 +59,7 @@ export interface TransactionItem {
   product_name?: string; // display-only join
   name: string;
   standard_name?: string; // display-only join: raw text → standardized name
+  generic_name?: string; // display-only join: raw text → generic product family
   brand?: string;
   unit?: string;
   category_id?: number | null;
@@ -158,6 +159,7 @@ export interface Product {
   id: number;
   name: string;
   standard_name?: string; // display-only join: raw text → standardized name
+  generic_name?: string; // display-only join: raw text → generic product family
   brand?: string;
   unit?: string; // measure: kg, g, l, ml, pcs, …
   category_id?: number | null;
@@ -194,6 +196,8 @@ export interface ProductInput {
   description?: string;
   /** Normalization-mapping decision for the raw name; omitted = untouched. */
   standard_name?: string;
+  /** Generic product-family decision; omitted = untouched, '' = cleared. */
+  generic_name?: string;
 }
 
 /** Pre-save rename check: the matched product and the merge plan to confirm.
@@ -283,6 +287,7 @@ export interface BillItem {
   bill_id: number;
   name: string;
   standard_name?: string; // display-only join: raw text → standardized name
+  generic_name?: string; // display-only join: raw text → generic product family
   brand?: string; // optional, editable in the draft
   unit?: string; // measure: kg, g, l, ml, pcs, …
   category_id?: number | null;
@@ -316,6 +321,7 @@ export interface Bill {
   account_id?: number | null; // account of that transaction (display-only, joined)
   account_name?: string; // display-only, joined from accounts
   store_id?: number | null; // store resolved from market_name (nullable)
+  file_count?: number; // receipt parts stored for this bill (omitted for single-file bills)
   items?: BillItem[];
   created_at: string;
   updated_at: string;
@@ -392,6 +398,7 @@ export interface BillDraftItem {
   id: number; // session-local line number (1..n)
   name: string;
   standard_name?: string; // AI/memory suggestion, editable (learned at confirm)
+  generic_name?: string; // AI/memory family suggestion, editable (learned at confirm)
   brand?: string;
   unit?: string; // measure: kg, g, l, ml, pcs, …
   category_name?: string;
@@ -428,6 +435,7 @@ export interface BillScan {
   provider_id?: string;
   draft?: BillDraft; // absent while analyzing or failed
   error?: string; // set when failed
+  file_count?: number; // receipt parts in this upload (omitted for single-file scans)
   created_at?: string;
 }
 
@@ -505,6 +513,7 @@ export interface BillConfirmInput {
   items: {
     name: string;
     standard_name?: string; // per-line override (empty = raw name)
+    generic_name?: string; // per-line family override (empty = no family)
     brand?: string;
     unit?: string;
     category_id?: number | null;
@@ -522,6 +531,7 @@ export interface BillConfirmInput {
 export interface ProductNormalizeResult {
   raw_name: string;
   standard_name?: string;
+  generic_name?: string;
   category_id?: number | null;
   category_name?: string;
   source?: 'ai' | 'user' | 'manual';

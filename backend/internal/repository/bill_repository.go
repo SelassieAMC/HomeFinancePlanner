@@ -22,7 +22,8 @@ const billColumns = `
 	b.id, b.market_name, b.date, b.payment_method, b.card_last_digits, b.currency,
 	b.items_subtotal_cents, b.discount_cents, b.vat_cents, b.total_cents, b.printed_total_cents,
 	b.status, b.image_path, b.extracted_by, b.created_at, b.updated_at, b.budget_id, b.transaction_id, b.store_id, bg.name,
-	t.account_id, a.name`
+	t.account_id, a.name,
+	(SELECT COUNT(*) FROM bill_files bf WHERE bf.bill_id = b.id) AS file_count`
 
 const billFrom = `
 	FROM bills b
@@ -73,6 +74,17 @@ func (r *BillRepository) Create(ctx context.Context, b domain.Bill) (domain.Bill
 			item.DiscountCents, item.LineTotalCents, item.IsReturn, item.BudgetID, item.ProductID); err != nil {
 			tx.Rollback()
 			return domain.Bill{}, mapWriteError("create bill item", err)
+		}
+	}
+
+	for i, f := range b.Files {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO bill_files
+				(bill_id, position, file_path, mime_type, file_hash, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			id, i+1, f.Path, f.MimeType, f.FileHash, now); err != nil {
+			tx.Rollback()
+			return domain.Bill{}, mapWriteError("create bill file", err)
 		}
 	}
 
@@ -155,6 +167,10 @@ func (r *BillRepository) Delete(ctx context.Context, id int64) error {
 		tx.Rollback()
 		return fmt.Errorf("delete bill items: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bill_files WHERE bill_id = ?`, id); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("delete bill files: %w", err)
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM bills WHERE id = ?`, id)
 	if err != nil {
 		tx.Rollback()
@@ -171,13 +187,14 @@ func (r *BillRepository) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// GetByFileHash returns the saved bill carrying this receipt hash (without
-// items), or domain.ErrNotFound. Used to reject re-uploads of a receipt that
-// has already been processed.
+// GetByFileHash returns the saved bill carrying this receipt-part hash
+// (without items), or domain.ErrNotFound. Used to reject re-uploads of a
+// receipt that has already been processed — any part matching is a conflict.
 func (r *BillRepository) GetByFileHash(ctx context.Context, hash string) (domain.Bill, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT b.id, b.market_name, b.date, b.total_cents, b.status
-		 FROM bills b WHERE b.file_hash = ? LIMIT 1`, hash)
+		 FROM bills b JOIN bill_files bf ON bf.bill_id = b.id
+		 WHERE bf.file_hash = ? LIMIT 1`, hash)
 	var b domain.Bill
 	var status string
 	err := row.Scan(&b.ID, &b.MarketName, &b.Date, &b.TotalCents, &status)
@@ -209,6 +226,11 @@ func (r *BillRepository) GetByID(ctx context.Context, id int64) (domain.Bill, er
 		return domain.Bill{}, err
 	}
 	b.Items = items
+	files, err := r.billFilesFor(ctx, id)
+	if err != nil {
+		return domain.Bill{}, err
+	}
+	b.Files = files
 	return b, nil
 }
 
@@ -320,7 +342,7 @@ func (r *BillRepository) Stats(ctx context.Context, groupBy, month, from, to str
 
 func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]domain.BillItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT bi.id, bi.bill_id, bi.name, COALESCE(pnm.standard_name, ''), bi.brand, bi.unit, bi.category_id, COALESCE(c.name, ''),
+		SELECT bi.id, bi.bill_id, bi.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), bi.brand, bi.unit, bi.category_id, COALESCE(c.name, ''),
 		       bi.quantity, bi.unit_price_cents, bi.discount_cents, bi.line_total_cents, bi.is_return, bi.budget_id, bi.product_id
 		FROM bill_items bi
 		LEFT JOIN categories c ON c.id = bi.category_id
@@ -334,11 +356,34 @@ func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]doma
 	out := []domain.BillItem{}
 	for rows.Next() {
 		var it domain.BillItem
-		if err := rows.Scan(&it.ID, &it.BillID, &it.Name, &it.StandardName, &it.Brand, &it.Unit, &it.CategoryID, &it.CategoryName,
+		if err := rows.Scan(&it.ID, &it.BillID, &it.Name, &it.StandardName, &it.GenericName, &it.Brand, &it.Unit, &it.CategoryID, &it.CategoryName,
 			&it.Quantity, &it.UnitPriceCents, &it.DiscountCents, &it.LineTotalCents, &it.IsReturn, &it.BudgetID, &it.ProductID); err != nil {
 			return nil, fmt.Errorf("scan bill item: %w", err)
 		}
 		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// billFilesFor loads one bill's stored receipt parts in position order.
+func (r *BillRepository) billFilesFor(ctx context.Context, billID int64) ([]domain.BillFile, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, bill_id, position, file_path, mime_type, file_hash, created_at
+		FROM bill_files WHERE bill_id = ? ORDER BY position`, billID)
+	if err != nil {
+		return nil, fmt.Errorf("list bill files: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.BillFile{}
+	for rows.Next() {
+		var f domain.BillFile
+		var createdAt int64
+		if err := rows.Scan(&f.ID, &f.BillID, &f.Position, &f.Path, &f.MimeType, &f.FileHash, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan bill file row: %w", err)
+		}
+		f.CreatedAt = time.Unix(createdAt, 0).UTC()
+		out = append(out, f)
 	}
 	return out, rows.Err()
 }
@@ -390,7 +435,7 @@ func scanBill(row interface{ Scan(dest ...any) error }) (domain.Bill, error) {
 	if err := row.Scan(&b.ID, &b.MarketName, &b.Date, &b.PaymentMethod, &b.CardLastDigits, &b.Currency,
 		&b.ItemsSubtotalCents, &b.DiscountCents, &b.VATCents, &b.TotalCents, &b.PrintedTotalCents,
 		&status, &b.ImagePath, &b.ExtractedBy, &createdAt, &upd, &b.BudgetID, &b.TransactionID, &b.StoreID, &budgetName,
-		&accountID, &accountName); err != nil {
+		&accountID, &accountName, &b.FileCount); err != nil {
 		return domain.Bill{}, err
 	}
 	b.BudgetName = budgetName.String

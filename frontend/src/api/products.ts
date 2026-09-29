@@ -48,8 +48,8 @@ export const productsApi = {
     apiClient.get<ProductStorePrice[]>(`${BASE}/products/${id}/prices`),
   /** Replaces name/brand/unit/category/description on the products row;
    *  historical bill/transaction lines keep their snapshot values. A
-   *  submitted standard_name learns the normalization mapping (source
-   *  user); omit the field to leave the mapping untouched. */
+   *  submitted standard_name or generic_name learns the normalization
+   *  mapping (source user); omit a field to leave that decision untouched. */
   update: (id: number, input: ProductInput) =>
     apiClient.put<Product>(`${BASE}/products/${id}`, input),
   /** Pre-save rename check: does the new name match an existing product, and

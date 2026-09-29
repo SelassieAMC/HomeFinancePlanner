@@ -161,6 +161,9 @@ export function ProductsPage() {
                           product.name.toLowerCase() && (
                           <span className="product-standard">↳ {product.standard_name}</span>
                         )}
+                      {product.generic_name && (
+                        <span className="product-standard">· {product.generic_name}</span>
+                      )}
                     </div>
                   </td>
                   <td>{product.category_name || '—'}</td>

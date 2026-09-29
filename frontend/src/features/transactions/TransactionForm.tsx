@@ -40,6 +40,8 @@ interface LineDraft {
   normalizedFor?: string;
   /** Standardized name the raw text maps to — display-only hint. */
   normalizedName?: string;
+  /** Generic product family the raw text maps to — display-only hint. */
+  normalizedGeneric?: string;
 }
 
 let nextLineKey = 1;
@@ -147,7 +149,11 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
     ) {
       return;
     }
-    updateLine(line.key, { normalizedFor: name, normalizedName: undefined });
+    updateLine(line.key, {
+      normalizedFor: name,
+      normalizedName: undefined,
+      normalizedGeneric: undefined,
+    });
     try {
       const res = await productsApi.normalizeName(name);
       if (!res.matched) return;
@@ -159,6 +165,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             ? {
                 ...l,
                 normalizedName: res.standard_name,
+                normalizedGeneric: res.generic_name,
                 category_id: l.category_id ?? (res.category_id ?? null),
               }
             : l,
@@ -351,6 +358,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                     category_id: p?.category_id ?? line.category_id,
                     normalizedFor: undefined,
                     normalizedName: undefined,
+                    normalizedGeneric: undefined,
                   });
                 }}
                 onBlur={() => void lookupNormalization(line)}
@@ -411,8 +419,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 line.normalizedName.toLowerCase() !== line.name.trim().toLowerCase() && (
                   <span className="transaction-line-normalized">
                     ↳ known as “{line.normalizedName}”
+                    {line.normalizedGeneric && ` · family “${line.normalizedGeneric}”`}
                   </span>
                 )}
+              {!line.normalizedName && line.normalizedGeneric && (
+                <span className="transaction-line-normalized">
+                  ↳ family “{line.normalizedGeneric}”
+                </span>
+              )}
             </div>
           );
         })}

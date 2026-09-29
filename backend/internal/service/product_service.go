@@ -49,9 +49,9 @@ type ProductService struct {
 type ProductFilters = domain.ProductFilters
 
 // ProductInput is the user-facing payload for product update; the photo is
-// managed separately through SetPhoto/RemovePhoto. StandardName is the
-// optional normalization-mapping decision for the product's raw name — nil
-// means the client didn't touch the field.
+// managed separately through SetPhoto/RemovePhoto. StandardName and
+// GenericName are the optional normalization-mapping decisions for the
+// product's raw name — nil means the client didn't touch the field.
 type ProductInput struct {
 	Name         string
 	Brand        string
@@ -59,6 +59,7 @@ type ProductInput struct {
 	CategoryID   *int64
 	Description  string
 	StandardName *string
+	GenericName  *string
 }
 
 // NewProductService wires the product workflow. photosDir is where photo
@@ -133,10 +134,11 @@ func (s *ProductService) StorePrices(ctx context.Context, id int64) ([]domain.Pr
 
 // Update rewrites a product's editable fields on the products row only;
 // historical bill/transaction lines keep their snapshot values. The photo is
-// untouched (managed by SetPhoto/RemovePhoto). A submitted standard_name
-// also learns the product's normalization-mapping decision (source user),
-// mirroring the bill workflow: untouched saves write nothing, renames carry
-// the decision to the new raw name, and clearing the field records identity.
+// untouched (managed by SetPhoto/RemovePhoto). A submitted standard_name or
+// generic_name also learns the product's normalization-mapping decision
+// (source user), mirroring the bill workflow: untouched saves write nothing,
+// renames carry the decision to the new raw name, and clearing the standard
+// field records identity (an emptied generic means "no broader family").
 func (s *ProductService) Update(ctx context.Context, id int64, in ProductInput) (domain.Product, error) {
 	submitted, submittedSet := "", false
 	if in.StandardName != nil {
@@ -146,6 +148,14 @@ func (s *ProductService) Update(ctx context.Context, id int64, in ProductInput) 
 			return domain.Product{}, validationError("standard_name must be at most %d characters", 200)
 		}
 	}
+	submittedGeneric, genericSet := "", false
+	if in.GenericName != nil {
+		submittedGeneric = strings.TrimSpace(*in.GenericName)
+		genericSet = true
+		if len(submittedGeneric) > 200 {
+			return domain.Product{}, validationError("generic_name must be at most %d characters", 200)
+		}
+	}
 	product, err := s.build(ctx, in)
 	if err != nil {
 		return domain.Product{}, err
@@ -153,8 +163,8 @@ func (s *ProductService) Update(ctx context.Context, id int64, in ProductInput) 
 	product.ID = id
 
 	// The pre-edit row holds what the edit form showed: the mapping join
-	// (old.StandardName), the prefilled category and the raw name the
-	// standard field was prefilled with.
+	// (old.StandardName, old.GenericName), the prefilled category and the raw
+	// name the standard field was prefilled with.
 	var old domain.Product
 	haveOld := false
 	if s.mappings != nil {
@@ -168,7 +178,7 @@ func (s *ProductService) Update(ctx context.Context, id int64, in ProductInput) 
 	if err != nil {
 		return domain.Product{}, err
 	}
-	if !haveOld || !s.learnMapping(ctx, old, updated, submitted, submittedSet, in.CategoryID) {
+	if !haveOld || !s.learnMapping(ctx, old, updated, submitted, submittedSet, submittedGeneric, genericSet, in.CategoryID) {
 		return updated, nil
 	}
 	// The mapping write refreshed the standard_name join — serve the fresh
@@ -185,28 +195,45 @@ func (s *ProductService) Update(ctx context.Context, id int64, in ProductInput) 
 // user), the product-side twin of the bill workflow's learnMappingOverrides.
 // submitted is the trimmed standard_name; submittedSet distinguishes an
 // explicitly cleared field ("" → identity) from an absent one (nil → keep
-// the prior). Returns true when a mapping write was attempted, so the
-// caller can re-read the row for the fresh standard_name join.
+// the prior); the generic_name pair behaves the same, except a cleared
+// generic is learned as "" (a real "no broader family" opinion, no identity
+// fallback). Returns true when a mapping write was attempted, so the caller
+// can re-read the row for the fresh standard_name join.
 //
-// Unmapped products only record an explicit new standard — the untouched
-// prefill or an absent field writes nothing even on a rename, leaving the
-// name open for AI suggestions. Mapped products write when the standard
-// changed, when the name changed (the decision moves to the new raw key)
-// or when the category changed (the memory stays in sync with the row).
-func (s *ProductService) learnMapping(ctx context.Context, old, updated domain.Product, submitted string, submittedSet bool, categoryID *int64) bool {
+// Unmapped products only record an explicit new standard — or, since the
+// generic field, an explicit generic alone (written with identity standard)
+// — the untouched prefill or absent fields write nothing even on a rename,
+// leaving the name open for AI suggestions. Mapped products write when the
+// standard or generic changed, when the name changed (the decision moves to
+// the new raw key) or when the category changed (the memory stays in sync
+// with the row). An untouched generic (nil) carries the remembered value so
+// the Upsert never wipes it.
+func (s *ProductService) learnMapping(ctx context.Context, old, updated domain.Product, submitted string, submittedSet bool, submittedGeneric string, genericSet bool, categoryID *int64) bool {
 	raw := updated.Name
+	standard, generic := "", ""
 	if old.StandardName == "" {
-		if !submittedSet || submitted == "" || strings.EqualFold(submitted, old.Name) {
+		switch {
+		case submittedSet && submitted != "" && !strings.EqualFold(submitted, old.Name):
+			standard = submitted
+		case genericSet && submittedGeneric != "":
+			standard = raw // no standard opinion: record identity beside the family
+		default:
 			return false
 		}
+		generic = submittedGeneric
 	} else {
+		standard = submitted
 		if !submittedSet {
-			submitted = old.StandardName
+			standard = old.StandardName
+		} else if standard == "" {
+			standard = raw // cleared field: record identity, like bill lines
 		}
-		if submitted == "" {
-			submitted = raw // cleared field: record identity, like bill lines
+		generic = old.GenericName // untouched field: carry the remembered family
+		if genericSet {
+			generic = submittedGeneric
 		}
-		if strings.EqualFold(submitted, old.StandardName) &&
+		if strings.EqualFold(standard, old.StandardName) &&
+			strings.EqualFold(generic, old.GenericName) &&
 			strings.EqualFold(old.Name, raw) &&
 			sameInt64Ptr(old.CategoryID, categoryID) {
 			return false
@@ -214,7 +241,8 @@ func (s *ProductService) learnMapping(ctx context.Context, old, updated domain.P
 	}
 	if _, err := s.mappings.Upsert(ctx, domain.ProductNameMapping{
 		RawName:      raw,
-		StandardName: submitted,
+		StandardName: standard,
+		GenericName:  generic,
 		CategoryID:   categoryID,
 		Source:       domain.MappingSourceUser,
 	}); err != nil {
@@ -586,11 +614,13 @@ func (s *ProductService) build(ctx context.Context, in ProductInput) (domain.Pro
 const normalizationBatch = 40
 
 // ProductNormalizeResult is the GET /products/normalize response: does this
-// raw text already resolve to a standardized name (+ category)? matched is
-// false when nothing is remembered yet — the caller keeps the raw name.
+// raw text already resolve to a standardized name (+ generic family +
+// category)? matched is false when nothing is remembered yet — the caller
+// keeps the raw name.
 type ProductNormalizeResult struct {
 	RawName      string               `json:"raw_name"`
 	StandardName string               `json:"standard_name,omitempty"`
+	GenericName  string               `json:"generic_name,omitempty"`
 	CategoryID   *int64               `json:"category_id,omitempty"`
 	CategoryName string               `json:"category_name,omitempty"`
 	Source       domain.MappingSource `json:"source,omitempty"`
@@ -616,6 +646,7 @@ func (s *ProductService) NormalizeName(ctx context.Context, raw string) (Product
 		return res, err
 	}
 	res.StandardName = m.StandardName
+	res.GenericName = m.GenericName
 	res.CategoryID = m.CategoryID
 	res.CategoryName = m.CategoryName
 	res.Source = m.Source
@@ -669,8 +700,13 @@ func (s *ProductService) RunNormalization(ctx context.Context) (domain.ProductNo
 }
 
 // runNormalizationJob drains the unmapped product names in batches until the
-// catalogue is covered, then marks the job done. Any failure marks it failed
-// with the error — the job is idempotent, so the user simply runs it again.
+// catalogue is covered, then marks the job done — or failed with the last
+// batch error if any call went wrong, keeping the progress counters. A single
+// bad AI call (transient provider hiccup, one unreadable answer) must not
+// kill the run: its batch's names are already marked asked, so the loop
+// drains the rest and the job ends failed only when something actually
+// failed. The job is idempotent — the user simply runs it again to retry the
+// names a failed batch left behind.
 //
 // Names the model leaves unanswered stay unmapped, so they would come back in
 // the next batch forever (one AI call per round trip). Every raw text gets a
@@ -684,6 +720,7 @@ func (s *ProductService) runNormalizationJob() {
 		return
 	}
 	asked := make(map[string]bool)
+	var lastErr error
 	for {
 		remaining, err := s.mappings.CountUnmappedProductNames(ctx)
 		if err != nil {
@@ -693,6 +730,10 @@ func (s *ProductService) runNormalizationJob() {
 		// Nothing left, or everything left was asked (and skipped by the
 		// model) in an earlier batch of this run.
 		if remaining == 0 || remaining <= int64(len(asked)) {
+			if lastErr != nil {
+				s.failNormalizationJob(ctx, job, lastErr)
+				return
+			}
 			job.Status = domain.ProductNormalizationDone
 			job.Error = ""
 			if err := s.mappings.UpdateJob(ctx, job); err != nil {
@@ -721,8 +762,11 @@ func (s *ProductService) runNormalizationJob() {
 			fresh = append(fresh, p)
 		}
 		if err := s.normalizeBatch(ctx, fresh, &job); err != nil {
-			s.failNormalizationJob(ctx, job, err)
-			return
+			// Not fatal: keep draining, remember the error for the final
+			// status. Re-running the job retries the names this batch held.
+			lastErr = err
+			s.log.Warn("product normalization batch failed, continuing with the next",
+				"names", len(fresh), "error", err)
 		}
 	}
 }
@@ -791,32 +835,55 @@ func (s *ProductService) normalizeCall(ctx context.Context, provider domain.AIPr
 	return s.normalizer.NormalizeNames(callCtx, provider, prompt+string(encoded))
 }
 
-// recordNormalized stores the answers of one successful call (Create, not
-// Upsert: a mapping that appeared while the job was queued — a scan, a
-// manual entry — already holds a reviewed decision) and persists the
-// progress counters.
+// recordNormalized stores the answers of one successful call and persists
+// the progress counters. Unmapped raw names are Created (not Upserted: a
+// mapping that appeared while the job was queued — a scan, a manual entry —
+// already holds a reviewed decision). A raw name whose mapping exists but
+// has no generic name gets only the family filled: the remembered standard
+// name, category and source win (memory over a fresh AI suggestion), so the
+// job never clobbers reviewed decisions while closing the generic gap.
 func (s *ProductService) recordNormalized(ctx context.Context, products []domain.Product, answers []domain.ProductNameMapping, job *domain.ProductNormalizationJob) error {
-	byRaw := make(map[string]string, len(answers))
+	byRaw := make(map[string]domain.ProductNameMapping, len(answers))
 	for _, a := range answers {
-		byRaw[strings.ToLower(a.RawName)] = a.StandardName
+		byRaw[strings.ToLower(a.RawName)] = a
 	}
 	mapped := int64(0)
 	for _, p := range products {
-		standard, ok := byRaw[strings.ToLower(p.Name)]
+		answer, ok := byRaw[strings.ToLower(p.Name)]
 		if !ok {
 			continue
 		}
-		_, err := s.mappings.Create(ctx, domain.ProductNameMapping{
-			RawName:      p.Name,
-			StandardName: standard,
-			CategoryID:   p.CategoryID,
-			Source:       domain.MappingSourceAI,
-		})
-		if errors.Is(err, domain.ErrConflict) {
+		existing, err := s.mappings.FindByRawName(ctx, p.Name)
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			if _, cerr := s.mappings.Create(ctx, domain.ProductNameMapping{
+				RawName:      p.Name,
+				StandardName: answer.StandardName,
+				GenericName:  answer.GenericName,
+				CategoryID:   p.CategoryID,
+				Source:       domain.MappingSourceAI,
+			}); cerr != nil {
+				if !errors.Is(cerr, domain.ErrConflict) {
+					s.log.Warn("record normalized product name", "raw", p.Name, "error", cerr)
+				}
+				continue
+			}
+			mapped++
 			continue
+		case err != nil:
+			s.log.Warn("lookup mapping before recording normalization", "raw", p.Name, "error", err)
+			continue
+		case existing.GenericName != "" || answer.GenericName == "":
+			continue // family already remembered, or the AI offered none
 		}
-		if err != nil {
-			s.log.Warn("record normalized product name", "raw", p.Name, "error", err)
+		if _, err := s.mappings.Upsert(ctx, domain.ProductNameMapping{
+			RawName:      existing.RawName,
+			StandardName: existing.StandardName,
+			GenericName:  answer.GenericName,
+			CategoryID:   existing.CategoryID,
+			Source:       existing.Source,
+		}); err != nil {
+			s.log.Warn("fill generic product name", "raw", p.Name, "error", err)
 			continue
 		}
 		mapped++

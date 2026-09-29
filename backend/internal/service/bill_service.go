@@ -20,9 +20,10 @@ import (
 
 // BillExtractor abstracts the AI extraction engine (implemented by
 // internal/extractor). The prompt is resolved by the caller — the managed
-// ai_prompts content or the built-in default.
+// ai_prompts content or the built-in default. One file is a classic
+// single-photo receipt; several files are the parts of one long receipt.
 type BillExtractor interface {
-	Extract(ctx context.Context, image []byte, mimeType string, provider domain.AIProvider, prompt string) (domain.BillDraft, error)
+	Extract(ctx context.Context, files []domain.ReceiptFile, provider domain.AIProvider, prompt string) (domain.BillDraft, error)
 }
 
 // PromptResolver supplies the rendered prompt content for a process key
@@ -62,8 +63,12 @@ type BillScanStore interface {
 // BillFilters re-exports the shared domain filter type.
 type BillFilters = domain.BillFilters
 
-// MaxBillImageBytes caps uploaded receipt files at 10 MB.
+// MaxBillImageBytes caps uploaded receipt files at 10 MB each.
 const MaxBillImageBytes = 10 << 20
+
+// MaxBillScanFiles caps how many files one scan may carry: one receipt
+// photographed in at most this many consecutive parts.
+const MaxBillScanFiles = 8
 
 const (
 	// scanQueueCapacity bounds pending scan tokens; a full queue rejects the
@@ -80,14 +85,13 @@ const (
 	shutdownDrainWindow = 2 * time.Second
 )
 
-// billScanSource points at the receipt a bill is (or was) built from: the file
-// on disk under billsDir, its content hash (duplicate detection) and the
-// provider id that produced the draft. Used by both Confirm (from the scan
-// row) and Update (from the saved bill).
+// billScanSource points at the receipt a bill is (or was) built from: every
+// stored part on disk under billsDir (position order; part 1 is mirrored into
+// the legacy single-file columns) and the provider id that produced the draft.
+// Used by both Confirm (from the scan row) and Update (from the saved bill).
 type billScanSource struct {
-	imagePath  string
+	files      []domain.BillFile
 	providerID string
-	fileHash   string
 }
 
 // BillService orchestrates the scan-bills workflow.
@@ -176,45 +180,75 @@ func NewBillService(
 	return s
 }
 
-// Scan stores the receipt file (not yet a bill), registers a scan row, and
-// returns immediately — extraction runs in the background. The client polls
-// GetScan until the status leaves "analyzing". Nothing is persisted as a bill
-// until Confirm. providerID is optional; the first configured provider is used
+// scanPart is one validated part of an upload, ready to be stored.
+type scanPart struct {
+	data []byte
+	mime string
+	ext  string
+	hash string
+}
+
+// Scan stores the receipt files (not yet a bill), registers a scan row, and
+// returns immediately — extraction runs in the background. One file is the
+// classic single-photo receipt; several files are the consecutive parts of one
+// long receipt, merged into ONE bill by the AI read. The client polls GetScan
+// until the status leaves "analyzing". Nothing is persisted as a bill until
+// Confirm. providerID is optional; the first configured provider is used
 // otherwise.
-func (s *BillService) Scan(ctx context.Context, mimeType string, file []byte, providerID string) (domain.BillScan, error) {
-	mimeType = strings.ToLower(mimeType)
-	ext, ok := allowedMime[mimeType]
-	if !ok {
-		// Browsers outside Safari often upload .heic/.pdf with a generic
-		// content type — sniff the magic bytes before rejecting the upload.
-		if sniffed := sniffMime(file); sniffed != "" {
-			mimeType = sniffed
-			ext, ok = allowedMime[sniffed], true
-		}
+func (s *BillService) Scan(ctx context.Context, files []domain.ReceiptFile, providerID string) (domain.BillScan, error) {
+	if len(files) == 0 {
+		return domain.BillScan{}, validationError("no receipt file was uploaded")
 	}
-	if !ok {
-		return domain.BillScan{}, validationError("unsupported file type %q (want jpeg, png, webp, heic, heif or pdf)", mimeType)
-	}
-	if len(file) == 0 {
-		return domain.BillScan{}, validationError("receipt file is empty")
-	}
-	if len(file) > MaxBillImageBytes {
-		return domain.BillScan{}, validationError("receipt file exceeds %d MB limit", MaxBillImageBytes>>20)
+	if len(files) > MaxBillScanFiles {
+		return domain.BillScan{}, validationError("a receipt can be uploaded in at most %d files — %d were given", MaxBillScanFiles, len(files))
 	}
 
-	// Duplicate protection: the same receipt must not be processed twice.
-	// The content hash matches an active scan (still analyzing / awaiting
-	// review) or an already-saved bill.
-	hash := fileHash(file)
-	if _, err := s.scans.GetByFileHash(ctx, hash); err == nil {
-		return domain.BillScan{}, conflictError("duplicate receipt: this image is already being analyzed — check the bills view")
-	} else if !errors.Is(err, domain.ErrNotFound) {
-		return domain.BillScan{}, fmt.Errorf("check scan duplicate: %w", err)
+	// Per-part validation: the same rules the single-file upload always had,
+	// now naming the offending part.
+	parts := make([]scanPart, 0, len(files))
+	seen := make(map[string]bool, len(files))
+	for i, f := range files {
+		mimeType := strings.ToLower(f.MimeType)
+		ext, ok := allowedMime[mimeType]
+		if !ok {
+			// Browsers outside Safari often upload .heic/.pdf with a generic
+			// content type — sniff the magic bytes before rejecting the upload.
+			if sniffed := sniffMime(f.Data); sniffed != "" {
+				mimeType = sniffed
+				ext, ok = allowedMime[sniffed], true
+			}
+		}
+		if !ok {
+			return domain.BillScan{}, validationError("unsupported file type %q in file %d of %d (want jpeg, png, webp, heic, heif or pdf)", mimeType, i+1, len(files))
+		}
+		if len(f.Data) == 0 {
+			return domain.BillScan{}, validationError("receipt file %d of %d is empty", i+1, len(files))
+		}
+		if len(f.Data) > MaxBillImageBytes {
+			return domain.BillScan{}, validationError("receipt file %d of %d exceeds the %d MB limit", i+1, len(files), MaxBillImageBytes>>20)
+		}
+		hash := fileHash(f.Data)
+		if seen[hash] {
+			return domain.BillScan{}, validationError("file %d of %d is a duplicate of an earlier file in this upload", i+1, len(files))
+		}
+		seen[hash] = true
+		parts = append(parts, scanPart{data: f.Data, mime: mimeType, ext: ext, hash: hash})
 	}
-	if existing, err := s.bills.GetByFileHash(ctx, hash); err == nil {
-		return domain.BillScan{}, conflictError("duplicate receipt: this image was already saved as bill #%d", existing.ID)
-	} else if !errors.Is(err, domain.ErrNotFound) {
-		return domain.BillScan{}, fmt.Errorf("check bill duplicate: %w", err)
+
+	// Duplicate protection: the same receipt (any of its parts) must not be
+	// processed twice. The content hash of any part matches an active scan
+	// (still analyzing / awaiting review) or an already-saved bill.
+	for i, p := range parts {
+		if _, err := s.scans.GetByFileHash(ctx, p.hash); err == nil {
+			return domain.BillScan{}, conflictError("duplicate receipt: file %d of %d is already being analyzed — check the bills view", i+1, len(parts))
+		} else if !errors.Is(err, domain.ErrNotFound) {
+			return domain.BillScan{}, fmt.Errorf("check scan duplicate: %w", err)
+		}
+		if existing, err := s.bills.GetByFileHash(ctx, p.hash); err == nil {
+			return domain.BillScan{}, conflictError("duplicate receipt: file %d of %d was already saved as bill #%d", i+1, len(parts), existing.ID)
+		} else if !errors.Is(err, domain.ErrNotFound) {
+			return domain.BillScan{}, fmt.Errorf("check bill duplicate: %w", err)
+		}
 	}
 
 	provider, err := s.resolveProvider(ctx, providerID)
@@ -222,35 +256,60 @@ func (s *BillService) Scan(ctx context.Context, mimeType string, file []byte, pr
 		return domain.BillScan{}, err
 	}
 
-	path, err := s.saveReceipt(ext, file)
-	if err != nil {
-		return domain.BillScan{}, fmt.Errorf("save receipt: %w", err)
+	// Save every part; a later failure removes what was already written so no
+	// orphan files are left behind.
+	paths := make([]string, 0, len(parts))
+	removeParts := func() {
+		for _, p := range paths {
+			_ = os.Remove(p)
+		}
+	}
+	for _, p := range parts {
+		path, err := s.saveReceipt(p.ext, p.data)
+		if err != nil {
+			removeParts()
+			return domain.BillScan{}, fmt.Errorf("save receipt: %w", err)
+		}
+		paths = append(paths, path)
 	}
 
 	token, err := newScanToken()
 	if err != nil {
-		_ = os.Remove(path)
+		removeParts()
 		return domain.BillScan{}, err
 	}
 
+	scanFiles := make([]domain.BillScanFile, len(parts))
+	for i, p := range parts {
+		scanFiles[i] = domain.BillScanFile{
+			Position: i + 1,
+			Path:     paths[i],
+			MimeType: p.mime,
+			FileHash: p.hash,
+		}
+	}
+
+	// The row's own single-file columns mirror part 1 (legacy consumers);
+	// bill_scan_files carries every part.
 	if _, err := s.scans.Create(ctx, domain.BillScan{
 		ScanToken:  token,
-		ImagePath:  path,
-		MimeType:   strings.ToLower(mimeType),
+		ImagePath:  paths[0],
+		MimeType:   parts[0].mime,
 		ProviderID: provider.ID,
-		FileHash:   hash,
+		FileHash:   parts[0].hash,
+		Files:      scanFiles,
 	}); err != nil {
-		_ = os.Remove(path)
+		removeParts()
 		return domain.BillScan{}, err
 	}
 
 	if !s.enqueue(token) {
 		// Queue full: be honest instead of losing the upload — drop the row
-		// and the file and tell the client to retry.
+		// and every part file and tell the client to retry.
 		if _, derr := s.scans.Delete(context.Background(), token); derr != nil {
 			s.log.Warn("drop scan row after queue-full", "token", token, "error", derr)
 		}
-		_ = os.Remove(path)
+		removeParts()
 		return domain.BillScan{}, validationError("analysis queue is full — try again in a moment")
 	}
 	s.sweepStaleScans()
@@ -258,6 +317,7 @@ func (s *BillService) Scan(ctx context.Context, mimeType string, file []byte, pr
 		ScanToken:  token,
 		Status:     domain.BillScanAnalyzing,
 		ProviderID: provider.ID,
+		FileCount:  len(parts),
 		CreatedAt:  time.Now().UTC(),
 	}, nil
 }
@@ -346,7 +406,7 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 	}
 	applyAccountPaymentRules(&in, account)
 
-	bill, err := s.buildBill(ctx, in, &billScanSource{imagePath: scan.ImagePath, providerID: scan.ProviderID, fileHash: scan.FileHash})
+	bill, err := s.buildBill(ctx, in, &billScanSource{files: billFilesFromScan(scan), providerID: scan.ProviderID})
 	if err != nil {
 		return domain.Bill{}, err
 	}
@@ -394,7 +454,7 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 		applyAccountPaymentRules(&in, account)
 	}
 
-	source := &billScanSource{imagePath: existing.ImagePath, providerID: existing.ExtractedBy, fileHash: existing.FileHash}
+	source := &billScanSource{files: billFilesFromBill(existing), providerID: existing.ExtractedBy}
 	bill, err := s.buildBill(ctx, in, source)
 	if err != nil {
 		return domain.Bill{}, err
@@ -518,9 +578,9 @@ func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill 
 	return nil
 }
 
-// DiscardScan drops an unconfirmed scan and deletes its receipt file. A
-// worker that is still extracting it matches 0 rows when writing its result,
-// so a discarded scan is never resurrected.
+// DiscardScan drops an unconfirmed scan and deletes its receipt files (every
+// part). A worker that is still extracting it matches 0 rows when writing its
+// result, so a discarded scan is never resurrected.
 func (s *BillService) DiscardScan(ctx context.Context, token string) error {
 	scan, err := s.scans.Delete(ctx, token)
 	if err != nil {
@@ -529,8 +589,28 @@ func (s *BillService) DiscardScan(ctx context.Context, token string) error {
 		}
 		return err
 	}
-	if err := os.Remove(scan.ImagePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("delete receipt file: %w", err)
+	for _, path := range scanFilePaths(scan) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("delete receipt file: %w", err)
+		}
+	}
+	return nil
+}
+
+// scanFilePaths lists every file of a removed scan (all parts, or the
+// mirrored single file of a pre-feature row).
+func scanFilePaths(scan domain.BillScan) []string {
+	if len(scan.Files) > 0 {
+		paths := make([]string, 0, len(scan.Files))
+		for _, f := range scan.Files {
+			if f.Path != "" {
+				paths = append(paths, f.Path)
+			}
+		}
+		return paths
+	}
+	if scan.ImagePath != "" {
+		return []string{scan.ImagePath}
 	}
 	return nil
 }
@@ -560,10 +640,14 @@ func (s *BillService) Delete(ctx context.Context, id int64) error {
 		}
 	}
 
-	if bill.ImagePath != "" {
-		if err := os.Remove(bill.ImagePath); err != nil && !os.IsNotExist(err) {
-			s.log.Warn("bill deleted but its receipt file remains",
-				"bill_id", id, "path", bill.ImagePath, "error", err)
+	files := billFilesFromBill(bill)
+	for _, f := range files {
+		if f.Path == "" {
+			continue
+		}
+		if err := os.Remove(f.Path); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("bill deleted but a receipt file remains",
+				"bill_id", id, "path", f.Path, "error", err)
 		}
 	}
 	return nil
@@ -675,16 +759,29 @@ func (s *BillService) Brands(ctx context.Context) ([]string, error) {
 	return s.bills.ListBrands(ctx)
 }
 
-// ReceiptImagePath resolves the stored receipt for serving.
-func (s *BillService) ReceiptImagePath(ctx context.Context, billID int64) (string, string, error) {
+// ReceiptImagePath resolves one stored receipt part for serving. part is
+// 1-based; part <= 0 means part 1 (the classic single-receipt request).
+func (s *BillService) ReceiptImagePath(ctx context.Context, billID int64, part int) (string, string, error) {
 	bill, err := s.bills.GetByID(ctx, billID)
 	if err != nil {
 		return "", "", err
 	}
-	if bill.ImagePath == "" {
+	if part <= 0 {
+		part = 1
+	}
+	files := billFilesFromBill(bill)
+	if part > len(files) {
+		return "", "", validationError("bill %d has no receipt part %d", billID, part)
+	}
+	f := files[part-1]
+	if f.Path == "" {
 		return "", "", validationError("bill %d has no stored receipt", billID)
 	}
-	return bill.ImagePath, detectMime(bill.ImagePath), nil
+	mimeType := f.MimeType
+	if mimeType == "" {
+		mimeType = detectMime(f.Path)
+	}
+	return f.Path, mimeType, nil
 }
 
 // resolveProvider picks the requested provider or falls back to the connector
@@ -816,6 +913,13 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		items[i].ProductID = s.resolveProduct(ctx, items[i])
 	}
 
+	// Part 1 mirrors the legacy single-file columns; every part is persisted as
+	// the bill's receipt record.
+	imagePath, fileHash := "", ""
+	if len(source.files) > 0 {
+		imagePath, fileHash = source.files[0].Path, source.files[0].FileHash
+	}
+
 	return domain.Bill{
 		MarketName:         canonicalMarket,
 		Date:               date,
@@ -828,13 +932,42 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		TotalCents:         total,
 		PrintedTotalCents:  printed,
 		Status:             domain.BillStatusAccepted,
-		ImagePath:          source.imagePath,
-		FileHash:           source.fileHash,
+		ImagePath:          imagePath,
+		FileHash:           fileHash,
+		Files:              source.files,
 		ExtractedBy:        source.providerID,
 		BudgetID:           in.BudgetID,
 		StoreID:            storeID,
 		Items:              items,
 	}, nil
+}
+
+// billFilesFromScan adapts a scan's stored parts for a confirming bill. A scan
+// without parts (pre-feature row) falls back to its mirrored single file.
+func billFilesFromScan(scan domain.BillScan) []domain.BillFile {
+	if len(scan.Files) == 0 {
+		if scan.ImagePath == "" {
+			return nil
+		}
+		return []domain.BillFile{{Position: 1, Path: scan.ImagePath, MimeType: scan.MimeType, FileHash: scan.FileHash}}
+	}
+	out := make([]domain.BillFile, len(scan.Files))
+	for i, f := range scan.Files {
+		out[i] = domain.BillFile{Position: f.Position, Path: f.Path, MimeType: f.MimeType, FileHash: f.FileHash}
+	}
+	return out
+}
+
+// billFilesFromBill re-reads a saved bill's parts for the update flow, with
+// the same pre-feature fallback.
+func billFilesFromBill(bill domain.Bill) []domain.BillFile {
+	if len(bill.Files) == 0 {
+		if bill.ImagePath == "" {
+			return nil
+		}
+		return []domain.BillFile{{Position: 1, Path: bill.ImagePath, FileHash: bill.FileHash}}
+	}
+	return bill.Files
 }
 
 // walletAccountName is the default cash account bills are recorded against
@@ -936,14 +1069,15 @@ func (s *BillService) resolveProduct(ctx context.Context, it domain.BillItem) *i
 }
 
 // extractDraft resolves the managed extraction prompt (built-in default when
-// the row is missing), runs the connector and resolves the AI's category
-// names against the existing categories, creating the missing ones.
-func (s *BillService) extractDraft(ctx context.Context, file []byte, mimeType string, provider domain.AIProvider) (*domain.BillDraft, error) {
+// the row is missing), runs the connector on the receipt parts and resolves
+// the AI's category names against the existing categories, creating the
+// missing ones.
+func (s *BillService) extractDraft(ctx context.Context, files []domain.ReceiptFile, provider domain.AIProvider) (*domain.BillDraft, error) {
 	prompt, err := s.resolveExtractionPrompt(ctx)
 	if err != nil {
 		return nil, err
 	}
-	draft, err := s.extractor.Extract(ctx, file, mimeType, provider, prompt)
+	draft, err := s.extractor.Extract(ctx, files, provider, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("extraction failed: %w", err)
 	}
@@ -965,12 +1099,14 @@ func (s *BillService) extractDraft(ctx context.Context, file []byte, mimeType st
 
 // applyMappingMemory normalizes a freshly extracted draft against the
 // product-name normalization memory: a raw text that was already decided
-// keeps its remembered standard name and category (memory wins over a fresh
-// AI suggestion), and a raw text seen for the first time records the AI's
-// suggestion (source 'ai') so the next scan of the same text stays stable
-// without re-asking. Return/deposit lines are skipped — they are not
-// products. Failures are logged and non-fatal, like resolveProduct: a memory
-// problem must never fail an extraction.
+// keeps its remembered standard name, generic name and category (memory wins
+// over a fresh AI suggestion), and a raw text seen for the first time
+// records the AI's suggestion (source 'ai') so the next scan of the same
+// text stays stable without re-asking. A remembered empty generic name does
+// NOT override the fresh suggestion — "no family known yet" is not a
+// decision, and the backfill job fills the gap later. Return/deposit lines
+// are skipped — they are not products. Failures are logged and non-fatal,
+// like resolveProduct: a memory problem must never fail an extraction.
 func (s *BillService) applyMappingMemory(ctx context.Context, draft *domain.BillDraft) {
 	if s.mappings == nil {
 		return
@@ -986,12 +1122,14 @@ func (s *BillService) applyMappingMemory(ctx context.Context, draft *domain.Bill
 			standard = raw
 		}
 		it.StandardName = standard
+		it.GenericName = strings.TrimSpace(it.GenericName)
 		m, err := s.mappings.FindByRawName(ctx, raw)
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
 			if _, cerr := s.mappings.Create(ctx, domain.ProductNameMapping{
 				RawName:      raw,
 				StandardName: standard,
+				GenericName:  it.GenericName,
 				CategoryID:   it.CategoryID,
 				Source:       domain.MappingSourceAI,
 			}); cerr != nil && !errors.Is(cerr, domain.ErrConflict) {
@@ -1003,6 +1141,9 @@ func (s *BillService) applyMappingMemory(ctx context.Context, draft *domain.Bill
 			// Memory wins: the remembered decision is what the user reviewed
 			// (or corrected) last time.
 			it.StandardName = m.StandardName
+			if m.GenericName != "" {
+				it.GenericName = m.GenericName
+			}
 			if m.CategoryID != nil {
 				it.CategoryID = m.CategoryID
 			}
@@ -1010,11 +1151,13 @@ func (s *BillService) applyMappingMemory(ctx context.Context, draft *domain.Bill
 	}
 }
 
-// priorStandardLine is the pre-edit state of one raw text — the standard name
-// and category the review UI showed before the user's corrections.
+// priorStandardLine is the pre-edit state of one raw text — the standard
+// name, generic name and category the review UI showed before the user's
+// corrections.
 type priorStandardLine struct {
 	raw        string
 	standard   string
+	generic    string
 	categoryID *int64
 }
 
@@ -1030,14 +1173,14 @@ func priorStandardFromDraft(items []domain.BillItemDraft) []priorStandardLine {
 		if standard == "" {
 			standard = raw // pre-feature drafts carry no suggestion
 		}
-		prior = append(prior, priorStandardLine{raw: raw, standard: standard, categoryID: it.CategoryID})
+		prior = append(prior, priorStandardLine{raw: raw, standard: standard, generic: strings.TrimSpace(it.GenericName), categoryID: it.CategoryID})
 	}
 	return prior
 }
 
 // priorStandardFromItems captures a saved bill's lines (update flow); the
-// standard names come from the mapping join, which is exactly the state the
-// user saw when editing.
+// standard and generic names come from the mapping join, which is exactly
+// the state the user saw when editing.
 func priorStandardFromItems(items []domain.BillItem) []priorStandardLine {
 	prior := make([]priorStandardLine, 0, len(items))
 	for _, it := range items {
@@ -1049,7 +1192,7 @@ func priorStandardFromItems(items []domain.BillItem) []priorStandardLine {
 		if standard == "" {
 			standard = raw
 		}
-		prior = append(prior, priorStandardLine{raw: raw, standard: standard, categoryID: it.CategoryID})
+		prior = append(prior, priorStandardLine{raw: raw, standard: standard, generic: strings.TrimSpace(it.GenericName), categoryID: it.CategoryID})
 	}
 	return prior
 }
@@ -1070,12 +1213,15 @@ func sameInt64Ptr(a, b *int64) bool {
 	return *a == *b
 }
 
-// learnMappingOverrides records the user's standardized-name and category
-// corrections from a confirmed/updated bill into the normalization memory
-// (source 'user'), so the next scan of the same raw text starts from the
-// corrected decision. Lines whose standard name and category are unchanged
-// never write; lines without a prior (manually added in the editor) record
-// their submitted values. Non-fatal — a failed write never fails the bill.
+// learnMappingOverrides records the user's standardized-name, generic-name
+// and category corrections from a confirmed/updated bill into the
+// normalization memory (source 'user'), so the next scan of the same raw
+// text starts from the corrected decision. Lines whose standard name,
+// generic name and category are unchanged never write; lines without a
+// prior (manually added in the editor) record their submitted values.
+// Unlike the standard name, an empty generic name is a real opinion ("no
+// broader family") and is learned as-is. Non-fatal — a failed write never
+// fails the bill.
 func (s *BillService) learnMappingOverrides(ctx context.Context, items []domain.BillItemDraft, prior []priorStandardLine) {
 	if s.mappings == nil {
 		return
@@ -1089,13 +1235,15 @@ func (s *BillService) learnMappingOverrides(ctx context.Context, items []domain.
 		if standard == "" {
 			standard = raw
 		}
+		generic := strings.TrimSpace(it.GenericName)
 		p, found := findPriorStandardLine(prior, raw)
-		if found && strings.EqualFold(p.standard, standard) && sameInt64Ptr(p.categoryID, it.CategoryID) {
+		if found && strings.EqualFold(p.standard, standard) && strings.EqualFold(p.generic, generic) && sameInt64Ptr(p.categoryID, it.CategoryID) {
 			continue
 		}
 		if _, err := s.mappings.Upsert(ctx, domain.ProductNameMapping{
 			RawName:      raw,
 			StandardName: standard,
+			GenericName:  generic,
 			CategoryID:   it.CategoryID,
 			Source:       domain.MappingSourceUser,
 		}); err != nil {

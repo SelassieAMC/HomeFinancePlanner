@@ -268,6 +268,9 @@ func (e *Extractor) textChat(ctx context.Context, provider domain.AIProvider, pr
 		payload := map[string]any{
 			"model":  provider.Model,
 			"stream": false,
+			// Reasoning models put their musing in message.thinking and the
+			// answer in message.content — ask for the answer directly.
+			"think": false,
 			"messages": []map[string]any{
 				{"role": "user", "content": prompt},
 			},
@@ -275,14 +278,21 @@ func (e *Extractor) textChat(ctx context.Context, provider domain.AIProvider, pr
 		}
 		var resp struct {
 			Message struct {
-				Content string `json:"content"`
+				Content  string `json:"content"`
+				Thinking string `json:"thinking"`
 			} `json:"message"`
 		}
 		if err := e.postJSON(ctx, baseURL(provider)+"/api/chat", nil, payload, &resp); err != nil {
 			return "", err
 		}
 		if strings.TrimSpace(resp.Message.Content) == "" {
-			return "", fmt.Errorf("response contained no message content")
+			// A thinking model occasionally ends its turn with the answer
+			// inside the reasoning block and an empty content — use it
+			// rather than failing the call.
+			if strings.TrimSpace(resp.Message.Thinking) != "" {
+				return resp.Message.Thinking, nil
+			}
+			return "", fmt.Errorf("model %q returned an empty response (no message content)", provider.Model)
 		}
 		return resp.Message.Content, nil
 

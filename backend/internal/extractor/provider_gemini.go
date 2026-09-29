@@ -10,25 +10,28 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// geminiGenerate calls the Gemini generateContent endpoint with the image as
-// inline_data. JSON response mode is forced via response_mime_type.
-func (e *Extractor) geminiGenerate(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string, prompt string) (string, error) {
+// geminiGenerate calls the Gemini generateContent endpoint with the receipt
+// files as inline_data (one block per file). JSON response mode is forced via
+// response_mime_type.
+func (e *Extractor) geminiGenerate(ctx context.Context, provider domain.AIProvider, files []domain.ReceiptFile, prompt string) (string, error) {
 	base := baseURL(provider)
 	endpoint := fmt.Sprintf("%s/models/%s:generateContent?key=%s",
 		base, url.PathEscape(provider.Model), url.QueryEscape(provider.APIKey))
 
+	parts := make([]map[string]any, 0, len(files)+1)
+	parts = append(parts, map[string]any{"text": prompt})
+	for _, f := range files {
+		parts = append(parts, map[string]any{
+			"inline_data": map[string]string{
+				"mime_type": f.MimeType,
+				"data":      base64.StdEncoding.EncodeToString(f.Data),
+			},
+		})
+	}
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
-				"parts": []map[string]any{
-					{"text": prompt},
-					{
-						"inline_data": map[string]string{
-							"mime_type": mimeType,
-							"data":      base64.StdEncoding.EncodeToString(image),
-						},
-					},
-				},
+				"parts": parts,
 			},
 		},
 		"generationConfig": map[string]any{

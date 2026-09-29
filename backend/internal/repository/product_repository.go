@@ -83,7 +83,7 @@ const (
 // productColumns + productFrom read a product together with its derived
 // purchase stats (see productStatsCTE). The column order matches scanProduct.
 const productColumns = `
-	p.id, p.name, COALESCE(pnm.standard_name, ''), p.brand, p.unit, p.category_id, c.name, p.description, p.image_path,
+	p.id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), p.brand, p.unit, p.category_id, c.name, p.description, p.image_path,
 	p.created_at, p.updated_at,
 	COALESCE(s.times_bought, 0) AS times_bought,
 	s.last_purchase_date, s.latest_price_cents, s.price_currency,
@@ -455,7 +455,7 @@ func scanProduct(row interface{ Scan(dest ...any) error }) (domain.Product, erro
 		bestPrice     sql.NullInt64
 		priceCurrency sql.NullString
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.StandardName, &p.Brand, &p.Unit, &p.CategoryID, &categoryName, &p.Description, &imagePath,
+	if err := row.Scan(&p.ID, &p.Name, &p.StandardName, &p.GenericName, &p.Brand, &p.Unit, &p.CategoryID, &categoryName, &p.Description, &imagePath,
 		&createdAt, &updatedAt, &p.TimesBought, &lastPurchase, &latestPrice, &priceCurrency, &avgPrice, &bestPrice); err != nil {
 		return domain.Product{}, err
 	}

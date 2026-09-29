@@ -198,6 +198,62 @@ func TestParseBillJSON_StandardNameFallsBackToRawName(t *testing.T) {
 	}
 }
 
+func TestParseBillJSON_GenericName(t *testing.T) {
+	// generic_name is part of the pinned schema, but unlike standard_name it
+	// never falls back to the raw text — empty means "no broader family
+	// known" (a user-customized prompt without the rule yields empty).
+	raw := `{"market_name":"REWE","date":"2026-05-03","payment_method":"card",
+		"items":[
+			{"name":"POTATO MINIONS 450G","standard_name":"Potato Minions 450g","generic_name":"Frozen Shaped Potatoes","quantity":1,"unit_price":2.99,"line_total":2.99},
+			{"name":"BANANE","standard_name":"Bananas","quantity":1,"unit_price":1.19,"line_total":1.19},
+			{"name":"BREAD","standard_name":"Bread","generic_name":"  ","quantity":1,"unit_price":1.50,"line_total":1.50}
+		]}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Items) != 3 {
+		t.Fatalf("items: %d (want 3)", len(draft.Items))
+	}
+	if got := draft.Items[0].GenericName; got != "Frozen Shaped Potatoes" {
+		t.Errorf("generic name: %q (want %q)", got, "Frozen Shaped Potatoes")
+	}
+	for _, it := range draft.Items[1:] {
+		if it.GenericName != "" {
+			t.Errorf("generic name for %q: %q (want empty, never the raw name)", it.Name, it.GenericName)
+		}
+	}
+}
+
+func TestParseNormalizationJSON_GenericName(t *testing.T) {
+	// The generic family name is optional in the answer schema: present →
+	// carried, missing → empty (custom prompts keep working). Entries are
+	// still dropped only on an empty name or standard name.
+	raw := `{"items":[
+		{"name":"POTATO MINIONS 450G","standard_name":"Potato Minions 450g","generic_name":"Frozen Shaped Potatoes"},
+		{"name":"MILCH 1L","standard_name":"Milk 1L"},
+		{"name":"BANANE","standard_name":"Bananas","generic_name":"  "},
+		{"name":"","standard_name":"Nameless"},
+		{"name":"NO STANDARD","standard_name":" "}
+	]}`
+	items, err := ParseNormalizationJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("items: %d (want 3 — the last two are dropped)", len(items))
+	}
+	if items[0].GenericName != "Frozen Shaped Potatoes" {
+		t.Errorf("generic name: %q (want %q)", items[0].GenericName, "Frozen Shaped Potatoes")
+	}
+	if items[1].GenericName != "" {
+		t.Errorf("missing generic must decode as empty, got %q", items[1].GenericName)
+	}
+	if items[2].GenericName != "" {
+		t.Errorf("blank generic must trim to empty, got %q", items[2].GenericName)
+	}
+}
+
 func TestParseBillJSON_StandardNameDepositReturnFallback(t *testing.T) {
 	// Deposit-return lines get no special-casing at parse level: the generic
 	// fallback applies, so a "Leergut" line without the field carries its raw
@@ -241,6 +297,100 @@ func TestParseBillJSON_RejectsGarbage(t *testing.T) {
 	}
 	if _, err := ParseBillJSON("{broken"); err == nil {
 		t.Fatal("expected error for malformed JSON")
+	}
+	// An object that never closes is not a decodable candidate either.
+	if _, err := ParseBillJSON(`{"market_name":"REWE","items":[`); err == nil {
+		t.Fatal("expected error for unterminated JSON")
+	}
+}
+
+// Models often append prose after the object ("Here is your bill…"). The
+// balanced scan must stop at the object's closing brace instead of slicing
+// to the last brace in the response — the old slice failed with
+// "invalid character 'H' after top-level value".
+func TestParseBillJSON_TrailingProse(t *testing.T) {
+	raw := `{"market_name":"REWE","date":"2026-05-03","items":[{"name":"MILCH","quantity":1,"unit_price":1.20,"line_total":1.20}]}` +
+		"\nHere is the extracted bill. Let me know if you need anything else!"
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatalf("trailing prose broke the read: %v", err)
+	}
+	if draft.MarketName != "REWE" || len(draft.Items) != 1 {
+		t.Errorf("draft = %+v, want the parsed bill", draft)
+	}
+}
+
+// The appended prose may carry braces of its own — still no mis-slice.
+func TestParseBillJSON_TrailingProseWithBraces(t *testing.T) {
+	raw := `{"market_name":"REWE","items":[{"name":"MILCH","quantity":1,"unit_price":1.20,"line_total":1.20}]} Hope this helps { :^) } stay healthy!}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatalf("prose braces broke the read: %v", err)
+	}
+	if draft.MarketName != "REWE" {
+		t.Errorf("market = %q, want REWE", draft.MarketName)
+	}
+}
+
+// A decodable warm-up object before the real one ({"ok": true} … {draft}) is
+// skipped in favor of the first object with actual payload.
+func TestParseBillJSON_SkipsEmptyWarmupObject(t *testing.T) {
+	raw := `{"ok":true} And here is the draft: {"market_name":"Kaufland","items":[{"name":"Bread","quantity":1,"unit_price":2.00,"line_total":2.00}]}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatalf("warm-up object broke the read: %v", err)
+	}
+	if draft.MarketName != "Kaufland" || len(draft.Items) != 1 {
+		t.Errorf("draft = %+v, want the second (payload) object", draft)
+	}
+
+	// …but when the empty object is all there is, it still decodes (an empty
+	// draft the user can edit beats a failed scan).
+	draft, err = ParseBillJSON(`{"ok":true}`)
+	if err != nil {
+		t.Fatalf("empty object should still decode: %v", err)
+	}
+	if draft.MarketName != "" || len(draft.Items) != 0 {
+		t.Errorf("draft = %+v, want the empty payload as-is", draft)
+	}
+}
+
+// Braces inside string values (item names, notes) don't break the balance
+// count.
+func TestParseBillJSON_BracesInsideStrings(t *testing.T) {
+	raw := `{"market_name":"M{ark}et","items":[{"name":"Milk {bio} \"x\"","quantity":1,"unit_price":1.00,"line_total":1.00}]}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatalf("braces inside strings broke the read: %v", err)
+	}
+	if draft.MarketName != "M{ark}et" || draft.Items[0].Name != `Milk {bio} "x"` {
+		t.Errorf("draft = %+v, want string values verbatim", draft)
+	}
+}
+
+// The offers parser gets the same trailing-prose tolerance.
+func TestParseOffersJSON_TrailingProse(t *testing.T) {
+	raw := `{"products":[{"product_id":1,"name":"Milk","offers":[{"market":"REWE","price":1.29,"currency":"EUR"}]}]}` +
+		" Hope this helps you shop smartly!"
+	res, err := ParseOffersJSON(raw)
+	if err != nil {
+		t.Fatalf("trailing prose broke the offer parse: %v", err)
+	}
+	if len(res.Products) != 1 || res.Products[0].Offers[0].PriceCents != 129 {
+		t.Errorf("result = %+v, want the parsed offers", res)
+	}
+}
+
+// And so does the product-normalization parser.
+func TestParseNormalizationJSON_TrailingProse(t *testing.T) {
+	raw := `{"items":[{"name":"WHL MLK 1L","standard_name":"Whole Milk 1L","generic_name":"Milk"}]}` +
+		" Here are the normalized names!"
+	items, err := ParseNormalizationJSON(raw)
+	if err != nil {
+		t.Fatalf("trailing prose broke the normalization parse: %v", err)
+	}
+	if len(items) != 1 || items[0].StandardName != "Whole Milk 1L" || items[0].GenericName != "Milk" {
+		t.Errorf("items = %+v, want the parsed mappings", items)
 	}
 }
 

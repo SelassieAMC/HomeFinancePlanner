@@ -33,6 +33,7 @@ func TestProductNameMappingRepository_CreateAndFindByRawName(t *testing.T) {
 	created, err := repo.Create(ctx, domain.ProductNameMapping{
 		RawName:      "WHL MLK 1L",
 		StandardName: "Whole Milk 1L",
+		GenericName:  "Fresh Milk",
 		CategoryID:   &categoryID,
 		Source:       domain.MappingSourceAI,
 	})
@@ -54,7 +55,7 @@ func TestProductNameMappingRepository_CreateAndFindByRawName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find by raw name (lowercase): %v", err)
 	}
-	if found.ID != created.ID || found.StandardName != "Whole Milk 1L" ||
+	if found.ID != created.ID || found.StandardName != "Whole Milk 1L" || found.GenericName != "Fresh Milk" ||
 		found.CategoryID == nil || *found.CategoryID != categoryID ||
 		found.CategoryName != "Dairy & Eggs (test)" || found.Source != domain.MappingSourceAI {
 		t.Fatalf("found = %+v; want the created row with joins", found)
@@ -70,7 +71,8 @@ func TestProductNameMappingRepository_CreateAndFindByRawName(t *testing.T) {
 		t.Fatalf("get unknown id = %v; want ErrNotFound", err)
 	}
 
-	// A mapping without a category joins an empty name, not NULL.
+	// A mapping without a category joins an empty name, not NULL; a missing
+	// generic family round-trips as the empty string (no broader family known).
 	bare, err := repo.Create(ctx, domain.ProductNameMapping{
 		RawName:      "TOMATOS",
 		StandardName: "Tomatoes",
@@ -81,6 +83,12 @@ func TestProductNameMappingRepository_CreateAndFindByRawName(t *testing.T) {
 	}
 	if bare.CategoryID != nil || bare.CategoryName != "" {
 		t.Fatalf("bare mapping category = %v %q; want nil/empty", bare.CategoryID, bare.CategoryName)
+	}
+	if bare.GenericName != "" {
+		t.Fatalf("bare mapping generic name = %q; want empty", bare.GenericName)
+	}
+	if found2, err := repo.FindByRawName(ctx, "TOMATOS"); err != nil || found2.GenericName != "" {
+		t.Fatalf("re-read bare mapping = %v %q; want empty generic", err, found2.GenericName)
 	}
 }
 
@@ -120,6 +128,7 @@ func TestProductNameMappingRepository_UpsertOverwrites(t *testing.T) {
 	upserted, err := repo.Upsert(ctx, domain.ProductNameMapping{
 		RawName:      "WHL MLK 1L",
 		StandardName: "Whole Milk 1L Carton",
+		GenericName:  "Fresh Milk",
 		CategoryID:   &categoryID,
 		Source:       domain.MappingSourceUser,
 	})
@@ -131,6 +140,9 @@ func TestProductNameMappingRepository_UpsertOverwrites(t *testing.T) {
 	}
 	if upserted.StandardName != "Whole Milk 1L Carton" {
 		t.Fatalf("standard name = %q; want the upserted value", upserted.StandardName)
+	}
+	if upserted.GenericName != "Fresh Milk" {
+		t.Fatalf("generic name = %q; want the upserted value", upserted.GenericName)
 	}
 	if upserted.CategoryID == nil || *upserted.CategoryID != categoryID || upserted.CategoryName == "" {
 		t.Fatalf("category = %v %q; want the upserted category with join", upserted.CategoryID, upserted.CategoryName)
@@ -151,6 +163,9 @@ func TestProductNameMappingRepository_UpsertOverwrites(t *testing.T) {
 	}
 	if reread.StandardName != "Whole Milk 1L Carton" || reread.Source != domain.MappingSourceUser {
 		t.Fatalf("re-read = %+v; want the upserted decision", reread)
+	}
+	if reread.GenericName != "Fresh Milk" {
+		t.Fatalf("re-read generic name = %q; want the upserted value", reread.GenericName)
 	}
 }
 
@@ -193,6 +208,33 @@ func TestProductNameMappingRepository_UnmappedProductNames(t *testing.T) {
 		Source:       domain.MappingSourceAI,
 	}); err != nil {
 		t.Fatalf("create mapping: %v", err)
+	}
+
+	// The mapping exists but carries no generic name yet: both products stay
+	// pending — the job also fills the generic-family gap.
+	pending, err = repo.UnmappedProductNames(ctx, 100)
+	if err != nil {
+		t.Fatalf("list unmapped after mapping: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("pending = %d rows; want 2 (mapping without a generic name)", len(pending))
+	}
+	count, err = repo.CountUnmappedProductNames(ctx)
+	if err != nil {
+		t.Fatalf("count unmapped after mapping: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count unmapped = %d; want 2 (mapping without a generic name)", count)
+	}
+
+	if _, err := repo.Upsert(ctx, domain.ProductNameMapping{
+		RawName:      "WHL MLK 1L",
+		StandardName: "Whole Milk 1L",
+		GenericName:  "Fresh Milk",
+		CategoryID:   &categoryID,
+		Source:       domain.MappingSourceAI,
+	}); err != nil {
+		t.Fatalf("upsert generic name: %v", err)
 	}
 
 	// Only the unmapped product remains, with its category carried along.

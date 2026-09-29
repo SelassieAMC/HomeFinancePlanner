@@ -31,6 +31,27 @@ type BillFilters struct {
 	Market string // substring match, case-insensitive
 }
 
+// ReceiptFile is one uploaded part of a receipt: the image/PDF bytes and their
+// content type. One file is the classic single-photo receipt; several files are
+// the consecutive parts of one long paper receipt.
+type ReceiptFile struct {
+	Data     []byte
+	MimeType string
+}
+
+// BillFile is one stored part of a saved bill's receipt (position 1..n, in the
+// order the photos were taken). All fields except Position are server-side
+// only.
+type BillFile struct {
+	ID        int64     `json:"-"`
+	BillID    int64     `json:"-"`
+	Position  int       `json:"position"`
+	Path      string    `json:"-"`
+	MimeType  string    `json:"-"`
+	FileHash  string    `json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
 // Bill is a scanned receipt with its extracted header data.
 type Bill struct {
 	ID                 int64      `json:"id"`
@@ -45,8 +66,10 @@ type Bill struct {
 	TotalCents         int64      `json:"total_cents"`         // computed: sum of lines (VAT already included in prices)
 	PrintedTotalCents  int64      `json:"printed_total_cents"` // as printed on the receipt (warning when ≠ TotalCents)
 	Status             BillStatus `json:"status"`
-	ImagePath          string     `json:"image_path,omitempty"`   // server-side path; not exposed
-	FileHash           string     `json:"-"`                      // sha256 of the receipt bytes; dedup only
+	ImagePath          string     `json:"image_path,omitempty"`   // server-side path of part 1; not exposed
+	FileHash           string     `json:"-"`                      // sha256 of part 1; dedup only (children carry every hash)
+	FileCount          int        `json:"file_count,omitempty"`   // receipt parts stored for this bill (hidden for single-file receipts)
+	Files              []BillFile `json:"-"`                      // every stored part, position order
 	ExtractedBy        string     `json:"extracted_by"`           // provider id that produced the draft
 	BudgetID           *int64     `json:"budget_id"`              // optional budget this bill counts toward
 	BudgetName         string     `json:"budget_name,omitempty"`  // display-only, joined from budgets
@@ -65,6 +88,7 @@ type BillItem struct {
 	BillID         int64   `json:"bill_id"`
 	Name           string  `json:"name"`
 	StandardName   string  `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
+	GenericName    string  `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = none known)
 	Brand          string  `json:"brand,omitempty"`         // optional, editable in the draft
 	Unit           string  `json:"unit,omitempty"`          // measure: kg, g, l, ml, pcs, …
 	CategoryID     *int64  `json:"category_id"`             // nullable; resolved from the AI category name
@@ -86,6 +110,7 @@ type BillItemDraft struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`
 	StandardName   string  `json:"standard_name,omitempty"` // AI-suggested (or user-corrected) standardized name; empty on pre-feature drafts
+	GenericName    string  `json:"generic_name,omitempty"`  // AI-suggested (or user-corrected) product-family name; empty = no broader family known
 	Brand          string  `json:"brand,omitempty"`
 	Unit           string  `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
 	CategoryName   string  `json:"category_name,omitempty"`
@@ -135,9 +160,22 @@ func (s BillScanStatus) Valid() bool {
 	return false
 }
 
+// BillScanFile is one stored part of a scan's receipt upload (position 1..n).
+// All fields except Position are server-side only.
+type BillScanFile struct {
+	ID        int64     `json:"-"`
+	ScanID    int64     `json:"-"`
+	Position  int       `json:"position"`
+	Path      string    `json:"-"`
+	MimeType  string    `json:"-"`
+	FileHash  string    `json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
 // BillScan is one receipt upload awaiting analysis and confirmation. Scan is
 // the initial response (status analyzing); the same shape is polled by token
-// until the draft is ready. ImagePath and MimeType are server-side only.
+// until the draft is ready. ImagePath and MimeType are server-side only
+// (part 1's mirror).
 type BillScan struct {
 	ID         int64          `json:"-"` // DB id; the token is the API handle
 	ScanToken  string         `json:"scan_token"`
@@ -149,7 +187,9 @@ type BillScan struct {
 	UpdatedAt  time.Time      `json:"-"`
 	ImagePath  string         `json:"-"`
 	MimeType   string         `json:"-"`
-	FileHash   string         `json:"-"` // sha256 of the uploaded bytes; duplicate detection
+	FileHash   string         `json:"-"`                    // sha256 of part 1; dedup only (children carry every hash)
+	FileCount  int            `json:"file_count,omitempty"` // receipt parts in this upload (hidden for single-file scans)
+	Files      []BillScanFile `json:"-"`                    // every stored part, position order
 }
 
 // BillConfirmInput is the (possibly user-corrected) draft the client sends

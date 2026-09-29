@@ -6,7 +6,7 @@ import "home-finance-planner/backend/internal/domain"
 // for key 'bill_extraction' is missing or empty. Field names are pinned so
 // parse.go can rely on them across connectors. {{categories}} is expanded
 // from the live product-kind category list at resolve time.
-const defaultBillExtractionPrompt = `You are a receipt-parsing engine. Read the receipt (image or PDF) and return ONE JSON object and nothing else — no explanations, no markdown fences.
+const defaultBillExtractionPrompt = `You are a receipt-parsing engine. You receive the files of ONE receipt: a single image or PDF, or several photos that are consecutive parts of one long paper receipt (part 1 = top of the receipt, last part = bottom). Read ALL files together as ONE receipt and return ONE JSON object and nothing else — no explanations, no markdown fences.
 
 Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.34 — never cents, never strings):
 {
@@ -19,6 +19,7 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
     {
       "name": "article name exactly as printed on the receipt",
       "standard_name": "standardized, human-readable name for this article (see rules)",
+      "generic_name": "generic product-family name for this article (see rules)",
       "brand": "product brand if recognizable, else \"\"",
       "category": "one of the fixed product categories, written EXACTLY as listed: {{categories}}",
       "unit": "measure unit printed with the quantity (kg, g, l, ml, pcs, …), or \"\" for plain counts",
@@ -34,6 +35,10 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
 }
 
 Rules:
+- The files may show several photos of the SAME receipt. Treat them as ONE purchase, never as separate receipts: merge all parts into ONE bill.
+- "items" covers every article line from ALL parts in receipt order: part 1's lines first, then part 2's, and so on. Where two photos overlap, the same line appears in both — include it exactly once.
+- market_name, date, payment_method and card_last_digits are usually printed on the FIRST part; read them from whichever part shows them.
+- total_paid (and any printed discount_total / vat_total) come from the LAST part — that is where the receipt ends.
 - currency: detect the ISO 4217 code of the receipt's currency from the symbol or name printed next to any amount (€ → EUR, $ → USD, £ → GBP, zł → PLN, CHF → CHF, "kr" with a Swedish market → SEK, etc.). If no symbol is printed anywhere, use the currency of the country the market is in. Return "" ONLY when the currency is genuinely not determinable — never invent a code.
 - "items" lists every article line, one entry per article, in receipt order.
 - quantity defaults to 1 when not printed; use decimals for weights (0.532 kg) and set "unit" to the printed measure (kg, g, l, ml, pcs, …).
@@ -48,6 +53,8 @@ Rules:
   * Pet food, litter and pet accessories → "Pet Supplies". Diapers, wipes, baby food and formula → "Baby Care"; toys, board games and video games (any age) → "Toys & Games". Screws, tools, light bulbs, glue, small electrical → "Hardware & Tools"; plants, seeds, soil, garden tools → "Garden & Outdoor". Chargers, cables, headphones, household batteries → "Electronics & Accessories"; pens, paper, printer ink → "Stationery & Office"; books, magazines, DVDs → "Books & Media". Clothes, shoes and accessories → "Clothing & Footwear".
   * Deposit lines ("Pfand", bottle/crate deposits) and bottle return lines ("Leergut", empty bottles) always go to "Deposit & Returns" — never to the drink family.
 - standard_name: based on the product in "name" and its category, provide a standardized, human-readable name for this product. Expand receipt abbreviations and store shorthand ("WHL MLK 1L" → "Whole Milk 1L", "TOMATOS" → "Tomatoes"), use Title Case, never put the brand into the name, and keep the size/quantity qualifiers printed on the line ("1L", "500G"). It must be the SAME article, only readable — never invent a different product. When the printed name is already plain, echo it unchanged. Deposit and bottle-return lines ("Deposit & Returns") echo the printed name unchanged.
+- generic_name: the generic product-family name this article belongs to, in Title Case, without brand, size, quantity or variety qualifiers ("POTATO MINIONS 450G" → "Frozen Shaped Potatoes", "Cola Zero 1.5L" → "Cola"). It groups the same kind of product across brands and sizes and is usually shorter than "standard_name". Use the most specific family that is still generic — plain unbranded produce with no size variants may be the product itself ("Tomatoes"). When no broader family exists, repeat the standard_name. Deposit and bottle-return lines ("Deposit & Returns") echo the printed name unchanged.
+- BOTH "standard_name" AND "generic_name" must ALWAYS be in English, regardless of the receipt's language — translate "Kartoffel Minions 450G" to "Potato Minions 450g" / "Frozen Shaped Potatoes", "Milch 1L" to "Milk 1L" / "Fresh Milk".
 - unit_price is the printed price per unit (VAT/IVA already included — read the printed value verbatim); discount is the per-line market discount if printed (0 otherwise); line_total is what the line costs after its discount, VAT included. Discounts are informational only — never change the printed unit price.
 - Deposit/bottle returns ("Leergut" and other refund lines in "Deposit & Returns") are money BACK: read their amounts as NEGATIVE numbers exactly as printed (e.g. line_total -1.50 for an 8¢-bottle crate return). A "Pfand" deposit CHARGE is money spent: keep it POSITIVE, also under "Deposit & Returns". Do not drop deposit lines and do not flip their signs.
 - discount_total is any global/market-level discount printed on the receipt (0 if none). It is informational only.
@@ -113,7 +120,8 @@ Schema:
   "items": [
     {
       "name": "the input name, echoed verbatim",
-      "standard_name": "standardized, human-readable name for this product"
+      "standard_name": "standardized, human-readable name for this product",
+      "generic_name": "generic product-family name for this product (see rules)"
     }
   ]
 }
@@ -121,6 +129,8 @@ Schema:
 Rules:
 - Based on each raw product name, provide a standardized, human-readable name. Expand receipt abbreviations and store shorthand ("WHL MLK 1L" → "Whole Milk 1L", "TOMATOS" → "Tomatoes"), use Title Case, never put the brand into the name, and keep the size/quantity qualifiers printed with the name ("1L", "500G").
 - It must be the SAME article, only readable — never invent a different product. When the name is already plain, echo it unchanged.
+- generic_name: the generic product-family name the product belongs to, in Title Case, without brand, size or variety qualifiers ("POTATO MINIONS 450G" → "Frozen Shaped Potatoes"). Use the most specific family that is still generic; when no broader family exists, repeat the "standard_name".
+- BOTH "standard_name" AND "generic_name" must ALWAYS be in English, regardless of the input's language — translate German/Spanish/etc. product texts ("Kartoffel Minions" → "Potato Minions", "Milch" → "Milk", "Gefrorene Gemüse" → "Frozen Vegetables").
 - Cover every input name exactly once, echoing each "name" verbatim so the caller can match the answers back.
 - If a name is too ambiguous to standardize confidently, echo it unchanged.
 - Respond with ONLY the JSON object.

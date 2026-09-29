@@ -473,6 +473,98 @@ func TestProductServiceUpdateLearnsMapping(t *testing.T) {
 			t.Fatalf("update with failing upsert: %v", err)
 		}
 	})
+
+	t.Run("untouched generic rides a rename without being wiped", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "WHL MLK", StandardName: "Whole Milk 1L", GenericName: "Fresh Milk", CategoryID: idp(1)})
+		// The client sends no generic_name at all; the rename carries the
+		// whole decision — the remembered family must survive the Upsert.
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "WHL MLK 2L", CategoryID: idp(1), StandardName: strp("Whole Milk 2L"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 {
+			t.Fatalf("upserts = %+v, want the rename carried", mappings.upserts)
+		}
+		m := mappings.upserts[0]
+		if m.RawName != "WHL MLK 2L" || m.StandardName != "Whole Milk 2L" || m.GenericName != "Fresh Milk" {
+			t.Fatalf("upsert = %+v, want WHL MLK 2L → Whole Milk 2L with the remembered Fresh Milk family", m)
+		}
+	})
+
+	t.Run("generic-only on unmapped product records identity standard", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "OATS"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "OATS", GenericName: strp("Oat Flakes"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 {
+			t.Fatalf("upserts = %+v, want the family decision recorded", mappings.upserts)
+		}
+		m := mappings.upserts[0]
+		if m.StandardName != "OATS" || m.GenericName != "Oat Flakes" || m.Source != domain.MappingSourceUser {
+			t.Fatalf("upsert = %+v, want OATS → OATS identity with the Oat Flakes family (user)", m)
+		}
+	})
+
+	t.Run("cleared generic on mapped product is learned as empty", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "OATS", StandardName: "Oats", GenericName: "Oat Flakes", CategoryID: idp(1)})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "OATS", CategoryID: idp(1), StandardName: strp("Oats"), GenericName: strp(""),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 || mappings.upserts[0].GenericName != "" {
+			t.Fatalf("upserts = %+v, want the cleared family learned as empty (no identity fallback)", mappings.upserts)
+		}
+	})
+
+	t.Run("untouched mapped product with generic writes nothing", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "OATS", StandardName: "Oats", GenericName: "Oat Flakes", CategoryID: idp(1)})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "OATS", CategoryID: idp(1), StandardName: strp("Oats"), GenericName: strp("Oat Flakes"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 0 {
+			t.Fatalf("upserts = %+v, want none on an untouched save", mappings.upserts)
+		}
+	})
+
+	t.Run("generic edited on mapped product updates the family", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "OATS", StandardName: "Oats", GenericName: "Oat Flakes", CategoryID: idp(1)})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "OATS", CategoryID: idp(1), StandardName: strp("Oats"), GenericName: strp("Porridge Oats"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 {
+			t.Fatalf("upserts = %+v, want the family edit recorded", mappings.upserts)
+		}
+		m := mappings.upserts[0]
+		if m.StandardName != "Oats" || m.GenericName != "Porridge Oats" {
+			t.Fatalf("upsert = %+v, want Oats kept with the Porridge Oats family", m)
+		}
+	})
+
+	t.Run("oversized generic fails the save", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "MLK"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "MLK", GenericName: strp(longString(201)),
+		}); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("oversized generic = %v, want ErrValidation", err)
+		}
+		if len(mappings.upserts) != 0 {
+			t.Fatalf("upserts = %+v, want none — the save failed", mappings.upserts)
+		}
+	})
 }
 
 // --- normalization memory & backfill job -------------------------------------
@@ -506,7 +598,7 @@ func TestProductServiceNormalizeName(t *testing.T) {
 	ctx := context.Background()
 	mappings := newFakeProductMappingStore()
 	mappings.seedMapping(domain.ProductNameMapping{
-		RawName: "WHL MLK 1L", StandardName: "Milk 1L",
+		RawName: "WHL MLK 1L", StandardName: "Milk 1L", GenericName: "Fresh Milk",
 		CategoryID: idp(3), CategoryName: "Dairy & Eggs", Source: domain.MappingSourceUser,
 	})
 	svc := NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
@@ -526,7 +618,7 @@ func TestProductServiceNormalizeName(t *testing.T) {
 		t.Fatalf("unmapped result = %+v, want unmatched TOMATOS", res)
 	}
 
-	// Mapped name: the remembered standard name, category and source.
+	// Mapped name: the remembered standard name, family, category and source.
 	res, err = svc.NormalizeName(ctx, " whl mlk 1l ")
 	if err != nil {
 		t.Fatalf("mapped lookup: %v", err)
@@ -534,9 +626,9 @@ func TestProductServiceNormalizeName(t *testing.T) {
 	if !res.Matched {
 		t.Fatalf("mapped result = %+v, want matched", res)
 	}
-	if res.StandardName != "Milk 1L" || res.CategoryID == nil || *res.CategoryID != 3 ||
+	if res.StandardName != "Milk 1L" || res.GenericName != "Fresh Milk" || res.CategoryID == nil || *res.CategoryID != 3 ||
 		res.CategoryName != "Dairy & Eggs" || res.Source != domain.MappingSourceUser {
-		t.Fatalf("mapped result = %+v, want Milk 1L / cat 3 / Dairy & Eggs / user", res)
+		t.Fatalf("mapped result = %+v, want Milk 1L / Fresh Milk / cat 3 / Dairy & Eggs / user", res)
 	}
 
 	// A store failure surfaces (this lookup path is allowed to fail loudly).
@@ -554,12 +646,12 @@ func TestProductServiceRunNormalizationJobCompletes(t *testing.T) {
 		{ID: 3, Name: "JOGHURT 500G", CategoryID: idp(4)},
 	}
 	mappings.seedMapping(domain.ProductNameMapping{
-		RawName: "WHL MLK 1L", StandardName: "Milk 1L", Source: domain.MappingSourceUser,
+		RawName: "WHL MLK 1L", StandardName: "Milk 1L", GenericName: "Fresh Milk", Source: domain.MappingSourceUser,
 	})
 	normalizer := &fakeTextNormalizer{fn: func(context.Context, domain.AIProvider, string) ([]domain.ProductNameMapping, error) {
 		return []domain.ProductNameMapping{
-			{RawName: "TOMATOS", StandardName: "Tomatoes"},
-			{RawName: "JOGHURT 500G", StandardName: "Yoghurt 500g"},
+			{RawName: "TOMATOS", StandardName: "Tomatoes", GenericName: "Tomatoes"},
+			{RawName: "JOGHURT 500G", StandardName: "Yoghurt 500g", GenericName: "Yoghurt"},
 		}, nil
 	}}
 	svc := newNormalizationJobService(t, mappings, normalizer)
@@ -593,16 +685,17 @@ func TestProductServiceRunNormalizationJobCompletes(t *testing.T) {
 		t.Fatalf("creates = %+v, want one per unmapped name", mappings.creates)
 	}
 	tomatoes := mappings.creates[0]
-	if tomatoes.RawName != "TOMATOS" || tomatoes.StandardName != "Tomatoes" ||
+	if tomatoes.RawName != "TOMATOS" || tomatoes.StandardName != "Tomatoes" || tomatoes.GenericName != "Tomatoes" ||
 		tomatoes.Source != domain.MappingSourceAI || tomatoes.CategoryID != nil {
-		t.Fatalf("tomatoes mapping = %+v, want TOMATOS → Tomatoes (ai, no category)", tomatoes)
+		t.Fatalf("tomatoes mapping = %+v, want TOMATOS → Tomatoes (ai, family, no category)", tomatoes)
 	}
 	yoghurt := mappings.creates[1]
-	if yoghurt.RawName != "JOGHURT 500G" || yoghurt.StandardName != "Yoghurt 500g" ||
+	if yoghurt.RawName != "JOGHURT 500G" || yoghurt.StandardName != "Yoghurt 500g" || yoghurt.GenericName != "Yoghurt" ||
 		yoghurt.Source != domain.MappingSourceAI || yoghurt.CategoryID == nil || *yoghurt.CategoryID != 4 {
-		t.Fatalf("yoghurt mapping = %+v, want JOGHURT 500G → Yoghurt 500g (ai, cat 4)", yoghurt)
+		t.Fatalf("yoghurt mapping = %+v, want JOGHURT 500G → Yoghurt 500g (ai, family, cat 4)", yoghurt)
 	}
-	if m := mappings.items["whl mlk 1l"]; m.Source != domain.MappingSourceUser || m.StandardName != "Milk 1L" {
+	if m := mappings.items["whl mlk 1l"]; m.Source != domain.MappingSourceUser || m.StandardName != "Milk 1L" ||
+		m.GenericName != "Fresh Milk" {
 		t.Errorf("the user's existing decision was overwritten: %+v", m)
 	}
 
@@ -617,6 +710,79 @@ func TestProductServiceRunNormalizationJobCompletes(t *testing.T) {
 	}
 	if !strings.HasSuffix(prompt, `["TOMATOS","JOGHURT 500G"]`) {
 		t.Errorf("prompt does not end with the raw-name array: ...%q", prompt[min(len(prompt), 200):])
+	}
+}
+
+// TestProductServiceRunNormalizationFillsMissingGenerics covers the widened
+// backfill input: a product whose mapping exists but has no generic name is
+// asked again, and the recording preserves the reviewed standard name,
+// category and source while filling only the family gap. Mappings that
+// already carry a family are never re-asked.
+func TestProductServiceRunNormalizationFillsMissingGenerics(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	mappings.products = []domain.Product{
+		{ID: 1, Name: "WHL MLK 1L", CategoryID: idp(7)}, // mapped, family missing → gap-filled
+		{ID: 2, Name: "TOMATOS", CategoryID: idp(7)},    // unmapped → created
+		{ID: 3, Name: "BREAD"},                          // mapped with family → excluded
+	}
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Whole Milk 1L",
+		CategoryID: idp(7), Source: domain.MappingSourceUser,
+	})
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "BREAD", StandardName: "Bread", GenericName: "Bread", Source: domain.MappingSourceAI,
+	})
+	normalizer := &fakeTextNormalizer{fn: func(context.Context, domain.AIProvider, string) ([]domain.ProductNameMapping, error) {
+		return []domain.ProductNameMapping{
+			{RawName: "WHL MLK 1L", StandardName: "Whole Milk 1L", GenericName: "Fresh Milk"},
+			{RawName: "TOMATOS", StandardName: "Tomatoes", GenericName: "Tomatoes"},
+		}, nil
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	job, err := svc.RunNormalization(ctx)
+	if err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	if job.Status != domain.ProductNormalizationRunning || job.TotalNames != 2 {
+		t.Fatalf("started job = %+v, want running with 2 pending names (family gap + unmapped)", job)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationDone
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.TotalNames != 2 || st.ProcessedNames != 2 || st.MappedNames != 2 || st.Error != "" {
+		t.Fatalf("finished job = %+v, want 2/2/2 without error", st)
+	}
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.creates) != 1 {
+		t.Fatalf("creates = %+v, want only the unmapped TOMATOS", mappings.creates)
+	}
+	if len(mappings.upserts) != 1 {
+		t.Fatalf("upserts = %+v, want only the WHL MLK 1L gap-fill", mappings.upserts)
+	}
+	up := mappings.upserts[0]
+	if up.RawName != "WHL MLK 1L" || up.StandardName != "Whole Milk 1L" || up.GenericName != "Fresh Milk" ||
+		up.CategoryID == nil || *up.CategoryID != 7 || up.Source != domain.MappingSourceUser {
+		t.Fatalf("gap-fill = %+v, want only Fresh Milk added to the reviewed decision", up)
+	}
+	if m := mappings.items["bread"]; m.GenericName != "Bread" || m.Source != domain.MappingSourceAI {
+		t.Errorf("the settled BREAD mapping was touched: %+v", m)
+	}
+
+	if len(normalizer.prompts) != 1 {
+		t.Fatalf("normalizer calls = %d, want exactly one batch", len(normalizer.prompts))
+	}
+	if !strings.HasSuffix(normalizer.prompts[0], `["WHL MLK 1L","TOMATOS"]`) {
+		t.Errorf("prompt does not end with the pending-name array: ...%q", normalizer.prompts[0][min(len(normalizer.prompts[0]), 200):])
 	}
 }
 
@@ -710,6 +876,68 @@ func TestProductServiceNormalizationFailsWhenEvenOneNameTimesOut(t *testing.T) {
 	}
 	if !strings.Contains(st.Error, "LLM_TIMEOUT") || !strings.Contains(st.Error, "timed out") {
 		t.Fatalf("job error = %q, want the actionable timeout advice", st.Error)
+	}
+}
+
+func TestProductServiceRunNormalizationSurvivesBatchFailure(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	for i := 1; i <= 45; i++ {
+		mappings.products = append(mappings.products,
+			domain.Product{ID: int64(i), Name: fmt.Sprintf("PRD %d", i)})
+	}
+	// First batch (40 names) fails with a provider hiccup — the empty-content
+	// case of a reasoning model; the next batch answers. The job must drain
+	// the rest and finish failed (with the error and its progress kept),
+	// not die on the first bad call.
+	calls := 0
+	normalizer := &fakeTextNormalizer{fn: func(_ context.Context, _ domain.AIProvider, prompt string) ([]domain.ProductNameMapping, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New(`model "glm-5.3-flash:cloud" returned an empty response (no message content)`)
+		}
+		names := promptNames(t, prompt)
+		out := make([]domain.ProductNameMapping, len(names))
+		for i, name := range names {
+			out[i] = domain.ProductNameMapping{RawName: name, StandardName: name + " Std", GenericName: "Family"}
+		}
+		return out, nil
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	if _, err := svc.RunNormalization(ctx); err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationFailed
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	// The second batch's five names were mapped and counted before the job
+	// ended failed with the first batch's error.
+	if st.Status != domain.ProductNormalizationFailed ||
+		!strings.Contains(st.Error, "empty response") ||
+		st.ProcessedNames != 5 || st.MappedNames != 5 {
+		t.Fatalf("finished job = %+v, want failed (empty-response error) with 5/5 progress", st)
+	}
+	if calls != 2 {
+		t.Fatalf("normalizer calls = %d, want the failed batch plus one retry batch", calls)
+	}
+	// The failed batch's names were asked (not re-queued) and stayed unmapped;
+	// the surviving batch's names were recorded.
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.creates) != 5 {
+		t.Fatalf("creates = %d, want only the second batch's five names", len(mappings.creates))
+	}
+	if m, ok := mappings.items["prd 1"]; ok {
+		t.Fatalf("failed batch name was recorded anyway: %+v", m)
+	}
+	if m := mappings.items["prd 45"]; m.StandardName != "PRD 45 Std" || m.GenericName != "Family" {
+		t.Fatalf("surviving batch mapping = %+v, want PRD 45 → PRD 45 Std / Family", m)
 	}
 }
 

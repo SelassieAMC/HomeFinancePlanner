@@ -41,6 +41,9 @@ func (f *fakeBillScanStore) Create(_ context.Context, s domain.BillScan) (domain
 	}
 	s.Status = domain.BillScanAnalyzing
 	s.UpdatedAt = time.Now().UTC()
+	if len(s.Files) > 0 {
+		s.FileCount = len(s.Files) // the SQLite repo computes the same count
+	}
 	f.items[s.ScanToken] = s
 	return s, nil
 }
@@ -61,6 +64,12 @@ func (f *fakeBillScanStore) GetByFileHash(_ context.Context, hash string) (domai
 	for _, s := range f.items {
 		if s.FileHash == hash {
 			return s, nil
+		}
+		// Every stored part counts, mirroring the child-table dedup.
+		for _, part := range s.Files {
+			if part.FileHash == hash {
+				return s, nil
+			}
 		}
 	}
 	return domain.BillScan{}, domain.ErrNotFound
@@ -152,7 +161,13 @@ func (f *fakeBillScanStore) DeleteStale(_ context.Context, olderThan time.Time) 
 	for token, s := range f.items {
 		if (s.Status == domain.BillScanDone || s.Status == domain.BillScanFailed) &&
 			s.UpdatedAt.Before(olderThan) {
-			paths = append(paths, s.ImagePath)
+			if len(s.Files) > 0 {
+				for _, part := range s.Files {
+					paths = append(paths, part.Path)
+				}
+			} else if s.ImagePath != "" {
+				paths = append(paths, s.ImagePath)
+			}
 			delete(f.items, token)
 		}
 	}
@@ -171,6 +186,9 @@ func (f *fakeBillStore) Create(_ context.Context, b domain.Bill) (domain.Bill, e
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	b.ID = int64(len(f.items) + 1)
+	if len(b.Files) > 0 {
+		b.FileCount = len(b.Files) // the SQLite repo computes the same count
+	}
 	items := b.Items
 	b.Items = nil
 	f.items = append(f.items, b)
@@ -232,6 +250,12 @@ func (f *fakeBillStore) GetByFileHash(_ context.Context, hash string) (domain.Bi
 		if b.FileHash == hash {
 			return b, nil
 		}
+		// Every stored part counts, mirroring the child-table dedup.
+		for _, part := range b.Files {
+			if part.FileHash == hash {
+				return b, nil
+			}
+		}
 	}
 	return domain.Bill{}, domain.ErrNotFound
 }
@@ -246,13 +270,13 @@ func (f *fakeBillStore) ListBrands(context.Context) ([]string, error) { return n
 // fakeBillExtractor delegates to a function so tests can stage results. The
 // last prompt the service resolved is captured for assertions.
 type fakeBillExtractor struct {
-	fn         func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error)
+	fn         func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error)
 	lastPrompt string
 }
 
-func (f *fakeBillExtractor) Extract(ctx context.Context, image []byte, mimeType string, p domain.AIProvider, prompt string) (domain.BillDraft, error) {
+func (f *fakeBillExtractor) Extract(ctx context.Context, files []domain.ReceiptFile, p domain.AIProvider, prompt string) (domain.BillDraft, error) {
 	f.lastPrompt = prompt
-	return f.fn(ctx, image, mimeType, p, prompt)
+	return f.fn(ctx, files, p, prompt)
 }
 
 // TestConnection satisfies the ProviderTester interface SettingsService needs.
@@ -455,7 +479,7 @@ func testProviderJSON() string {
 	return `[{"id":"p1","type":"ollama","model":"test-vision"}]`
 }
 
-func newTestBillService(t *testing.T, extractFn func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeStoreStore, *fakeCategoryStore) {
+func newTestBillService(t *testing.T, extractFn func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeStoreStore, *fakeCategoryStore) {
 	t.Helper()
 	svc, scanStore, billStore, storeStore, catStore, products := newTestBillServiceWithProducts(t, extractFn)
 	_ = products
@@ -464,7 +488,7 @@ func newTestBillService(t *testing.T, extractFn func(context.Context, []byte, st
 
 // newTestBillServiceWithProducts also exposes the product store, for tests
 // that assert on the catalogue built from confirmed bills.
-func newTestBillServiceWithProducts(t *testing.T, extractFn func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeStoreStore, *fakeCategoryStore, *fakeProductStore) {
+func newTestBillServiceWithProducts(t *testing.T, extractFn func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeStoreStore, *fakeCategoryStore, *fakeProductStore) {
 	t.Helper()
 	scanStore := newFakeBillScanStore()
 	billStore := &fakeBillStore{}
@@ -496,16 +520,30 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 
 func testImage() []byte { return []byte("fake-jpeg-bytes") }
 
+// scanFile wraps raw image bytes as the single part of a receipt upload.
+func scanFile(data []byte) []domain.ReceiptFile {
+	return []domain.ReceiptFile{{Data: data, MimeType: "image/jpeg"}}
+}
+
+// scanFiles wraps raw image parts (in order) as one multi-part upload.
+func scanFiles(parts ...[]byte) []domain.ReceiptFile {
+	files := make([]domain.ReceiptFile, len(parts))
+	for i, p := range parts {
+		files[i] = domain.ReceiptFile{Data: p, MimeType: "image/jpeg"}
+	}
+	return files
+}
+
 // --- tests -------------------------------------------------------------------
 
 func TestScanReturnsAnalyzingImmediately(t *testing.T) {
 	blocked := make(chan struct{}) // extractor never returns
-	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		<-blocked
 		return domain.BillDraft{}, errors.New("unreachable")
 	})
 
-	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -519,7 +557,7 @@ func TestScanReturnsAnalyzingImmediately(t *testing.T) {
 }
 
 func TestWorkerCompletesExtraction(t *testing.T) {
-	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{
 			MarketName: "Test Market",
 			Items: []domain.BillItemDraft{
@@ -530,7 +568,7 @@ func TestWorkerCompletesExtraction(t *testing.T) {
 		}, nil
 	})
 
-	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -546,11 +584,11 @@ func TestWorkerCompletesExtraction(t *testing.T) {
 }
 
 func TestWorkerMarksFailure(t *testing.T) {
-	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{}, errors.New("ollama is down")
 	})
 
-	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -566,13 +604,13 @@ func TestWorkerMarksFailure(t *testing.T) {
 }
 
 func TestConfirmGuardsScanState(t *testing.T) {
-	svc, scanStore, billStore, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, billStore, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "USD"}, nil
 	})
 	ctx := context.Background()
 
 	// Confirm before the analysis finishes → validation error.
-	early, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	early, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -607,14 +645,14 @@ func TestConfirmGuardsScanState(t *testing.T) {
 func TestReextractGuardsAnalyzingScans(t *testing.T) {
 	release := make(chan struct{})
 	var calls atomic.Int64
-	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		calls.Add(1)
 		<-release
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
 
-	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -647,12 +685,12 @@ func TestReextractGuardsAnalyzingScans(t *testing.T) {
 }
 
 func TestDiscardScanRemovesRow(t *testing.T) {
-	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
 
-	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -666,11 +704,11 @@ func TestDiscardScanRemovesRow(t *testing.T) {
 
 func TestCloseReturnsWhileExtractionBlocked(t *testing.T) {
 	blocked := make(chan struct{})
-	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		<-blocked
 		return domain.BillDraft{}, errors.New("unreachable")
 	})
-	if _, err := svc.Scan(context.Background(), "image/jpeg", testImage(), ""); err != nil {
+	if _, err := svc.Scan(context.Background(), scanFile(testImage()), ""); err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
 
@@ -682,7 +720,7 @@ func TestCloseReturnsWhileExtractionBlocked(t *testing.T) {
 }
 
 func TestGetScanUnknownTokenIsNotFound(t *testing.T) {
-	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{}, errors.New("not called")
 	})
 	if _, err := svc.GetScan(context.Background(), "deadbeef"); !errors.Is(err, domain.ErrNotFound) {
@@ -694,7 +732,7 @@ func TestGetScanUnknownTokenIsNotFound(t *testing.T) {
 
 func TestWorkerSurvivesExtractorPanic(t *testing.T) {
 	var calls atomic.Int64
-	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		if calls.Add(1) == 1 {
 			panic("boom in extraction")
 		}
@@ -702,7 +740,7 @@ func TestWorkerSurvivesExtractorPanic(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	first, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	first, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan 1: %v", err)
 	}
@@ -717,7 +755,7 @@ func TestWorkerSurvivesExtractorPanic(t *testing.T) {
 	}
 
 	// …and the worker must survive to process the next upload.
-	second, err := svc.Scan(ctx, "image/jpeg", []byte("another-fake-jpeg"), "")
+	second, err := svc.Scan(ctx, scanFile([]byte("another-fake-jpeg")), "")
 	if err != nil {
 		t.Fatalf("Scan 2: %v", err)
 	}
@@ -733,12 +771,12 @@ func TestWorkerSurvivesExtractorPanic(t *testing.T) {
 // --- store find-or-create on confirm/update ----------------------------------
 
 func TestConfirmFindOrCreatesStore(t *testing.T) {
-	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
 
-	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -761,12 +799,12 @@ func TestConfirmFindOrCreatesStore(t *testing.T) {
 }
 
 func TestConfirmReusesStoreCaseInsensitive(t *testing.T) {
-	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
 
-	first, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	first, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -781,7 +819,7 @@ func TestConfirmReusesStoreCaseInsensitive(t *testing.T) {
 
 	// A second bill naming the same store in another casing reuses it (the
 	// second receipt must be a different image — same bytes are a duplicate).
-	second, err := svc.Scan(ctx, "image/jpeg", []byte("another-fake-jpeg"), "")
+	second, err := svc.Scan(ctx, scanFile([]byte("another-fake-jpeg")), "")
 	if err != nil {
 		t.Fatalf("Scan 2: %v", err)
 	}
@@ -807,12 +845,12 @@ func TestConfirmReusesStoreCaseInsensitive(t *testing.T) {
 }
 
 func TestConfirmEmptyMarketHasNoStore(t *testing.T) {
-	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
 
-	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -835,12 +873,12 @@ func TestConfirmEmptyMarketHasNoStore(t *testing.T) {
 }
 
 func TestBillUpdateRelinksStore(t *testing.T) {
-	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, storeStore, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
 
-	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -870,7 +908,7 @@ func TestBillUpdateRelinksStore(t *testing.T) {
 }
 
 func TestResolveStoreRetriesAfterConflict(t *testing.T) {
-	svc, _, _, storeStore, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, _, _, storeStore, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	ctx := context.Background()
@@ -892,7 +930,7 @@ func TestResolveStoreRetriesAfterConflict(t *testing.T) {
 // scanUntilDone runs a Scan and waits for its worker to finish extraction.
 func scanUntilDone(t *testing.T, svc *BillService, scanStore *fakeBillScanStore) domain.BillScan {
 	t.Helper()
-	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -904,13 +942,13 @@ func scanUntilDone(t *testing.T, svc *BillService, scanStore *fakeBillScanStore)
 }
 
 func TestScanRejectsDuplicateUpload(t *testing.T) {
-	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 
 	// Same bytes uploaded twice while the first scan is still pending → 409.
 	first := scanUntilDone(t, svc, scanStore)
-	if _, err := svc.Scan(context.Background(), "image/jpeg", testImage(), ""); !errors.Is(err, domain.ErrConflict) {
+	if _, err := svc.Scan(context.Background(), scanFile(testImage()), ""); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("expected duplicate scan to conflict, got %v", err)
 	}
 
@@ -919,7 +957,7 @@ func TestScanRejectsDuplicateUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Confirm: %v", err)
 	}
-	if _, err := svc.Scan(context.Background(), "image/jpeg", testImage(), ""); !errors.Is(err, domain.ErrConflict) {
+	if _, err := svc.Scan(context.Background(), scanFile(testImage()), ""); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("expected duplicate after confirm to conflict, got %v", err)
 	}
 
@@ -929,7 +967,7 @@ func TestScanRejectsDuplicateUpload(t *testing.T) {
 	}
 
 	// A different image uploads fine after the first scan was consumed.
-	if _, err := svc.Scan(context.Background(), "image/jpeg", []byte("other-receipt-bytes"), ""); err != nil {
+	if _, err := svc.Scan(context.Background(), scanFile([]byte("other-receipt-bytes")), ""); err != nil {
 		t.Fatalf("Scan (different image): %v", err)
 	}
 	scanStore.mu.Lock()
@@ -940,8 +978,294 @@ func TestScanRejectsDuplicateUpload(t *testing.T) {
 	}
 }
 
+// --- multi-part receipts (one receipt split across several files) -------------
+
+// threeReceiptParts returns three distinct images standing in for the
+// top/middle/bottom photos of one long receipt.
+func threeReceiptParts() [][]byte {
+	return [][]byte{[]byte("receipt-top"), []byte("receipt-middle"), []byte("receipt-bottom")}
+}
+
+// scanPartsUntilDone uploads the given parts as ONE grouped receipt and waits
+// for the done draft.
+func scanPartsUntilDone(t *testing.T, svc *BillService, scanStore *fakeBillScanStore, parts ...[]byte) domain.BillScan {
+	t.Helper()
+	res, err := svc.Scan(context.Background(), scanFiles(parts...), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(context.Background(), res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	return res
+}
+
+// One grouped upload of several parts becomes a single scan token: one AI read
+// handed every part in order, every part stored on disk, one row.
+func TestScanGroupsMultiFileReceipt(t *testing.T) {
+	var gotFiles []domain.ReceiptFile
+	svc, scanStore, _, _, _ := newTestBillService(t, func(_ context.Context, files []domain.ReceiptFile, _ domain.AIProvider, _ string) (domain.BillDraft, error) {
+		gotFiles = files
+		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "EUR"}, nil
+	})
+	parts := threeReceiptParts()
+
+	res, err := svc.Scan(context.Background(), scanFiles(parts...), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.FileCount != 3 {
+		t.Fatalf("response file_count = %d, want 3", res.FileCount)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(context.Background(), res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	row, _ := scanStore.GetByToken(context.Background(), res.ScanToken)
+
+	// The one AI read saw every part, in upload order.
+	if len(gotFiles) != 3 {
+		t.Fatalf("extractor saw %d files, want 3", len(gotFiles))
+	}
+	for i, f := range gotFiles {
+		if string(f.Data) != string(parts[i]) {
+			t.Errorf("extractor file %d = %q, want %q", i+1, f.Data, parts[i])
+		}
+	}
+
+	// The row carries every part with its position; part 1 mirrors the
+	// legacy single-file columns.
+	if len(row.Files) != 3 || row.FileCount != 3 {
+		t.Fatalf("row files/count = %d/%d, want 3/3", len(row.Files), row.FileCount)
+	}
+	for i, f := range row.Files {
+		if f.Position != i+1 {
+			t.Errorf("file %d position = %d", i+1, f.Position)
+		}
+		if f.Path == "" || f.FileHash == "" {
+			t.Errorf("file %d missing path/hash: %+v", i+1, f)
+		}
+	}
+	if row.ImagePath != row.Files[0].Path || row.FileHash != row.Files[0].FileHash {
+		t.Error("legacy columns must mirror part 1")
+	}
+
+	// Every part is on disk.
+	for _, f := range row.Files {
+		if _, err := os.Stat(f.Path); err != nil {
+			t.Errorf("part %d not stored: %v", f.Position, err)
+		}
+	}
+
+	// One token — the parts were not scanned separately.
+	scanStore.mu.Lock()
+	n := len(scanStore.items)
+	scanStore.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("expected a single scan row for the grouped upload, got %d", n)
+	}
+}
+
+func TestScanRejectsTooManyFiles(t *testing.T) {
+	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{}, errors.New("not called")
+	})
+	ctx := context.Background()
+
+	if _, err := svc.Scan(ctx, nil, ""); err == nil || !strings.Contains(err.Error(), "no receipt file") {
+		t.Fatalf("empty upload: %v", err)
+	}
+
+	parts := make([][]byte, MaxBillScanFiles+1)
+	for i := range parts {
+		parts[i] = []byte(fmt.Sprintf("part-%d", i))
+	}
+	_, err := svc.Scan(ctx, scanFiles(parts...), "")
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("at most %d files", MaxBillScanFiles)) {
+		t.Fatalf("expected the cap to reject %d files, got %v", len(parts), err)
+	}
+
+	// The cap itself is fine.
+	parts = parts[:MaxBillScanFiles]
+	if _, err := svc.Scan(ctx, scanFiles(parts...), ""); err != nil {
+		t.Fatalf("Scan at the cap: %v", err)
+	}
+}
+
+// The same photo picked twice in one grouped upload is rejected up front.
+func TestScanRejectsDuplicatePartWithinUpload(t *testing.T) {
+	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{}, errors.New("not called")
+	})
+
+	_, err := svc.Scan(context.Background(), scanFiles([]byte("top"), []byte("bottom"), []byte("top")), "")
+	if err == nil || !strings.Contains(err.Error(), "file 3 of 3 is a duplicate of an earlier file") {
+		t.Fatalf("expected the repeated part to be named, got %v", err)
+	}
+}
+
+// Re-uploading any part of an existing receipt conflicts, and the error names
+// the offending part — whether the earlier receipt is still analyzing or was
+// already saved as a bill.
+func TestScanDedupNamesOffendingPart(t *testing.T) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "EUR"}, nil
+	})
+	ctx := context.Background()
+	first := scanPartsUntilDone(t, svc, scanStore, threeReceiptParts()...)
+
+	// Part 2 of the old receipt re-appears as part 1 of the new upload.
+	_, err := svc.Scan(ctx, scanFiles([]byte("receipt-middle"), []byte("a-different-photo")), "")
+	if err == nil || !strings.Contains(err.Error(), "file 1 of 2 is already being analyzed") {
+		t.Fatalf("expected the reused scan part to be named, got %v", err)
+	}
+
+	// …and as part 2 of a new upload after the original became a bill.
+	bill, err := svc.Confirm(ctx, first.ScanToken, domain.BillConfirmInput{MarketName: "REWE", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	_, err = svc.Scan(ctx, scanFiles([]byte("a-different-photo"), []byte("receipt-bottom")), "")
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("file 2 of 2 was already saved as bill #%d", bill.ID)) {
+		t.Fatalf("expected the reused bill part to be named, got %v", err)
+	}
+}
+
+// The worker reads every part from disk before extraction; a vanished part
+// fails the scan with an actionable message instead of a panic.
+func TestWorkerFailsWhenPartMissing(t *testing.T) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{}, errors.New("extractor must not run when a part is unreadable")
+	})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, scanFiles(threeReceiptParts()...), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	row, err := scanStore.GetByToken(ctx, res.ScanToken)
+	if err != nil {
+		t.Fatalf("GetByToken: %v", err)
+	}
+	_ = os.Remove(row.Files[1].Path) // part 2 vanished on disk
+
+	svc.processScan(res.ScanToken, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	row, _ = scanStore.GetByToken(ctx, res.ScanToken)
+	if row.Status != domain.BillScanFailed {
+		t.Fatalf("status = %q, want failed", row.Status)
+	}
+	if !strings.Contains(row.Error, "receipt part 2 of 3 is missing on disk") {
+		t.Fatalf("failure should name the missing part, got %q", row.Error)
+	}
+}
+
+// Discarding a grouped scan removes every stored part, not just part 1.
+func TestDiscardRemovesAllParts(t *testing.T) {
+	blocked := make(chan struct{})
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		<-blocked
+		return domain.BillDraft{}, errors.New("unreachable")
+	})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, scanFiles(threeReceiptParts()...), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	row, err := scanStore.GetByToken(ctx, res.ScanToken)
+	if err != nil {
+		t.Fatalf("GetByToken: %v", err)
+	}
+	paths := scanFilePaths(row)
+	if len(paths) != 3 {
+		t.Fatalf("expected 3 stored paths, got %d", len(paths))
+	}
+
+	if err := svc.DiscardScan(ctx, res.ScanToken); err != nil {
+		t.Fatalf("DiscardScan: %v", err)
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("part %s still on disk after discard (%v)", filepath.Base(p), err)
+		}
+	}
+	close(blocked)
+}
+
+// Confirm carries every part from the scan into the saved bill.
+func TestConfirmCreatesBillFiles(t *testing.T) {
+	svc, scanStore, billStore, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "REWE", TotalCents: 100, Currency: "EUR"}, nil
+	})
+	ctx := context.Background()
+	first := scanPartsUntilDone(t, svc, scanStore, threeReceiptParts()...)
+
+	bill, err := svc.Confirm(ctx, first.ScanToken, domain.BillConfirmInput{MarketName: "REWE", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if len(bill.Files) != 3 || bill.FileCount != 3 {
+		t.Fatalf("bill files/count = %d/%d, want 3/3", len(bill.Files), bill.FileCount)
+	}
+	for i, f := range bill.Files {
+		if f.Position != i+1 {
+			t.Errorf("bill file %d position = %d", i+1, f.Position)
+		}
+		if _, err := os.Stat(f.Path); err != nil {
+			t.Errorf("bill part %d not on disk: %v", f.Position, err)
+		}
+	}
+	if bill.ImagePath != bill.Files[0].Path {
+		t.Error("bill legacy column must mirror part 1")
+	}
+
+	// The store keeps the parts for the saved-bill read path.
+	billStore.mu.Lock()
+	stored := billStore.items[0]
+	billStore.mu.Unlock()
+	if len(stored.Files) != 3 {
+		t.Fatalf("stored bill parts = %d, want 3", len(stored.Files))
+	}
+}
+
+func TestReceiptImagePathServesRequestedPart(t *testing.T) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "REWE", TotalCents: 100, Currency: "EUR"}, nil
+	})
+	ctx := context.Background()
+	first := scanPartsUntilDone(t, svc, scanStore, threeReceiptParts()...)
+	bill, err := svc.Confirm(ctx, first.ScanToken, domain.BillConfirmInput{MarketName: "REWE", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+
+	for part := 1; part <= 3; part++ {
+		path, mime, err := svc.ReceiptImagePath(ctx, bill.ID, part)
+		if err != nil {
+			t.Fatalf("ReceiptImagePath(%d): %v", part, err)
+		}
+		if path != bill.Files[part-1].Path {
+			t.Errorf("part %d served %s, want %s", part, filepath.Base(path), filepath.Base(bill.Files[part-1].Path))
+		}
+		if mime != "image/jpeg" {
+			t.Errorf("part %d mime = %q", part, mime)
+		}
+	}
+
+	// part 0 means part 1 (the classic single-image link); parts beyond the
+	// end are a validation error, not a 500.
+	if path, _, _ := svc.ReceiptImagePath(ctx, bill.ID, 0); path != bill.Files[0].Path {
+		t.Errorf("part 0 should serve part 1")
+	}
+	if _, _, err := svc.ReceiptImagePath(ctx, bill.ID, 4); err == nil || !strings.Contains(err.Error(), "no receipt part 4") {
+		t.Fatalf("expected out-of-range part to fail, got %v", err)
+	}
+}
+
 func TestBuildBillNegativeDepositCategory(t *testing.T) {
-	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	catStore.cats[7] = domain.Category{ID: 7, Name: "Deposit & Returns", AllowsNegative: true}
@@ -967,7 +1291,7 @@ func TestBuildBillNegativeDepositCategory(t *testing.T) {
 }
 
 func TestBuildBillRejectsNegativeForNormalCategory(t *testing.T) {
-	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	catStore.cats[3] = domain.Category{ID: 3, Name: "Cola & Soda"}
@@ -994,7 +1318,7 @@ func TestBuildBillRejectsNegativeForNormalCategory(t *testing.T) {
 func ptrInt64(v int64) *int64 { return &v }
 
 func TestResolveDraftCategoriesNewTaxonomyAliases(t *testing.T) {
-	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
 	})
 	catStore.list = []domain.Category{
@@ -1121,7 +1445,7 @@ func (f *fakeTxStore) List(context.Context, domain.TransactionFilters) ([]domain
 
 // newTestBillServiceCustom wires a BillService with a seeded base currency,
 // rate source, account store and transaction store (nil = default empty).
-func newTestBillServiceCustom(t *testing.T, settingsData map[string]string, rates RateSource, accounts AccountStore, txs TransactionStore, extractFn func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeSettingsStore) {
+func newTestBillServiceCustom(t *testing.T, settingsData map[string]string, rates RateSource, accounts AccountStore, txs TransactionStore, extractFn func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore, *fakeBillStore, *fakeSettingsStore) {
 	t.Helper()
 	scanStore := newFakeBillScanStore()
 	billStore := &fakeBillStore{}
@@ -1158,11 +1482,11 @@ func eurSnapshot() domain.RateSnapshot {
 func TestExtractDraftFallsBackToBaseCurrency(t *testing.T) {
 	svc, scanStore, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{MarketName: "REWE", TotalCents: 100}, nil // no currency detected
 		})
 
-	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -1179,11 +1503,11 @@ func TestExtractDraftFallsBackToBaseCurrency(t *testing.T) {
 func TestExtractDraftKeepsDetectedCurrency(t *testing.T) {
 	svc, scanStore, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "USD"}, nil, nil, nil,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{MarketName: "REWE", TotalCents: 100, Currency: "EUR"}, nil
 		})
 
-	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -1205,12 +1529,12 @@ func TestExtractDraftUsesResolvedPrompt(t *testing.T) {
 	var gotPrompt string
 	svc, scanStore, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
-		func(_ context.Context, _ []byte, _ string, _ domain.AIProvider, prompt string) (domain.BillDraft, error) {
+		func(_ context.Context, _ []domain.ReceiptFile, _ domain.AIProvider, prompt string) (domain.BillDraft, error) {
 			gotPrompt = prompt
 			return domain.BillDraft{MarketName: "REWE", TotalCents: 100, Currency: "EUR"}, nil
 		})
 
-	res, err := svc.Scan(context.Background(), "image/jpeg", testImage(), "")
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -1229,7 +1553,7 @@ func TestExtractDraftUsesResolvedPrompt(t *testing.T) {
 func TestBuildBillCurrency(t *testing.T) {
 	svc, _, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, errors.New("not called")
 		})
 	ctx := context.Background()
@@ -1261,7 +1585,7 @@ func TestConfirmWithoutAccountRecordsOnWallet(t *testing.T) {
 	txs := newFakeTxStore()
 	svc, scanStore, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{MarketName: "REWE"}, nil
 		})
 	ctx := context.Background()
@@ -1289,7 +1613,7 @@ func TestConfirmWithoutAccountRecordsOnWallet(t *testing.T) {
 
 	// A second account-less confirm reuses the wallet, not a new account.
 	secondImage := []byte("another-fake-jpeg")
-	res, err := svc.Scan(ctx, "image/jpeg", secondImage, "")
+	res, err := svc.Scan(ctx, scanFile(secondImage), "")
 	if err != nil {
 		t.Fatalf("Scan 2: %v", err)
 	}
@@ -1318,7 +1642,7 @@ func TestConfirmTransactionCarriesBillCurrency(t *testing.T) {
 	txs := newFakeTxStore()
 	svc, scanStore, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{
 				MarketName: "REWE",
 				Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
@@ -1326,7 +1650,7 @@ func TestConfirmTransactionCarriesBillCurrency(t *testing.T) {
 		})
 	ctx := context.Background()
 
-	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -1369,7 +1693,7 @@ func TestSyncBillTransactionUpdatesCurrency(t *testing.T) {
 	}
 	svc, _, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, errors.New("not called")
 		})
 
@@ -1393,7 +1717,7 @@ func TestSyncBillTransactionRepointsAccount(t *testing.T) {
 	}
 	svc, _, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, errors.New("not called")
 		})
 
@@ -1412,7 +1736,7 @@ func TestConfirmCashAccountForcesCashPayment(t *testing.T) {
 	txs := newFakeTxStore()
 	svc, scanStore, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{MarketName: "ALDI"}, nil
 		})
 	ctx := context.Background()
@@ -1455,7 +1779,7 @@ func TestConfirmCardAccountKeepsCardPayment(t *testing.T) {
 	txs := newFakeTxStore()
 	svc, scanStore, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{MarketName: "ALDI"}, nil
 		})
 	ctx := context.Background()
@@ -1501,7 +1825,7 @@ func TestUpdateRepointsTransactionToCashAccount(t *testing.T) {
 	}
 	svc, _, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, errors.New("not called")
 		})
 	// A confirmed bill whose expense sits on the card account.
@@ -1547,7 +1871,7 @@ func TestUpdateWithoutTransactionCreatesOne(t *testing.T) {
 	txs := newFakeTxStore()
 	svc, _, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, errors.New("not called")
 		})
 	// A pre-account bill: no transaction ever recorded.
@@ -1597,7 +1921,7 @@ func TestUpdateNilAccountKeepsTransactionAccount(t *testing.T) {
 	}
 	svc, _, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, errors.New("not called")
 		})
 	confirmed, err := billStore.Create(context.Background(), domain.Bill{
@@ -1633,7 +1957,7 @@ func TestStatsMergesCurrenciesIntoBase(t *testing.T) {
 	svc, _, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"},
 		stubRateSource{snap: eurSnapshot()}, nil, nil,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, errors.New("not called")
 		})
 	billStore.stats = []domain.BillStatsRow{
@@ -1668,7 +1992,7 @@ func TestStatsMergesCurrenciesIntoBase(t *testing.T) {
 func TestStatsQueryValidation(t *testing.T) {
 	svc, _, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, nil
 		})
 	ctx := context.Background()
@@ -1696,7 +2020,7 @@ func TestDeleteBillRemovesTransactionAndImage(t *testing.T) {
 	txs := newFakeTxStore()
 	svc, _, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, nil
 		})
 	ctx := context.Background()
@@ -1730,7 +2054,7 @@ func TestDeleteBillRemovesTransactionAndImage(t *testing.T) {
 
 func TestDeleteMissingBillFails(t *testing.T) {
 	svc, _, _, _ := newTestBillServiceCustom(t, nil, nil, nil, nil,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, nil
 		})
 	if err := svc.Delete(context.Background(), 999); !errors.Is(err, domain.ErrNotFound) {
@@ -1743,7 +2067,7 @@ func TestDeleteBillToleratesVanishedTransaction(t *testing.T) {
 	txs := newFakeTxStore()
 	svc, _, billStore, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{}, nil
 		})
 	ctx := context.Background()
@@ -1769,7 +2093,7 @@ func TestDeleteBillToleratesVanishedTransaction(t *testing.T) {
 func confirmDraft(t *testing.T, svc *BillService, scanStore *fakeBillScanStore, image []byte, in domain.BillConfirmInput) domain.Bill {
 	t.Helper()
 	ctx := context.Background()
-	res, err := svc.Scan(ctx, "image/jpeg", image, "")
+	res, err := svc.Scan(ctx, scanFile(image), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -1794,7 +2118,7 @@ func TestConfirmFindOrCreatesProducts(t *testing.T) {
 		},
 	}
 	svc, scanStore, billStore, _, catStore, products := newTestBillServiceWithProducts(t,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return draft, nil
 		})
 
@@ -1935,13 +2259,14 @@ func (f *fakeProductMappingStore) Upsert(_ context.Context, m domain.ProductName
 }
 
 // UnmappedProductNames lists the seeded products whose name has no mapping
-// yet, in seed order, mirroring the repository's id-ordered query.
+// yet — or whose mapping has no generic name — in seed order, mirroring the
+// repository's id-ordered query.
 func (f *fakeProductMappingStore) UnmappedProductNames(_ context.Context, limit int) ([]domain.Product, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := []domain.Product{}
 	for _, p := range f.products {
-		if _, ok := f.items[strings.ToLower(p.Name)]; ok {
+		if m, ok := f.items[strings.ToLower(p.Name)]; ok && m.GenericName != "" {
 			continue
 		}
 		if len(out) == limit {
@@ -1957,9 +2282,10 @@ func (f *fakeProductMappingStore) CountUnmappedProductNames(context.Context) (in
 	defer f.mu.Unlock()
 	var n int64
 	for _, p := range f.products {
-		if _, ok := f.items[strings.ToLower(p.Name)]; !ok {
-			n++
+		if m, ok := f.items[strings.ToLower(p.Name)]; ok && m.GenericName != "" {
+			continue
 		}
+		n++
 	}
 	return n, nil
 }
@@ -1981,7 +2307,7 @@ func (f *fakeProductMappingStore) UpdateJob(_ context.Context, j domain.ProductN
 
 // newTestBillServiceWithMappings wires a BillService with the normalization
 // memory attached, for mapping behavior exercised through the scan pipeline.
-func newTestBillServiceWithMappings(t *testing.T, mappings ProductMappingStore, extractFn func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore) {
+func newTestBillServiceWithMappings(t *testing.T, mappings ProductMappingStore, extractFn func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error)) (*BillService, *fakeBillScanStore) {
 	t.Helper()
 	scanStore := newFakeBillScanStore()
 	extractor := &fakeBillExtractor{fn: extractFn}
@@ -1997,34 +2323,44 @@ func newTestBillServiceWithMappings(t *testing.T, mappings ProductMappingStore, 
 }
 
 // TestScanAppliesMappingMemoryToDraft drives the memory through the public
-// scan pipeline: a mapped raw text keeps the remembered standard name and
-// category (memory wins over the fresh AI suggestion), an unmapped raw text
-// records the AI's suggestion with source 'ai', and deposit-return lines are
-// skipped entirely.
+// scan pipeline: a mapped raw text keeps the remembered standard name,
+// generic name and category (memory wins over the fresh AI suggestion), an
+// unmapped raw text records the AI's suggestion with source 'ai', a mapped
+// raw text whose remembered generic name is empty keeps the fresh family
+// suggestion (the backfill job fills the gap later), and deposit-return
+// lines are skipped entirely.
 func TestScanAppliesMappingMemoryToDraft(t *testing.T) {
 	mappings := newFakeProductMappingStore()
 	mappings.seedMapping(domain.ProductNameMapping{
-		RawName: "WHL MLK 1L", StandardName: "Milk 1L",
+		RawName: "WHL MLK 1L", StandardName: "Milk 1L", GenericName: "Fresh Milk",
 		CategoryID: ptrInt64(7), Source: domain.MappingSourceUser,
+	})
+	// Mapped but with no remembered family: the fresh AI suggestion stays.
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "OATS", StandardName: "Oats",
+		CategoryID: ptrInt64(9), Source: domain.MappingSourceAI,
 	})
 	draft := domain.BillDraft{
 		MarketName: "REWE", Currency: "EUR",
 		Items: []domain.BillItemDraft{
 			// Already mapped: the memory's decision replaces the suggestion.
-			{Name: " WHL MLK 1L ", StandardName: "Whole Milk 1L", Quantity: 1, UnitPriceCents: 189, LineTotalCents: 189},
+			{Name: " WHL MLK 1L ", StandardName: "Whole Milk 1L", GenericName: "Milk", Quantity: 1, UnitPriceCents: 189, LineTotalCents: 189},
 			// First sight: the AI suggestion is kept and recorded as 'ai'.
-			{Name: "TOMATOS", StandardName: "Tomatoes", Quantity: 1, UnitPriceCents: 99, LineTotalCents: 99},
+			{Name: "TOMATOS", StandardName: "Tomatoes", GenericName: "Tomatoes", Quantity: 1, UnitPriceCents: 99, LineTotalCents: 99},
+			// Mapped with an empty generic name: the fresh family suggestion
+			// survives (memory wins only on non-empty values).
+			{Name: "OATS", StandardName: "Oat Flakes", GenericName: "Oat Flakes", Quantity: 1, UnitPriceCents: 49, LineTotalCents: 49},
 			// Return line: never touches the memory.
 			{Name: "LEERGUT 0.25", StandardName: "Leergut 0.25", IsReturn: true, Quantity: 1, UnitPriceCents: -25, LineTotalCents: -25},
 		},
 	}
 	svc, scanStore := newTestBillServiceWithMappings(t, mappings,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return draft, nil
 		})
 	ctx := context.Background()
 
-	res, err := svc.Scan(ctx, "image/jpeg", testImage(), "")
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
@@ -2038,11 +2374,23 @@ func TestScanAppliesMappingMemoryToDraft(t *testing.T) {
 	if items[0].StandardName != "Milk 1L" {
 		t.Errorf("mapped raw: standard name = %q, want the memory's %q", items[0].StandardName, "Milk 1L")
 	}
+	if items[0].GenericName != "Fresh Milk" {
+		t.Errorf("mapped raw: generic name = %q, want the memory's %q", items[0].GenericName, "Fresh Milk")
+	}
 	if items[0].CategoryID == nil || *items[0].CategoryID != 7 {
 		t.Errorf("mapped raw: category = %v, want the memory's 7", items[0].CategoryID)
 	}
 	if items[1].StandardName != "Tomatoes" {
 		t.Errorf("unmapped raw: standard name = %q, want the AI suggestion kept", items[1].StandardName)
+	}
+	if items[2].StandardName != "Oats" {
+		t.Errorf("mapped raw without family: standard name = %q, want the memory's %q", items[2].StandardName, "Oats")
+	}
+	if items[2].GenericName != "Oat Flakes" {
+		t.Errorf("mapped raw without family: generic name = %q, want the fresh suggestion %q kept", items[2].GenericName, "Oat Flakes")
+	}
+	if items[2].CategoryID == nil || *items[2].CategoryID != 9 {
+		t.Errorf("mapped raw without family: category = %v, want the memory's 9", items[2].CategoryID)
 	}
 
 	mappings.mu.Lock()
@@ -2051,8 +2399,8 @@ func TestScanAppliesMappingMemoryToDraft(t *testing.T) {
 		t.Fatalf("creates = %+v, want exactly the TOMATOS suggestion recorded", mappings.creates)
 	}
 	created := mappings.creates[0]
-	if created.RawName != "TOMATOS" || created.StandardName != "Tomatoes" || created.Source != domain.MappingSourceAI {
-		t.Fatalf("recorded mapping = %+v, want TOMATOS → Tomatoes (ai)", created)
+	if created.RawName != "TOMATOS" || created.StandardName != "Tomatoes" || created.GenericName != "Tomatoes" || created.Source != domain.MappingSourceAI {
+		t.Fatalf("recorded mapping = %+v, want TOMATOS → Tomatoes (ai, family Tomatoes)", created)
 	}
 	for _, looked := range mappings.lookups {
 		if strings.Contains(strings.ToLower(looked), "leergut") {
@@ -2120,28 +2468,35 @@ func TestApplyMappingMemoryFallbacksAndTolerance(t *testing.T) {
 }
 
 // TestLearnMappingOverrides records the review corrections of a confirmed
-// bill: a changed standard name, a changed category, and a manually added
-// line are upserted with source 'user' (an added line without a suggestion
-// falls back to its raw name); unchanged lines never write; return lines are
-// skipped; a failing Upsert never fails the bill.
+// bill: a changed standard name, a changed generic name, a changed category,
+// and a manually added line are upserted with source 'user' (an added line
+// without a suggestion falls back to its raw name); unchanged lines never
+// write; clearing the generic name is a real opinion and is learned as "";
+// return lines are skipped; a failing Upsert never fails the bill.
 func TestLearnMappingOverrides(t *testing.T) {
 	ctx := context.Background()
 	mappings := newFakeProductMappingStore()
 	svc := &BillService{mappings: mappings, log: slog.Default()}
 
 	prior := []priorStandardLine{
-		{raw: "WHL MLK 1L", standard: "Whole Milk 1L", categoryID: nil},
-		{raw: "TOMATOS", standard: "Tomatoes", categoryID: nil},
-		{raw: "OATS", standard: "Oats", categoryID: nil},
+		{raw: "WHL MLK 1L", standard: "Whole Milk 1L", generic: "Whole Milk Family", categoryID: nil},
+		{raw: "TOMATOS", standard: "Tomatoes", generic: "Tomato Family", categoryID: nil},
+		{raw: "OATS", standard: "Oats", generic: "Oat Flakes", categoryID: nil},
+		{raw: "POTATO MINIONS 450G", standard: "Potato Minions 450g", generic: "Frozen Potato Shapes", categoryID: nil},
+		{raw: "BANANE", standard: "Bananas", generic: "Bananas", categoryID: nil},
 		{raw: "LEERGUT PALETTE", standard: "Leergut Palette", categoryID: nil},
 	}
 	items := []domain.BillItemDraft{
-		// Standard name corrected by the user.
-		{Name: "WHL MLK 1L", StandardName: "Milk 1L", CategoryID: ptrInt64(7), Quantity: 1, UnitPriceCents: 189, LineTotalCents: 189},
-		// Unchanged line — must not write.
-		{Name: "TOMATOS", StandardName: "tomatoes", Quantity: 1, UnitPriceCents: 99, LineTotalCents: 99},
-		// Category-only correction.
-		{Name: "OATS", StandardName: "Oats", CategoryID: ptrInt64(8), Quantity: 1, UnitPriceCents: 49, LineTotalCents: 49},
+		// Standard and generic names corrected by the user.
+		{Name: "WHL MLK 1L", StandardName: "Milk 1L", GenericName: "Fresh Milk", CategoryID: ptrInt64(7), Quantity: 1, UnitPriceCents: 189, LineTotalCents: 189},
+		// Unchanged line (case-insensitive on both names) — must not write.
+		{Name: "TOMATOS", StandardName: "tomatoes", GenericName: "tomato family", Quantity: 1, UnitPriceCents: 99, LineTotalCents: 99},
+		// Category-only correction — the unchanged generic rides along.
+		{Name: "OATS", StandardName: "Oats", GenericName: "Oat Flakes", CategoryID: ptrInt64(8), Quantity: 1, UnitPriceCents: 49, LineTotalCents: 49},
+		// Generic-only correction.
+		{Name: "POTATO MINIONS 450G", StandardName: "Potato Minions 450g", GenericName: "Frozen Shaped Potatoes", Quantity: 1, UnitPriceCents: 349, LineTotalCents: 349},
+		// Cleared generic name — a real "no family" opinion, learned as "".
+		{Name: "BANANE", StandardName: "Bananas", GenericName: "", Quantity: 1, UnitPriceCents: 119, LineTotalCents: 119},
 		// Manually added line with a submitted standard name.
 		{Name: "Butter 250g", StandardName: "Butter", Quantity: 1, UnitPriceCents: 289, LineTotalCents: 289},
 		// Manually added line without a suggestion — raw name fallback.
@@ -2153,14 +2508,16 @@ func TestLearnMappingOverrides(t *testing.T) {
 
 	mappings.mu.Lock()
 	defer mappings.mu.Unlock()
-	if len(mappings.upserts) != 4 {
-		t.Fatalf("upserts = %+v, want exactly the 4 corrected/added lines", mappings.upserts)
+	if len(mappings.upserts) != 6 {
+		t.Fatalf("upserts = %+v, want exactly the 6 corrected/added lines", mappings.upserts)
 	}
 	want := map[string]domain.ProductNameMapping{
-		"WHL MLK 1L":  {RawName: "WHL MLK 1L", StandardName: "Milk 1L", CategoryID: ptrInt64(7)},
-		"OATS":        {RawName: "OATS", StandardName: "Oats", CategoryID: ptrInt64(8)},
-		"Butter 250g": {RawName: "Butter 250g", StandardName: "Butter"},
-		"Eggs":        {RawName: "Eggs", StandardName: "Eggs"},
+		"WHL MLK 1L":          {RawName: "WHL MLK 1L", StandardName: "Milk 1L", GenericName: "Fresh Milk", CategoryID: ptrInt64(7)},
+		"OATS":                {RawName: "OATS", StandardName: "Oats", GenericName: "Oat Flakes", CategoryID: ptrInt64(8)},
+		"POTATO MINIONS 450G": {RawName: "POTATO MINIONS 450G", StandardName: "Potato Minions 450g", GenericName: "Frozen Shaped Potatoes"},
+		"BANANE":              {RawName: "BANANE", StandardName: "Bananas"},
+		"Butter 250g":         {RawName: "Butter 250g", StandardName: "Butter"},
+		"Eggs":                {RawName: "Eggs", StandardName: "Eggs"},
 	}
 	for _, up := range mappings.upserts {
 		if up.Source != domain.MappingSourceUser {
@@ -2173,6 +2530,9 @@ func TestLearnMappingOverrides(t *testing.T) {
 		}
 		if up.StandardName != w.StandardName {
 			t.Errorf("raw %q: standard = %q, want %q", up.RawName, up.StandardName, w.StandardName)
+		}
+		if up.GenericName != w.GenericName {
+			t.Errorf("raw %q: generic = %q, want %q", up.RawName, up.GenericName, w.GenericName)
 		}
 		if !sameInt64Ptr(up.CategoryID, w.CategoryID) {
 			t.Errorf("raw %q: category = %v, want %v", up.RawName, up.CategoryID, w.CategoryID)
@@ -2189,7 +2549,7 @@ func TestLearnMappingOverrides(t *testing.T) {
 
 func TestConfirmProductRaceReFindsWinner(t *testing.T) {
 	svc, scanStore, _, _, _, products := newTestBillServiceWithProducts(t,
-		func(context.Context, []byte, string, domain.AIProvider, string) (domain.BillDraft, error) {
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 			return domain.BillDraft{
 				MarketName: "ALDI", Currency: "USD",
 				Items: []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 200, LineTotalCents: 200}},

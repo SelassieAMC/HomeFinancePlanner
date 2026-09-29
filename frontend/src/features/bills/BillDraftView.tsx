@@ -83,9 +83,27 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
             {bill.card_last_digits ? ` •${bill.card_last_digits}` : ''}
           </span>
           <span className="stat-card-sub">
-            <a href={`/api/v1/bills/image/${bill.id}`} target="_blank" rel="noreferrer">
-              View receipt
-            </a>
+            {(bill.file_count ?? 1) > 1 ? (
+              <>
+                View receipt:{' '}
+                {Array.from({ length: bill.file_count ?? 1 }, (_, i) => (
+                  <span key={i}>
+                    {i > 0 && ' · '}
+                    <a
+                      href={`/api/v1/bills/image/${bill.id}?part=${i + 1}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      part {i + 1}
+                    </a>
+                  </span>
+                ))}
+              </>
+            ) : (
+              <a href={`/api/v1/bills/image/${bill.id}`} target="_blank" rel="noreferrer">
+                View receipt
+              </a>
+            )}
           </span>
         </div>
         <div className="stat-card stat-savings">
@@ -145,6 +163,9 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
                           it.standard_name.toLowerCase() !== it.name.toLowerCase() && (
                             <span className="item-brand">↳ {it.standard_name}</span>
                           )}
+                        {it.generic_name && (
+                          <span className="item-brand">· {it.generic_name}</span>
+                        )}
                       </>
                     )}
                   </span>

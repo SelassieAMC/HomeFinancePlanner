@@ -21,9 +21,11 @@ type productRequest struct {
 	Unit        string `json:"unit"`
 	CategoryID  *int64 `json:"category_id"`
 	Description string `json:"description"`
-	// StandardName is the optional normalization-mapping decision for the
-	// product's raw name (nil = the client didn't touch it).
+	// StandardName and GenericName are the optional normalization-mapping
+	// decisions for the product's raw name (nil = the client didn't touch
+	// the field).
 	StandardName *string `json:"standard_name"`
+	GenericName  *string `json:"generic_name"`
 }
 
 // List returns the paged product list (name/category filters, sort, order).
@@ -87,8 +89,8 @@ func (h *ProductHandler) StorePrices(w http.ResponseWriter, r *http.Request) {
 
 // Update rewrites a product's editable fields (the products row only —
 // linked historical lines keep their snapshot values) and leaves the photo
-// untouched. A non-nil standard_name also learns the product's
-// normalization-mapping decision (source user).
+// untouched. A non-nil standard_name or generic_name also learns the
+// product's normalization-mapping decisions (source user).
 func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -106,6 +108,7 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		CategoryID:   req.CategoryID,
 		Description:  req.Description,
 		StandardName: req.StandardName,
+		GenericName:  req.GenericName,
 	})
 	if err != nil {
 		respondServiceError(w, r, err)

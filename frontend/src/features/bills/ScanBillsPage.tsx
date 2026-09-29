@@ -26,6 +26,10 @@ const FILE_ACCEPT = 'image/*,.heic,.heif,.pdf,application/pdf';
 // before upload instead of failing on the server.
 const MAX_BILL_IMAGE_BYTES = 10 * 1024 * 1024;
 
+// Mirrors the backend's MaxBillScanFiles — a receipt split across photos can
+// take at most this many files.
+const MAX_BILL_SCAN_FILES = 8;
+
 // One line in the post-upload summary: accepted, or rejected with a reason.
 interface UploadOutcome {
   name: string;
@@ -54,6 +58,9 @@ export function ScanBillsPage() {
   const [error, setError] = useState<string | null>(null);
   // Summary of the last batch of uploads (capture phase only).
   const [uploadResults, setUploadResults] = useState<UploadOutcome[]>([]);
+  // Checked = the selected files are consecutive parts of ONE long receipt,
+  // sent as a single scan and merged into one bill by the AI read.
+  const [groupAsOneBill, setGroupAsOneBill] = useState(false);
   // Shown after a re-read is enqueued: analysis runs in the background.
   const [rereadSent, setRereadSent] = useState(false);
   const navigate = useNavigate();
@@ -124,41 +131,87 @@ export function ScanBillsPage() {
       });
   }, [searchParams]);
 
-  // Uploads each selected receipt as its own scan. Analysis runs in the
-  // background — the user only gets an upload summary here and checks the
-  // result later in the bills view. Files over the size limit are skipped
-  // client-side.
+  // Uploads the selected receipts. Analysis runs in the background — the user
+  // only gets an upload summary here and checks the result later in the bills
+  // view. With "one bill" unchecked, each file is its own scan. With it
+  // checked and several files selected, they are sent as ONE grouped scan
+  // (the consecutive parts of one long receipt) and merged into a single
+  // bill by the AI read. Files over the size limit are skipped client-side.
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0 || busy) return;
     setError(null);
     setUploadResults([]);
     setBusy('extract');
 
+    const list = Array.from(files);
     const results: UploadOutcome[] = [];
-    for (const file of Array.from(files)) {
-      if (file.size > MAX_BILL_IMAGE_BYTES) {
+
+    if (groupAsOneBill && list.length > 1) {
+      await uploadGrouped(list, results);
+    } else {
+      for (const file of list) {
+        if (file.size > MAX_BILL_IMAGE_BYTES) {
+          results.push({
+            name: file.name,
+            ok: false,
+            message: `skipped — larger than the ${MAX_BILL_IMAGE_BYTES >> 20} MB limit`,
+          });
+          continue;
+        }
+        try {
+          // Returns immediately; extraction runs in the background. Nothing
+          // is lost if the user leaves the page now.
+          await billsApi.scan(file, firstProvider?.id);
+          results.push({ name: file.name, ok: true });
+        } catch (err) {
+          results.push({
+            name: file.name,
+            ok: false,
+            message: err instanceof Error ? err.message : 'Upload failed.',
+          });
+        }
+      }
+    }
+    setUploadResults(results);
+    setBusy(null);
+  }
+
+  // One receipt split across several files: a single grouped upload with every
+  // part. Pre-checks reject the whole group before it is sent (a partial
+  // receipt would lose lines), naming each offending file.
+  async function uploadGrouped(list: File[], results: UploadOutcome[]) {
+    const groupLabel = `${list.length} photos — one bill`;
+    if (list.length > MAX_BILL_SCAN_FILES) {
+      results.push({
+        name: groupLabel,
+        ok: false,
+        message: `skipped — a receipt can be uploaded in at most ${MAX_BILL_SCAN_FILES} files`,
+      });
+      return;
+    }
+    const oversized = list.filter((f) => f.size > MAX_BILL_IMAGE_BYTES);
+    if (oversized.length > 0) {
+      for (const file of oversized) {
         results.push({
           name: file.name,
           ok: false,
           message: `skipped — larger than the ${MAX_BILL_IMAGE_BYTES >> 20} MB limit`,
         });
-        continue;
       }
-      try {
-        // Returns immediately; extraction runs in the background. Nothing
-        // is lost if the user leaves the page now.
-        await billsApi.scan(file, firstProvider?.id);
-        results.push({ name: file.name, ok: true });
-      } catch (err) {
-        results.push({
-          name: file.name,
-          ok: false,
-          message: err instanceof Error ? err.message : 'Upload failed.',
-        });
-      }
+      results.push({ name: groupLabel, ok: false, message: 'not sent — remove the skipped files and pick the full set again' });
+      return;
     }
-    setUploadResults(results);
-    setBusy(null);
+    try {
+      // One request, one scan token: the parts are merged into one bill.
+      await billsApi.scan(list, firstProvider?.id);
+      results.push({ name: groupLabel, ok: true });
+    } catch (err) {
+      results.push({
+        name: groupLabel,
+        ok: false,
+        message: err instanceof Error ? err.message : 'Upload failed.',
+      });
+    }
   }
 
   async function handleConfirm(accountId?: number, createCardAccount?: boolean) {
@@ -304,11 +357,27 @@ export function ScanBillsPage() {
               📁 Choose files
             </Button>
           </div>
+          <label className="default-radio">
+            <input
+              type="checkbox"
+              checked={groupAsOneBill}
+              onChange={(e) => setGroupAsOneBill(e.target.checked)}
+            />
+            All selected files are parts of one long receipt (merged into a
+            single bill)
+          </label>
+          {groupAsOneBill && (
+            <p className="hint-inline">
+              Photos are sent in the order you selected them — pick them
+              top-to-bottom (part 1 = top of the receipt).
+            </p>
+          )}
           <p className="hint-text">
             On a phone, “Take photo” opens the camera directly. You can pick
             several receipts at once. Photos (JPEG, HEIC) and PDF receipts are
-            accepted — each file up to {MAX_BILL_IMAGE_BYTES >> 20} MB. Flat,
-            well-lit receipts read best.
+            accepted — each file up to {MAX_BILL_IMAGE_BYTES >> 20} MB, at most{' '}
+            {MAX_BILL_SCAN_FILES} files per grouped receipt. Flat, well-lit
+            receipts read best.
           </p>
           {busy === 'extract' && (
             <Spinner label="Uploading receipts — they are analysed in the background…" />

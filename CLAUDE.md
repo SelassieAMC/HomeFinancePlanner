@@ -149,9 +149,23 @@ and `POST /products/{id}/merge` redirects the loser's bill items to the keeper
 row in one transaction. Products cannot
 be created or deleted through the API; `GET /api/v1/products` is the only
 paginated endpoint (`{items, total, limit, offset}` envelope, sort key
-whitelist). Receipt uploads are deduplicated by
-content: each upload's sha256 is stored on `bill_scans` and `bills`, and
-re-uploading the same image is a 409 conflict. Negative item prices are allowed
+whitelist). A receipt too long for one photo can be uploaded as **several
+files in one scan**: `POST /bills/scan` accepts repeated `image` multipart
+parts (1 = unchanged single receipt; 2..`MaxBillScanFiles`=8 = one receipt
+split across consecutive parts, merged into ONE bill by the AI read — the
+"parts of one receipt" checkbox in the scan UI is purely the grouped-vs-
+per-file affordance). Every part is stored in the `bill_scan_files` /
+`bill_files` child tables (position 1..n; the `bill_scans`/`bills` single-file
+columns stay a denormalized mirror of part 1 for `GET /bills/image/{id}`,
+which serves part N via `?part=N`), the AI payload carries all parts per
+family (Ollama `images` array, OpenAI `image_url` parts, Gemini
+`inline_data` parts, Anthropic image/document blocks), and
+`file_count` (omitted for 1) is exposed on scans and bills. Receipt uploads
+are deduplicated by
+content: each part's sha256 lives in the child tables (backfilled from the
+legacy columns), and re-uploading any part of an existing receipt is a 409
+conflict naming the offending part — the same photo twice within one upload
+is a 400. Negative item prices are allowed
 only for "Leergut" lines or items under a category with `allows_negative` (the
 seeded "Deposit & Returns" product category covers Pfand/Leergut) — the same
 rule applies to manual transaction item lines, whose money-back lines also stay
@@ -197,32 +211,47 @@ deleted row never breaks a process. Prompt keys are immutable after create
 byte-identical by a repository seed-sync test. **Product name normalization**
 keeps every raw product text untouched — product rows and bill lines keep
 exactly what the receipt printed — and maps raw texts to standardized,
-human-readable names through the `product_name_mappings` memory (raw_name
-UNIQUE NOCASE → standard_name + category, source `ai`/`user`/`manual`;
-several raw texts may share one standard name). The `bill_extraction` prompt
-asks for a per-item `standard_name` in the same extraction call
-(`ParseBillJSON` falls back to the raw name, keeping custom prompts working);
-on extraction the memory wins (mapped raw texts reuse their remembered name
-and category, unmapped ones record the AI suggestion as `ai`), and
+human-readable names plus a generic product family through the
+`product_name_mappings` memory (raw_name UNIQUE NOCASE → standard_name +
+generic_name + category, source `ai`/`user`/`manual`;
+several raw texts may share one standard name). The `generic_name` is the
+broader family across brands and sizes ("Potato Minions 450g" → "Frozen
+Shaped Potatoes"); empty means "no broader family known" — it never falls
+back to the raw text. Both AI prompt texts ask for the two names **always in
+English**, regardless of the receipt/input language. The `bill_extraction`
+prompt asks for a per-item `standard_name` and `generic_name` in the same
+extraction call (`ParseBillJSON` falls back to the raw name only for the
+standard name, keeping custom prompts working);
+on extraction the memory wins (mapped raw texts reuse their remembered name,
+family and category — a blank remembered family keeps the fresh suggestion —
+and unmapped ones record the AI suggestion as `ai`), and
 confirm/update learn real per-line edits permanently (upsert as `user`) —
 deposit/return lines are never normalized or remembered. Manual purchases look
 the memory up per typed line (category filled only when unset, typed name
 never rewritten; unknown names record identity mappings as `manual`). Product
-edits learn the mapping too (`standard_name` on `PUT /products/{id}`, source
+edits learn the mapping too (`standard_name`/`generic_name` on
+`PUT /products/{id}`, source
 `user`): untouched saves write nothing, renames carry a mapped decision to
-the new raw name (an unmapped rename stays open for AI suggestions), and a
-cleared field records identity. The
-standardized name is exposed read-only (`standard_name`) on bill items,
+the new raw name (an unmapped rename stays open for AI suggestions), a
+cleared field records identity, and an untouched `generic_name` is carried
+through rather than wiped. The
+standardized and generic names are exposed read-only (`standard_name`,
+`generic_name`) on bill items,
 transaction items and products via LEFT JOIN on the raw name. The frontend
 uses `GET /products/normalize?name=` for the blur lookup; the user-triggered
 backfill job (`POST /products/normalization/run`, status on
 `GET /products/normalization`, single-row `product_normalization_jobs`) sends
-unmapped product names to the `default_for_bills` connector in batches of 40
+product names with no mapping — or a mapping with no recorded family — to the
+`default_for_bills` connector in batches of 40
 under the `product_normalization` prompt key (a batch that outlives the
 per-call `LLM_TIMEOUT` — slow local models — is retried on halves down to a
-single name, and the working batch size is remembered for the process) —
+single name, and the working batch size is remembered for the process); for
+existing mappings it only gap-fills the family, preserving the reviewed
+standard name/category/source —
 products are never modified,
-names the AI skips are asked once per run, and a job interrupted by a restart
+names the AI skips are asked once per run, a failed batch no longer kills the
+run (the job drains the rest and ends failed with its progress kept — re-run
+retries the failed batch's names), and a job interrupted by a restart
 is marked failed at boot and can simply be run again.
 When adding
 a new entity, follow the vertical slice:

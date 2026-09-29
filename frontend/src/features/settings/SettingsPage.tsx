@@ -430,10 +430,12 @@ export function SettingsPage() {
         <p className="hint-text">
           Raw product names stay exactly as the market printed them — the
           normalization memory maps each raw text to a standardized,
-          human-readable name (e.g. “WHL MLK 1L” → “Whole Milk 1L”). This
-          analysis sends the raw names of products that have no mapping yet to
-          the connector flagged as default for bill reads, in batches, and
-          records the suggestions. Product rows are never modified.
+          human-readable name (e.g. “WHL MLK 1L” → “Whole Milk 1L”) and a
+          generic product family (e.g. “Frozen Shaped Potatoes”). This
+          analysis sends the raw names of products that have no mapping yet
+          — or no recorded family — to the connector flagged as default for
+          bill reads, in batches, and records the suggestions. Product rows
+          are never modified.
         </p>
         {job?.status === 'running' ? (
           <p className="hint-text">

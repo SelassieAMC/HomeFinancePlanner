@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"home-finance-planner/backend/internal/domain"
@@ -15,18 +17,21 @@ type BillHandler struct{ Svc *service.BillService }
 
 // maxDrainBody caps how much of an unread request body is drained before
 // erroring out, so the client (or vite/nginx proxy) can finish writing it
-// instead of dying with EPIPE.
-const maxDrainBytes = 64 << 20
+// instead of dying with EPIPE. Grouped uploads carry up to
+// service.MaxBillScanFiles receipt parts of service.MaxBillImageBytes each.
+const maxDrainBytes = 96 << 20
 
 // drainBody consumes the remaining request body up to maxDrainBytes.
 func drainBody(r *http.Request) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, maxDrainBytes))
 }
 
-// Scan reads a receipt file (multipart field "image", optional "provider_id"),
-// registers a scan, and returns immediately with its token and the status
-// "analyzing" — extraction runs in the background. The client polls GetScan
-// until the draft is ready. Nothing is persisted until the client confirms.
+// Scan reads the receipt file(s) — repeated multipart field "image", optional
+// "provider_id" — registers a scan, and returns immediately with its token and
+// the status "analyzing"; extraction runs in the background. One file is a
+// single-photo receipt; several files are the consecutive parts of one long
+// receipt merged into a single bill. The client polls GetScan until the draft
+// is ready. Nothing is persisted until the client confirms.
 func (h *BillHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(service.MaxBillImageBytes); err != nil {
 		// The client is still uploading; drain what we can before closing.
@@ -34,26 +39,42 @@ func (h *BillHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		respondError(w, r, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 		return
 	}
-	file, header, err := r.FormFile("image")
-	if err != nil {
+	parts := r.MultipartForm.File["image"]
+	if len(parts) == 0 {
 		drainBody(r)
 		respondError(w, r, http.StatusBadRequest, "missing image file field")
 		return
 	}
-	defer file.Close()
-
-	mimeType := header.Header.Get("Content-Type")
-	if mimeType == "" {
-		mimeType = "image/jpeg"
-	}
-	data, err := io.ReadAll(io.LimitReader(file, service.MaxBillImageBytes+1))
-	if err != nil {
+	if len(parts) > service.MaxBillScanFiles {
 		drainBody(r)
-		respondError(w, r, http.StatusBadRequest, "read receipt: "+err.Error())
+		respondError(w, r, http.StatusBadRequest,
+			fmt.Sprintf("a receipt can be uploaded in at most %d files — %d were given", service.MaxBillScanFiles, len(parts)))
 		return
 	}
 
-	scan, err := h.Svc.Scan(r.Context(), mimeType, data, r.FormValue("provider_id"))
+	files := make([]domain.ReceiptFile, 0, len(parts))
+	for _, header := range parts {
+		file, err := header.Open()
+		if err != nil {
+			drainBody(r)
+			respondError(w, r, http.StatusBadRequest, "read receipt: "+err.Error())
+			return
+		}
+		mimeType := header.Header.Get("Content-Type")
+		if mimeType == "" {
+			mimeType = "image/jpeg"
+		}
+		data, err := io.ReadAll(io.LimitReader(file, service.MaxBillImageBytes+1))
+		file.Close()
+		if err != nil {
+			drainBody(r)
+			respondError(w, r, http.StatusBadRequest, "read receipt: "+err.Error())
+			return
+		}
+		files = append(files, domain.ReceiptFile{Data: data, MimeType: mimeType})
+	}
+
+	scan, err := h.Svc.Scan(r.Context(), files, r.FormValue("provider_id"))
 	if err != nil {
 		drainBody(r)
 		respondServiceError(w, r, err)
@@ -136,14 +157,24 @@ func (h *BillHandler) DiscardScan(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Image serves the stored receipt for future reference.
+// Image serves the stored receipt for future reference. Multi-part receipts
+// take ?part=N (1-based; default 1).
 func (h *BillHandler) Image(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
 		respondError(w, r, http.StatusBadRequest, "invalid id")
 		return
 	}
-	path, mimeType, err := h.Svc.ReceiptImagePath(r.Context(), id)
+	part := 1
+	if raw := r.URL.Query().Get("part"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			respondError(w, r, http.StatusBadRequest, "invalid part")
+			return
+		}
+		part = n
+	}
+	path, mimeType, err := h.Svc.ReceiptImagePath(r.Context(), id, part)
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

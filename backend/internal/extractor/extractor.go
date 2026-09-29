@@ -28,13 +28,19 @@ func New(timeout time.Duration) *Extractor {
 	return &Extractor{client: &http.Client{Timeout: timeout}}
 }
 
-// Extract sends the receipt image to the provider with the given prompt and
-// returns the normalized draft plus the provider id that produced it. The
-// prompt is resolved by the service layer (managed ai_prompts row or the
-// built-in default); this package is transport only.
-func (e *Extractor) Extract(ctx context.Context, image []byte, mimeType string, provider domain.AIProvider, prompt string) (domain.BillDraft, error) {
-	if err := checkFileTypeSupport(provider, mimeType); err != nil {
-		return domain.BillDraft{}, err
+// Extract sends the receipt's files to the provider with the given prompt and
+// returns the normalized draft. One file is a classic single-photo receipt;
+// several files are the parts of one long receipt — the prompt tells the model
+// to merge them. The prompt is resolved by the service layer (managed
+// ai_prompts row or the built-in default); this package is transport only.
+func (e *Extractor) Extract(ctx context.Context, files []domain.ReceiptFile, provider domain.AIProvider, prompt string) (domain.BillDraft, error) {
+	if len(files) == 0 {
+		return domain.BillDraft{}, fmt.Errorf("no receipt files given")
+	}
+	for i, f := range files {
+		if err := checkFileTypeSupport(provider, f.MimeType); err != nil {
+			return domain.BillDraft{}, fmt.Errorf("file %d of %d: %w", i+1, len(files), err)
+		}
 	}
 
 	var raw string
@@ -42,13 +48,13 @@ func (e *Extractor) Extract(ctx context.Context, image []byte, mimeType string, 
 
 	switch provider.Type {
 	case domain.AIProviderOllama, domain.AIProviderOllamaWebSearch:
-		raw, err = e.ollamaChat(ctx, provider, image, prompt)
+		raw, err = e.ollamaChat(ctx, provider, files, prompt)
 	case domain.AIProviderOpenAI, domain.AIProviderOpenAICompatible:
-		raw, err = e.openAIChat(ctx, provider, image, mimeType, prompt)
+		raw, err = e.openAIChat(ctx, provider, files, prompt)
 	case domain.AIProviderGemini:
-		raw, err = e.geminiGenerate(ctx, provider, image, mimeType, prompt)
+		raw, err = e.geminiGenerate(ctx, provider, files, prompt)
 	case domain.AIProviderAnthropic:
-		raw, err = e.anthropicMessages(ctx, provider, image, mimeType, prompt)
+		raw, err = e.anthropicMessages(ctx, provider, files, prompt)
 	default:
 		err = fmt.Errorf("unsupported provider type %q", provider.Type)
 	}

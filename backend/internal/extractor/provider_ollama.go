@@ -15,19 +15,27 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// ollamaChat calls the native Ollama chat API with the image attached to the
-// message. Works with vision models (llama3.2-vision, gemma3, moondream, …).
-func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, image []byte, prompt string) (string, error) {
+// ollamaChat calls the native Ollama chat API with the receipt files
+// attached to the message (one base64 image per part). Works with vision
+// models (llama3.2-vision, gemma3, moondream, …).
+func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, files []domain.ReceiptFile, prompt string) (string, error) {
 	url := baseURL(provider) + "/api/chat"
 
+	images := make([]string, len(files))
+	for i, f := range files {
+		images[i] = base64.StdEncoding.EncodeToString(f.Data)
+	}
 	payload := map[string]any{
 		"model":  provider.Model,
 		"stream": false,
+		// Reasoning models put their musing in message.thinking and the
+		// answer in message.content — ask for the answer directly.
+		"think": false,
 		"messages": []map[string]any{
 			{
 				"role":    "user",
 				"content": prompt,
-				"images":  []string{base64.StdEncoding.EncodeToString(image)},
+				"images":  images,
 			},
 		},
 		"options": map[string]any{"temperature": 0},
@@ -35,14 +43,21 @@ func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, 
 
 	var resp struct {
 		Message struct {
-			Content string `json:"content"`
+			Content  string `json:"content"`
+			Thinking string `json:"thinking"`
 		} `json:"message"`
 	}
 	if err := e.postJSON(ctx, url, nil, payload, &resp); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(resp.Message.Content) == "" {
-		return "", fmt.Errorf("response contained no message content")
+		// A thinking model occasionally ends its turn with the answer inside
+		// the reasoning block and an empty content — use it rather than
+		// failing the read.
+		if strings.TrimSpace(resp.Message.Thinking) != "" {
+			return resp.Message.Thinking, nil
+		}
+		return "", fmt.Errorf("model %q returned an empty response (no message content)", provider.Model)
 	}
 	return resp.Message.Content, nil
 }
@@ -122,6 +137,7 @@ func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider
 		payload := map[string]any{
 			"model":    provider.Model,
 			"stream":   false,
+			"think":    false, // reasoning models: answer, don't muse
 			"messages": messages,
 			"tools":    ollamaSearchTools,
 			"options":  map[string]any{"temperature": 0},
@@ -129,6 +145,7 @@ func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider
 		var resp struct {
 			Message struct {
 				Content   string           `json:"content"`
+				Thinking  string           `json:"thinking"`
 				ToolCalls []ollamaToolCall `json:"tool_calls"`
 			} `json:"message"`
 		}
@@ -143,7 +160,13 @@ func (e *Extractor) ollamaSearch(ctx context.Context, provider domain.AIProvider
 			log.Info("ollama chat round finished",
 				"round", round, "duration", time.Since(roundStart), "final", true)
 			if strings.TrimSpace(resp.Message.Content) == "" {
-				return "", fmt.Errorf("response contained no message content")
+				// A thinking model occasionally ends its turn with the answer
+				// inside the reasoning block and an empty content — use it
+				// rather than failing the search.
+				if strings.TrimSpace(resp.Message.Thinking) != "" {
+					return resp.Message.Thinking, nil
+				}
+				return "", fmt.Errorf("model %q returned an empty response (no message content)", provider.Model)
 			}
 			return resp.Message.Content, nil
 		}

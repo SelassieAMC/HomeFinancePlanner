@@ -8,26 +8,29 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// openAIChat calls the Chat Completions API with the image as a data URI.
-// Also used for openai_compatible providers (OpenRouter, Groq, Ollama's
-// OpenAI endpoint, …) since they share the wire format.
-func (e *Extractor) openAIChat(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string, prompt string) (string, error) {
+// openAIChat calls the Chat Completions API with the receipt files as data
+// URIs (one image_url part per file). Also used for openai_compatible
+// providers (OpenRouter, Groq, Ollama's OpenAI endpoint, …) since they share
+// the wire format.
+func (e *Extractor) openAIChat(ctx context.Context, provider domain.AIProvider, files []domain.ReceiptFile, prompt string) (string, error) {
 	url := baseURL(provider) + "/chat/completions"
 
+	content := make([]map[string]any, 0, len(files)+1)
+	content = append(content, map[string]any{"type": "text", "text": prompt})
+	for _, f := range files {
+		content = append(content, map[string]any{
+			"type": "image_url",
+			"image_url": map[string]string{
+				"url": fmt.Sprintf("data:%s;base64,%s", f.MimeType, base64.StdEncoding.EncodeToString(f.Data)),
+			},
+		})
+	}
 	payload := map[string]any{
 		"model": provider.Model,
 		"messages": []map[string]any{
 			{
-				"role": "user",
-				"content": []map[string]any{
-					{"type": "text", "text": prompt},
-					{
-						"type": "image_url",
-						"image_url": map[string]string{
-							"url": fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(image)),
-						},
-					},
-				},
+				"role":    "user",
+				"content": content,
 			},
 		},
 		"max_tokens": 4096,

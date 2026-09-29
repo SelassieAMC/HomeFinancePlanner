@@ -259,7 +259,10 @@ export function BillsPage() {
                 <summary>
                   <span className="item-icon">🧾</span>
                   <span className="item-title">
-                    <span className="item-name">Receipt scan</span>
+                    <span className="item-name">
+                      Receipt scan
+                      {(scan.file_count ?? 1) > 1 && ` — ${scan.file_count} photos, one bill`}
+                    </span>
                     <span className="item-brand">
                       {scan.created_at
                         ? new Date(scan.created_at).toLocaleString()
@@ -483,6 +486,7 @@ function billToDraft(bill: Bill): BillDraft {
       id: it.id || i + 1,
       name: it.name,
       standard_name: it.standard_name || undefined,
+      generic_name: it.generic_name || undefined,
       brand: it.brand || undefined,
       unit: it.unit || undefined,
       category_name: it.category_name || undefined,

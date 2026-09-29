@@ -101,6 +101,9 @@ export function buildConfirmInput(
       // Empty standardized name (old drafts, untouched lines) is the raw
       // text itself — the identity mapping, never learned as a change.
       standard_name: it.standard_name || it.name,
+      // No identity fallback for the family: empty means "no broader
+      // family known" and stays empty.
+      generic_name: it.generic_name,
       brand: it.brand,
       unit: it.unit,
       category_id: it.category_id ?? undefined,
@@ -564,6 +567,7 @@ export function BillDraftEditor({
                         it.standard_name.toLowerCase() !== it.name.toLowerCase() && (
                           <span className="item-brand">↳ {it.standard_name}</span>
                         )}
+                      {it.generic_name && <span className="item-brand">· {it.generic_name}</span>}
                     </>
                   )}
                 </span>
@@ -612,6 +616,22 @@ export function BillDraftEditor({
                         const value = e.target.value.trim();
                         if (value !== (it.standard_name || it.name)) {
                           updateItem(it.id, { standard_name: value });
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+                {!it.is_return && (
+                  <div className="item-field">
+                    <span>Generic product</span>
+                    <input
+                      defaultValue={it.generic_name || ''}
+                      placeholder="e.g. Frozen Shaped Potatoes"
+                      aria-label={`Generic product family for ${it.name}`}
+                      onBlur={(e) => {
+                        const value = e.target.value.trim();
+                        if (value !== (it.generic_name || '')) {
+                          updateItem(it.id, { generic_name: value });
                         }
                       }}
                     />

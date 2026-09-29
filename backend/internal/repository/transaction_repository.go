@@ -27,7 +27,7 @@ const transactionFrom = `
 
 const transactionItemColumns = `
 	ti.id, ti.transaction_id, ti.product_id, p.name AS product_name, ti.name,
-	COALESCE(pnm.standard_name, ''), ti.brand, ti.unit, ti.category_id,
+	COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), ti.brand, ti.unit, ti.category_id,
 	ti.quantity, ti.unit_price_cents, ti.discount_cents, ti.line_total_cents, ti.created_at, ti.updated_at`
 
 const transactionItemFrom = `
@@ -329,7 +329,7 @@ func scanTransactionItem(row interface{ Scan(dest ...any) error }) (domain.Trans
 		createdAt int64
 		updatedAt int64
 	)
-	if err := row.Scan(&it.ID, &it.TransactionID, &productID, &prodName, &it.Name, &it.StandardName,
+	if err := row.Scan(&it.ID, &it.TransactionID, &productID, &prodName, &it.Name, &it.StandardName, &it.GenericName,
 		&it.Brand, &it.Unit, &category, &it.Quantity, &it.UnitPriceCents,
 		&it.DiscountCents, &it.LineTotalCents, &createdAt, &updatedAt); err != nil {
 		return domain.TransactionItem{}, err

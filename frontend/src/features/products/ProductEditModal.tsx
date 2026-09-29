@@ -36,6 +36,8 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   // Prefilled with the remembered standard name (raw name when unmapped);
   // saving learns it into the normalization mapping like bill line edits do.
   const [standardName, setStandardName] = useState(product.standard_name || product.name);
+  // Remembered generic product family ('' = no broader family known).
+  const [genericName, setGenericName] = useState(product.generic_name || '');
   // Photo edits return a fresh product (new updated_at → cache-busted URL).
   const [current, setCurrent] = useState(product);
   const [formError, setFormError] = useState<string | null>(null);
@@ -56,6 +58,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
       category_id: categoryId,
       description: description.trim(),
       standard_name: standardName.trim(),
+      generic_name: genericName.trim(),
     };
   }
 
@@ -190,6 +193,16 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
                   placeholder="Human-readable name"
                   aria-label="Standardized name"
                   onChange={(e) => setStandardName(e.target.value)}
+                />
+              </label>
+              <label>
+                Generic product{' '}
+                <span className="item-field-note">e.g. Frozen Shaped Potatoes</span>
+                <input
+                  value={genericName}
+                  placeholder="Product family across brands and sizes"
+                  aria-label="Generic product family"
+                  onChange={(e) => setGenericName(e.target.value)}
                 />
               </label>
               <label>

@@ -11,32 +11,27 @@ import (
 
 const anthropicVersion = "2023-06-01"
 
-// anthropicMessages calls the Messages API with the receipt attached as a
-// base64 block: images use the "image" block, PDF receipts the "document"
-// block.
-func (e *Extractor) anthropicMessages(ctx context.Context, provider domain.AIProvider, image []byte, mimeType string, prompt string) (string, error) {
+// anthropicMessages calls the Messages API with the receipt files attached as
+// base64 blocks (one block per part): images use the "image" block, PDF
+// receipts the "document" block.
+func (e *Extractor) anthropicMessages(ctx context.Context, provider domain.AIProvider, files []domain.ReceiptFile, prompt string) (string, error) {
 	url := baseURL(provider) + "/messages"
 
-	encoded := base64.StdEncoding.EncodeToString(image)
-	var attachment map[string]any
-	if mimeType == "application/pdf" {
-		attachment = map[string]any{
-			"type": "document",
+	content := make([]map[string]any, 0, len(files)+1)
+	content = append(content, map[string]any{"type": "text", "text": prompt})
+	for _, f := range files {
+		blockType := "image"
+		if f.MimeType == "application/pdf" {
+			blockType = "document"
+		}
+		content = append(content, map[string]any{
+			"type": blockType,
 			"source": map[string]string{
 				"type":       "base64",
-				"media_type": mimeType,
-				"data":       encoded,
+				"media_type": f.MimeType,
+				"data":       base64.StdEncoding.EncodeToString(f.Data),
 			},
-		}
-	} else {
-		attachment = map[string]any{
-			"type": "image",
-			"source": map[string]string{
-				"type":       "base64",
-				"media_type": mimeType,
-				"data":       encoded,
-			},
-		}
+		})
 	}
 
 	payload := map[string]any{
@@ -44,11 +39,8 @@ func (e *Extractor) anthropicMessages(ctx context.Context, provider domain.AIPro
 		"max_tokens": 4096,
 		"messages": []map[string]any{
 			{
-				"role": "user",
-				"content": []map[string]any{
-					{"type": "text", "text": prompt},
-					attachment,
-				},
+				"role":    "user",
+				"content": content,
 			},
 		},
 	}

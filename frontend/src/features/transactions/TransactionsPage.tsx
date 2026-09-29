@@ -298,6 +298,9 @@ export function TransactionsPage() {
                                             it.standard_name.toLowerCase() !== it.name.toLowerCase() && (
                                               <span className="tx-item-brand"> ↳ {it.standard_name}</span>
                                             )}
+                                          {it.generic_name && (
+                                            <span className="tx-item-brand"> · {it.generic_name}</span>
+                                          )}
                                           {it.product_id == null && (
                                             <span className="tx-item-brand"> (not linked)</span>
                                           )}

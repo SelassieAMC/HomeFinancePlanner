@@ -15,6 +15,7 @@ type Product struct {
 	ID           int64  `json:"id"`
 	Name         string `json:"name"`
 	StandardName string `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
+	GenericName  string `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = no broader family known)
 	Brand        string `json:"brand,omitempty"`
 	Unit         string `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
 	CategoryID   *int64 `json:"category_id"`
@@ -55,14 +56,17 @@ const (
 
 // ProductNameMapping is one remembered normalization decision: the raw text
 // as printed on a receipt (or typed by hand) resolves to StandardName (+ an
-// optional category) until the user overrides it in review. RawName is unique
-// case-insensitively; several raw texts may share one StandardName — product
-// rows keep their raw names and only link to the standardized form through
-// this table.
+// optional generic product family + an optional category) until the user
+// overrides it in review. RawName is unique case-insensitively; several raw
+// texts may share one StandardName — product rows keep their raw names and
+// only link to the standardized form through this table. GenericName is the
+// product family ("POTATO MINIONS 450G" → "Frozen Shaped Potatoes"); empty
+// means "no broader family known" (it never falls back to the raw name).
 type ProductNameMapping struct {
 	ID           int64         `json:"id"`
 	RawName      string        `json:"raw_name"`
 	StandardName string        `json:"standard_name"`
+	GenericName  string        `json:"generic_name"`
 	CategoryID   *int64        `json:"category_id,omitempty"`
 	CategoryName string        `json:"category_name,omitempty"` // display-only, joined from categories
 	Source       MappingSource `json:"source"`

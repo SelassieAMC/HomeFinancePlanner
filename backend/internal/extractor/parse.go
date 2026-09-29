@@ -28,6 +28,7 @@ type rawWire struct {
 type rawItem struct {
 	Name         string   `json:"name"`
 	StandardName string   `json:"standard_name"`
+	GenericName  string   `json:"generic_name"`
 	Brand        string   `json:"brand"`
 	Unit         string   `json:"unit"`
 	Category     string   `json:"category"`
@@ -39,32 +40,97 @@ type rawItem struct {
 
 var jsonFence = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)```")
 
-// extractJSONObject isolates the JSON object from a model response: a
-// ```json fence wins, otherwise the outermost braces survive (prose-wrapped
-// output from grounded searches).
-func extractJSONObject(raw string) (string, error) {
+// fenceStripped returns the ```json fence content when the response is
+// fenced, else the trimmed response.
+func fenceStripped(raw string) string {
 	cleaned := strings.TrimSpace(raw)
 	if m := jsonFence.FindStringSubmatch(cleaned); m != nil {
-		cleaned = m[1]
+		return m[1]
 	}
-	start := strings.Index(cleaned, "{")
-	end := strings.LastIndex(cleaned, "}")
-	if start < 0 || end <= start {
-		return "", fmt.Errorf("no JSON object found in response")
+	return cleaned
+}
+
+// balancedObjects returns every balanced {...} region of s in document order.
+// Braces are counted only outside JSON strings, so braces inside item names or
+// notes don't break the scan — models often append prose after the object
+// ("Here is your bill…"), sometimes with stray braces of their own.
+func balancedObjects(s string) []string {
+	var out []string
+	depth, start := 0, -1
+	inString, esc := false, false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case esc:
+			esc = false
+		case inString:
+			if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case c == '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 && start >= 0 {
+					out = append(out, s[start:i+1])
+					start = -1
+				}
+			}
+		}
 	}
-	return cleaned[start : end+1], nil
+	return out
+}
+
+// decodeBestObject scans a model response for balanced JSON objects and
+// decodes the best one into dest: the first object that decodes with real
+// payload wins; an earlier object that decodes but is empty (a model warm-up
+// like {"ok": true}) is only a fallback while the search continues. The last
+// decode error surfaces when nothing decodes at all.
+func decodeBestObject[T any](raw string, dest *T, hasPayload func(*T) bool) error {
+	objects := balancedObjects(fenceStripped(raw))
+	if len(objects) == 0 {
+		return fmt.Errorf("no JSON object found in response")
+	}
+	var lastErr error
+	var fallback *T
+	for _, obj := range objects {
+		var v T
+		if err := json.Unmarshal([]byte(obj), &v); err != nil {
+			lastErr = err
+			continue
+		}
+		if hasPayload(&v) {
+			*dest = v
+			return nil
+		}
+		if fallback == nil {
+			fallback = &v
+		}
+	}
+	if fallback != nil {
+		*dest = *fallback // decodable but empty — better than failing the read
+		return nil
+	}
+	if lastErr != nil {
+		return fmt.Errorf("decode JSON: %w", lastErr)
+	}
+	return fmt.Errorf("no JSON object found in response")
 }
 
 // ParseBillJSON extracts and normalizes the JSON object from a model response.
 func ParseBillJSON(raw string) (domain.BillDraft, error) {
-	cleaned, err := extractJSONObject(raw)
-	if err != nil {
-		return domain.BillDraft{}, err
-	}
-
 	var wire rawWire
-	if err := json.Unmarshal([]byte(cleaned), &wire); err != nil {
-		return domain.BillDraft{}, fmt.Errorf("decode JSON: %w", err)
+	if err := decodeBestObject(raw, &wire, func(w *rawWire) bool {
+		return strings.TrimSpace(w.MarketName) != "" || len(w.Items) > 0
+	}); err != nil {
+		return domain.BillDraft{}, err
 	}
 
 	draft := domain.BillDraft{
@@ -92,6 +158,10 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 		if standardName == "" {
 			standardName = name
 		}
+		// The generic (product-family) name is optional the same way, but
+		// empty stays empty — unlike the standard name it never falls back
+		// to the printed text ("no broader family known" is a real state).
+		genericName := strings.TrimSpace(it.GenericName)
 		var unit, disc, line float64
 		if it.UnitPrice != nil {
 			unit = *it.UnitPrice
@@ -109,6 +179,7 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 			Name:           name,
 			Brand:          strings.TrimSpace(it.Brand),
 			StandardName:   standardName,
+			GenericName:    genericName,
 			Unit:           strings.ToLower(strings.TrimSpace(it.Unit)),
 			CategoryName:   strings.ToLower(strings.TrimSpace(it.Category)),
 			Quantity:       qty,
@@ -186,14 +257,11 @@ func normalizeAvailability(raw string) domain.OfferAvailability {
 // response. Money arrives as decimal numbers in the market's currency and is
 // converted to cents.
 func ParseOffersJSON(raw string) (domain.OfferResult, error) {
-	cleaned, err := extractJSONObject(raw)
-	if err != nil {
-		return domain.OfferResult{}, err
-	}
-
 	var wire rawOfferWire
-	if err := json.Unmarshal([]byte(cleaned), &wire); err != nil {
-		return domain.OfferResult{}, fmt.Errorf("decode JSON: %w", err)
+	if err := decodeBestObject(raw, &wire, func(w *rawOfferWire) bool {
+		return len(w.Products) > 0 || w.CannotSearch != nil || strings.TrimSpace(w.Reason) != ""
+	}); err != nil {
+		return domain.OfferResult{}, err
 	}
 
 	res := domain.OfferResult{

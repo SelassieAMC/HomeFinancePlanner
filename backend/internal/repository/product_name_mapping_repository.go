@@ -12,7 +12,7 @@ import (
 
 // productNameMappingColumns reads one mapping row with its category join.
 const productNameMappingColumns = `
-	m.id, m.raw_name, m.standard_name, m.category_id, COALESCE(c.name, ''), m.source,
+	m.id, m.raw_name, m.standard_name, m.generic_name, m.category_id, COALESCE(c.name, ''), m.source,
 	m.created_at, m.updated_at`
 
 const productNameMappingFrom = `
@@ -51,9 +51,9 @@ func (r *ProductNameMappingRepository) FindByRawName(ctx context.Context, raw st
 func (r *ProductNameMappingRepository) Create(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO product_name_mappings (raw_name, standard_name, category_id, source, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		m.RawName, m.StandardName, m.CategoryID, string(m.Source), now, now)
+		INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, category_id, source, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		m.RawName, m.StandardName, m.GenericName, m.CategoryID, string(m.Source), now, now)
 	if err != nil {
 		return domain.ProductNameMapping{}, mapWriteError("create product mapping", err)
 	}
@@ -68,14 +68,15 @@ func (r *ProductNameMappingRepository) Create(ctx context.Context, m domain.Prod
 // only) and returns the stored row.
 func (r *ProductNameMappingRepository) Upsert(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error) {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO product_name_mappings (raw_name, standard_name, category_id, source, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, category_id, source, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(raw_name) DO UPDATE SET
 			standard_name = excluded.standard_name,
-			category_id   = excluded.category_id,
-			source        = excluded.source,
-			updated_at    = excluded.updated_at`,
-		m.RawName, m.StandardName, m.CategoryID, string(m.Source), time.Now().Unix(), time.Now().Unix())
+			generic_name   = excluded.generic_name,
+			category_id    = excluded.category_id,
+			source         = excluded.source,
+			updated_at     = excluded.updated_at`,
+		m.RawName, m.StandardName, m.GenericName, m.CategoryID, string(m.Source), time.Now().Unix(), time.Now().Unix())
 	if err != nil {
 		return domain.ProductNameMapping{}, mapWriteError("upsert product mapping", err)
 	}
@@ -96,15 +97,17 @@ func (r *ProductNameMappingRepository) GetByID(ctx context.Context, id int64) (d
 	return m, nil
 }
 
-// UnmappedProductNames lists products whose raw name has no mapping yet (the
-// input of the "analyze existing products" job), oldest products first. The
-// category is carried along so the job can stamp it onto the new mapping.
+// UnmappedProductNames lists products whose raw name has no mapping yet, or
+// whose mapping has no generic name (the input of the "analyze existing
+// products" job, which creates the former and fills the generic gap on the
+// latter), oldest products first. The category is carried along so the job
+// can stamp it onto a new mapping.
 func (r *ProductNameMappingRepository) UnmappedProductNames(ctx context.Context, limit int) ([]domain.Product, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT p.id, p.name, p.category_id
 		FROM products p
 		LEFT JOIN product_name_mappings m ON p.name = m.raw_name COLLATE NOCASE
-		WHERE m.id IS NULL
+		WHERE m.id IS NULL OR m.generic_name = ''
 		ORDER BY p.id
 		LIMIT ?`, limit)
 	if err != nil {
@@ -123,15 +126,16 @@ func (r *ProductNameMappingRepository) UnmappedProductNames(ctx context.Context,
 	return products, rows.Err()
 }
 
-// CountUnmappedProductNames totals the products without a mapping — the
-// denominator of the backfill job's progress.
+// CountUnmappedProductNames totals the products without a mapping or without
+// a generic name on their mapping — the denominator of the backfill job's
+// progress.
 func (r *ProductNameMappingRepository) CountUnmappedProductNames(ctx context.Context) (int64, error) {
 	var n int64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM products p
 		LEFT JOIN product_name_mappings m ON p.name = m.raw_name COLLATE NOCASE
-		WHERE m.id IS NULL`).Scan(&n)
+		WHERE m.id IS NULL OR m.generic_name = ''`).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count unmapped product names: %w", err)
 	}
@@ -183,7 +187,7 @@ func scanProductNameMapping(row interface{ Scan(...any) error }) (domain.Product
 		createdAt int64
 		updatedAt int64
 	)
-	if err := row.Scan(&m.ID, &m.RawName, &m.StandardName, &m.CategoryID, &m.CategoryName,
+	if err := row.Scan(&m.ID, &m.RawName, &m.StandardName, &m.GenericName, &m.CategoryID, &m.CategoryName,
 		&source, &createdAt, &updatedAt); err != nil {
 		return domain.ProductNameMapping{}, err
 	}

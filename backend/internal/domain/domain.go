@@ -116,6 +116,7 @@ type TransactionItem struct {
 	ProductName    string  `json:"product_name,omitempty"` // display-only join
 	Name           string  `json:"name"`
 	StandardName   string  `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
+	GenericName    string  `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = none known)
 	Brand          string  `json:"brand,omitempty"`
 	Unit           string  `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
 	CategoryID     *int64  `json:"category_id"`    // seeds a newly created product only

@@ -76,8 +76,13 @@ func (s *BillService) processScan(token string, log *slog.Logger) {
 	defer cancel()
 
 	provider, providerErr := s.providers.GetProvider(extractCtx, scan.ProviderID)
-	file, fileErr := os.ReadFile(scan.ImagePath)
-	draft, extractErr := s.extractDraft(extractCtx, file, scan.MimeType, provider)
+	files, fileErr := readScanFiles(scan)
+
+	var draft *domain.BillDraft
+	var extractErr error
+	if fileErr == nil && providerErr == nil {
+		draft, extractErr = s.extractDraft(extractCtx, files, provider)
+	}
 
 	// The result write uses a fresh background context so a finished result
 	// survives a shutdown that cancelled the worker pool.
@@ -88,13 +93,40 @@ func (s *BillService) processScan(token string, log *slog.Logger) {
 	case providerErr != nil:
 		s.persistResult(writeCtx, token, log, nil, "AI provider unavailable: "+providerErr.Error())
 	case fileErr != nil:
-		s.persistResult(writeCtx, token, log, nil, "receipt file is missing on disk")
+		s.persistResult(writeCtx, token, log, nil, fileErr.Error())
 	case extractErr != nil:
 		s.persistResult(writeCtx, token, log, nil, describeExtractError(extractErr, s.extractTimeout))
 	default:
 		assignDraftItemIDs(draft, 0)
 		s.persistResult(writeCtx, token, log, draft, "")
 	}
+}
+
+// readScanFiles loads every stored part of a scan's receipt from disk, in
+// position order. A pre-feature row without parts falls back to its mirrored
+// single file; a missing part fails with the part named in the message.
+func readScanFiles(scan domain.BillScan) ([]domain.ReceiptFile, error) {
+	if len(scan.Files) == 0 {
+		// Legacy row: the single file is the whole receipt.
+		data, err := os.ReadFile(scan.ImagePath)
+		if err != nil {
+			return nil, errors.New("receipt file is missing on disk")
+		}
+		return []domain.ReceiptFile{{Data: data, MimeType: scan.MimeType}}, nil
+	}
+	files := make([]domain.ReceiptFile, 0, len(scan.Files))
+	for i, f := range scan.Files {
+		data, err := os.ReadFile(f.Path)
+		if err != nil {
+			position := f.Position
+			if position == 0 {
+				position = i + 1
+			}
+			return nil, fmt.Errorf("receipt part %d of %d is missing on disk", position, len(scan.Files))
+		}
+		files = append(files, domain.ReceiptFile{Data: data, MimeType: f.MimeType})
+	}
+	return files, nil
 }
 
 // describeExtractError turns raw transport errors into actionable messages.

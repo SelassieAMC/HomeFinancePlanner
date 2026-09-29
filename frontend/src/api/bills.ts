@@ -32,11 +32,15 @@ function toQuery(filters: BillListFilters): string {
 }
 
 export const billsApi = {
-  /** Upload a receipt for AI extraction. Returns immediately with status
-   *  "analyzing"; poll getScan until the draft is ready. */
-  scan: (file: File, providerId?: string) => {
+  /** Upload one or more receipt files for AI extraction. A single file is one
+   *  receipt; several files are the consecutive parts of one long receipt,
+   *  merged into a single bill by the AI read (part 1 = top of the receipt).
+   *  Returns immediately with status "analyzing"; poll getScan until the
+   *  draft is ready. */
+  scan: (files: File | File[], providerId?: string) => {
+    const list = Array.isArray(files) ? files : [files];
     const form = new FormData();
-    form.append('image', file);
+    for (const file of list) form.append('image', file);
     if (providerId) form.append('provider_id', providerId);
     return apiClient.postForm<BillScan>(`${BASE}/bills/scan`, form);
   },
