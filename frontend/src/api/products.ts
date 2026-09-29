@@ -46,8 +46,10 @@ export const productsApi = {
    *  purchase currency. */
   storePrices: (id: number) =>
     apiClient.get<ProductStorePrice[]>(`${BASE}/products/${id}/prices`),
-  /** Replaces name/brand/unit/category/description; also rewrites the
-   *  historical bill items linked to the product (name/unit/category). */
+  /** Replaces name/brand/unit/category/description on the products row;
+   *  historical bill/transaction lines keep their snapshot values. A
+   *  submitted standard_name learns the normalization mapping (source
+   *  user); omit the field to leave the mapping untouched. */
   update: (id: number, input: ProductInput) =>
     apiClient.put<Product>(`${BASE}/products/${id}`, input),
   /** Pre-save rename check: does the new name match an existing product, and

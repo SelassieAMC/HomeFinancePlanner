@@ -23,9 +23,9 @@ interface ProductEditModalProps {
 /**
  * Product edit modal, laid out like a mini editor page: basic information and
  * purchase stats on the left, photo card with drag & drop and the footer
- * actions on the right. Saving rewrites name/measure/category on every
- * historical bill and transaction lines too — a confirmation dialog warns
- * first.
+ * actions on the right. Saving updates the products row only — historical
+ * bill and transaction lines keep their snapshot values — and the
+ * standardized-name field learns the normalization mapping (source user).
  */
 export function ProductEditModal({ product, categories, onClose, onSaved }: ProductEditModalProps) {
   const [name, setName] = useState(product.name);
@@ -33,11 +33,13 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   const [unit, setUnit] = useState(product.unit ?? '');
   const [categoryId, setCategoryId] = useState<number | null>(product.category_id ?? null);
   const [description, setDescription] = useState(product.description ?? '');
+  // Prefilled with the remembered standard name (raw name when unmapped);
+  // saving learns it into the normalization mapping like bill line edits do.
+  const [standardName, setStandardName] = useState(product.standard_name || product.name);
   // Photo edits return a fresh product (new updated_at → cache-busted URL).
   const [current, setCurrent] = useState(product);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [confirmPropagate, setConfirmPropagate] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   // Rename matched an existing product: the merge plan awaiting confirmation.
   const [mergeCheck, setMergeCheck] = useState<ProductMergeCheck | null>(null);
@@ -46,16 +48,6 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   const [mergeError, setMergeError] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  /** True when the edit rewrites a field that propagates to bill items and
-   *  manually recorded transaction items. */
-  function touchesBillItems(): boolean {
-    return (
-      name.trim() !== product.name ||
-      unit.trim().toLowerCase() !== (product.unit ?? '') ||
-      (categoryId ?? null) !== (product.category_id ?? null)
-    );
-  }
-
   function buildInput(): ProductInput {
     return {
       name: name.trim(),
@@ -63,6 +55,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
       unit: unit.trim().toLowerCase(),
       category_id: categoryId,
       description: description.trim(),
+      standard_name: standardName.trim(),
     };
   }
 
@@ -76,7 +69,6 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
       setFormError(err instanceof Error ? err.message : 'Failed to save product.');
     } finally {
       setBusy(false);
-      setConfirmPropagate(false);
     }
   }
 
@@ -132,13 +124,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
         setBusy(false);
       }
     }
-    if (touchesBillItems()) {
-      // Historical bill and transaction lines are rewritten with the
-      // product — warn first.
-      setConfirmPropagate(true);
-    } else {
-      void doSave(input);
-    }
+    void doSave(input);
   }
 
   async function handleUploadPhoto(file: File | null | undefined) {
@@ -196,6 +182,16 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
                   />
                 </label>
               </div>
+              <label>
+                Standardized name{' '}
+                <span className="item-field-note">raw name: {name.trim() || '—'}</span>
+                <input
+                  value={standardName}
+                  placeholder="Human-readable name"
+                  aria-label="Standardized name"
+                  onChange={(e) => setStandardName(e.target.value)}
+                />
+              </label>
               <label>
                 Description
                 <textarea
@@ -295,26 +291,6 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
           e.target.value = ''; // allow re-selecting the same file
         }}
       />
-
-      {confirmPropagate && (
-        <Dialog title="Update product">
-          <p>
-            This will also update{' '}
-            <strong>
-              {current.times_bought}{' '}
-              {current.times_bought === 1 ? 'purchase line' : 'purchase lines'}
-            </strong>{' '}
-            on past bills and manual transactions (name, measure and category
-            are rewritten on every linked line).
-          </p>
-          <div className="camera-row">
-            <Button onClick={() => void doSave(buildInput())}>Update product</Button>
-            <Button variant="ghost" onClick={() => setConfirmPropagate(false)}>
-              Cancel
-            </Button>
-          </div>
-        </Dialog>
-      )}
 
       {mergeCheck?.match && (
         <ProductMergeDialog

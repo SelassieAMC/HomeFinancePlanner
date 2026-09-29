@@ -15,8 +15,8 @@ import (
 
 // ProductService manages the product catalogue. Products are created only by
 // the bill workflow (find-or-created from bill item names at confirm time);
-// this service edits them and manages their photos. Rewriting name/unit/
-// category propagates to every linked bill item (the UI confirms first).
+// this service edits them and manages their photos. Edits update the
+// products row only — linked bill/transaction lines are immutable snapshots.
 type ProductService struct {
 	products   ProductStore
 	categories CategoryStore
@@ -36,20 +36,29 @@ type ProductService struct {
 	prompts PromptResolver
 	// timeout bounds one AI call of the backfill job.
 	timeout time.Duration
-	log     *slog.Logger
+	// batchSize is the working batch size of the backfill job: it starts at
+	// normalizationBatch and halves whenever a call outlives timeout (slow
+	// local models need minutes to emit a full batch), so later batches of
+	// the same process fit the deadline. Only the job's single-flight run
+	// touches it.
+	batchSize int
+	log       *slog.Logger
 }
 
 // ProductFilters re-exports the shared domain filter type.
 type ProductFilters = domain.ProductFilters
 
 // ProductInput is the user-facing payload for product update; the photo is
-// managed separately through SetPhoto/RemovePhoto.
+// managed separately through SetPhoto/RemovePhoto. StandardName is the
+// optional normalization-mapping decision for the product's raw name — nil
+// means the client didn't touch the field.
 type ProductInput struct {
-	Name        string
-	Brand       string
-	Unit        string
-	CategoryID  *int64
-	Description string
+	Name         string
+	Brand        string
+	Unit         string
+	CategoryID   *int64
+	Description  string
+	StandardName *string
 }
 
 // NewProductService wires the product workflow. photosDir is where photo
@@ -83,6 +92,7 @@ func NewProductService(
 		providers:  providers,
 		prompts:    prompts,
 		timeout:    timeout,
+		batchSize:  normalizationBatch,
 		log:        log,
 	}
 	if s.mappings != nil {
@@ -121,16 +131,96 @@ func (s *ProductService) StorePrices(ctx context.Context, id int64) ([]domain.Pr
 	return s.products.StorePrices(ctx, id, product.PriceCurrency)
 }
 
-// Update rewrites a product's editable fields and propagates name/unit/
-// category to the linked bill items; the photo is untouched (managed by
-// SetPhoto/RemovePhoto).
+// Update rewrites a product's editable fields on the products row only;
+// historical bill/transaction lines keep their snapshot values. The photo is
+// untouched (managed by SetPhoto/RemovePhoto). A submitted standard_name
+// also learns the product's normalization-mapping decision (source user),
+// mirroring the bill workflow: untouched saves write nothing, renames carry
+// the decision to the new raw name, and clearing the field records identity.
 func (s *ProductService) Update(ctx context.Context, id int64, in ProductInput) (domain.Product, error) {
+	submitted, submittedSet := "", false
+	if in.StandardName != nil {
+		submitted = strings.TrimSpace(*in.StandardName)
+		submittedSet = true
+		if len(submitted) > 200 {
+			return domain.Product{}, validationError("standard_name must be at most %d characters", 200)
+		}
+	}
 	product, err := s.build(ctx, in)
 	if err != nil {
 		return domain.Product{}, err
 	}
 	product.ID = id
-	return s.products.Update(ctx, product)
+
+	// The pre-edit row holds what the edit form showed: the mapping join
+	// (old.StandardName), the prefilled category and the raw name the
+	// standard field was prefilled with.
+	var old domain.Product
+	haveOld := false
+	if s.mappings != nil {
+		if o, err := s.products.GetByID(ctx, id); err == nil {
+			old, haveOld = o, true
+		} else {
+			s.log.Warn("read product before mapping learn", "id", id, "error", err)
+		}
+	}
+	updated, err := s.products.Update(ctx, product)
+	if err != nil {
+		return domain.Product{}, err
+	}
+	if !haveOld || !s.learnMapping(ctx, old, updated, submitted, submittedSet, in.CategoryID) {
+		return updated, nil
+	}
+	// The mapping write refreshed the standard_name join — serve the fresh
+	// row (the read must not fail the already-committed save).
+	fresh, err := s.products.GetByID(ctx, id)
+	if err != nil {
+		s.log.Warn("reread product after mapping learn", "id", id, "error", err)
+		return updated, nil
+	}
+	return fresh, nil
+}
+
+// learnMapping records the product edit's normalization decision (source
+// user), the product-side twin of the bill workflow's learnMappingOverrides.
+// submitted is the trimmed standard_name; submittedSet distinguishes an
+// explicitly cleared field ("" → identity) from an absent one (nil → keep
+// the prior). Returns true when a mapping write was attempted, so the
+// caller can re-read the row for the fresh standard_name join.
+//
+// Unmapped products only record an explicit new standard — the untouched
+// prefill or an absent field writes nothing even on a rename, leaving the
+// name open for AI suggestions. Mapped products write when the standard
+// changed, when the name changed (the decision moves to the new raw key)
+// or when the category changed (the memory stays in sync with the row).
+func (s *ProductService) learnMapping(ctx context.Context, old, updated domain.Product, submitted string, submittedSet bool, categoryID *int64) bool {
+	raw := updated.Name
+	if old.StandardName == "" {
+		if !submittedSet || submitted == "" || strings.EqualFold(submitted, old.Name) {
+			return false
+		}
+	} else {
+		if !submittedSet {
+			submitted = old.StandardName
+		}
+		if submitted == "" {
+			submitted = raw // cleared field: record identity, like bill lines
+		}
+		if strings.EqualFold(submitted, old.StandardName) &&
+			strings.EqualFold(old.Name, raw) &&
+			sameInt64Ptr(old.CategoryID, categoryID) {
+			return false
+		}
+	}
+	if _, err := s.mappings.Upsert(ctx, domain.ProductNameMapping{
+		RawName:      raw,
+		StandardName: submitted,
+		CategoryID:   categoryID,
+		Source:       domain.MappingSourceUser,
+	}); err != nil {
+		s.log.Warn("learn product mapping override", "raw", raw, "error", err)
+	}
+	return true
 }
 
 // Merge plan reasons, mirrored by the frontend's ProductMergeCheck type.
@@ -488,9 +578,11 @@ func (s *ProductService) build(ctx context.Context, in ProductInput) (domain.Pro
 	}, nil
 }
 
-// normalizationBatch bounds one AI call of the backfill job: small enough for
-// any model's context window and for a single-call retry, large enough that
-// even a slow local model covers the catalogue in a few round trips.
+// normalizationBatch is the initial bound on one AI call of the backfill
+// job: small enough for any model's context window and for a single-call
+// retry, large enough that a fast connector covers the catalogue in a few
+// round trips. Slow local models that outlive the per-call deadline make
+// the job halve its working batch size instead of failing (see batchSize).
 const normalizationBatch = 40
 
 // ProductNormalizeResult is the GET /products/normalize response: does this
@@ -611,8 +703,10 @@ func (s *ProductService) runNormalizationJob() {
 			return
 		}
 		// Already-asked names sort ahead of fresh ones (id order), so widen
-		// the limit to keep full fresh batches coming through.
-		names, err := s.mappings.UnmappedProductNames(ctx, normalizationBatch+len(asked))
+		// the limit to keep full fresh batches coming through. The limit
+		// follows the working batch size, which halves when the model is
+		// slower than the per-call deadline.
+		names, err := s.mappings.UnmappedProductNames(ctx, s.batchSize+len(asked))
 		if err != nil {
 			s.failNormalizationJob(ctx, job, err)
 			return
@@ -635,8 +729,24 @@ func (s *ProductService) runNormalizationJob() {
 
 // normalizeBatch standardizes one batch of product names through the AI and
 // records the results (source 'ai'). Progress counters are persisted after
-// every batch so the status endpoint can show live progress.
+// every successful call so the status endpoint can show live progress.
+//
+// A call that outlives the per-call deadline — a slow local model can take
+// longer to emit a full batch than a receipt read — is retried on half the
+// batch, down to a single name, and the halved size is remembered for the
+// rest of the process. Only a timeout is retried; a batch whose single
+// remaining name still times out fails the job with an actionable error.
 func (s *ProductService) normalizeBatch(ctx context.Context, products []domain.Product, job *domain.ProductNormalizationJob) error {
+	// A batch larger than the working size is split up front: a slow model
+	// already taught the job the deadline-fit size (the second half of a
+	// timeout-driven split), so don't burn another timeout on it.
+	if len(products) > s.batchSize && len(products) > 1 {
+		mid := len(products) / 2
+		if err := s.normalizeBatch(ctx, products[:mid], job); err != nil {
+			return err
+		}
+		return s.normalizeBatch(ctx, products[mid:], job)
+	}
 	provider, err := s.providers.DefaultBillProvider(ctx)
 	if err != nil {
 		return err
@@ -645,22 +755,47 @@ func (s *ProductService) normalizeBatch(ctx context.Context, products []domain.P
 	if err != nil {
 		return err
 	}
+
+	answers, err := s.normalizeCall(ctx, provider, prompt, products)
+	if err == nil {
+		return s.recordNormalized(ctx, products, answers, job)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if len(products) == 1 {
+		return fmt.Errorf("AI call timed out after %s even for a single name — use a faster model or raise LLM_TIMEOUT: %w", s.timeout, err)
+	}
+	mid := len(products) / 2
+	s.batchSize = mid
+	if err := s.normalizeBatch(ctx, products[:mid], job); err != nil {
+		return err
+	}
+	return s.normalizeBatch(ctx, products[mid:], job)
+}
+
+// normalizeCall runs one prompt-only AI call for the given products and
+// returns the model's raw→standard answers. The whole call — prompt,
+// generation and transport — is bounded by the service timeout.
+func (s *ProductService) normalizeCall(ctx context.Context, provider domain.AIProvider, prompt string, products []domain.Product) ([]domain.ProductNameMapping, error) {
 	rawNames := make([]string, len(products))
 	for i, p := range products {
 		rawNames[i] = p.Name
 	}
 	encoded, err := json.Marshal(rawNames)
 	if err != nil {
-		return fmt.Errorf("encode product names: %w", err)
+		return nil, fmt.Errorf("encode product names: %w", err)
 	}
-	prompt += string(encoded)
-
 	callCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	answers, err := s.normalizer.NormalizeNames(callCtx, provider, prompt)
-	if err != nil {
-		return err
-	}
+	return s.normalizer.NormalizeNames(callCtx, provider, prompt+string(encoded))
+}
+
+// recordNormalized stores the answers of one successful call (Create, not
+// Upsert: a mapping that appeared while the job was queued — a scan, a
+// manual entry — already holds a reviewed decision) and persists the
+// progress counters.
+func (s *ProductService) recordNormalized(ctx context.Context, products []domain.Product, answers []domain.ProductNameMapping, job *domain.ProductNormalizationJob) error {
 	byRaw := make(map[string]string, len(answers))
 	for _, a := range answers {
 		byRaw[strings.ToLower(a.RawName)] = a.StandardName
@@ -671,8 +806,6 @@ func (s *ProductService) normalizeBatch(ctx context.Context, products []domain.P
 		if !ok {
 			continue
 		}
-		// Create, not Upsert: a mapping that appeared while the job was
-		// queued (a scan, a manual entry) already holds a reviewed decision.
 		_, err := s.mappings.Create(ctx, domain.ProductNameMapping{
 			RawName:      p.Name,
 			StandardName: standard,

@@ -136,8 +136,10 @@ stats) are implemented. Bills link to stores via `store_id`; on confirm/update
 the service find-or-creates the store from the (case-insensitive) market name,
 while `market_name` stays a denormalized snapshot. Bill items link to products
 via `product_id`: on confirm the service find-or-creates the product from the
-case-insensitive item name (deposit returns are never linked), and product
-edits (name/unit/category) propagate to the linked bill items. Renaming a
+case-insensitive item name (deposit returns are never linked). Linked
+bill/transaction lines are snapshots — they keep the name/unit/category they
+were created with; product edits update the `products` row only (the merge
+flow is the one exception, rewriting the items it redirects). Renaming a
 product to a name that already exists offers a **merge** instead of failing on
 the unique name index: `GET /products/{id}/merge-check` returns the matched
 product and the plan (bought at different stores → simple confirm; bought at a
@@ -205,14 +207,21 @@ and category, unmapped ones record the AI suggestion as `ai`), and
 confirm/update learn real per-line edits permanently (upsert as `user`) —
 deposit/return lines are never normalized or remembered. Manual purchases look
 the memory up per typed line (category filled only when unset, typed name
-never rewritten; unknown names record identity mappings as `manual`). The
+never rewritten; unknown names record identity mappings as `manual`). Product
+edits learn the mapping too (`standard_name` on `PUT /products/{id}`, source
+`user`): untouched saves write nothing, renames carry a mapped decision to
+the new raw name (an unmapped rename stays open for AI suggestions), and a
+cleared field records identity. The
 standardized name is exposed read-only (`standard_name`) on bill items,
 transaction items and products via LEFT JOIN on the raw name. The frontend
 uses `GET /products/normalize?name=` for the blur lookup; the user-triggered
 backfill job (`POST /products/normalization/run`, status on
 `GET /products/normalization`, single-row `product_normalization_jobs`) sends
 unmapped product names to the `default_for_bills` connector in batches of 40
-under the `product_normalization` prompt key — products are never modified,
+under the `product_normalization` prompt key (a batch that outlives the
+per-call `LLM_TIMEOUT` — slow local models — is retried on halves down to a
+single name, and the working batch size is remembered for the process) —
+products are never modified,
 names the AI skips are asked once per run, and a job interrupted by a restart
 is marked failed at boot and can simply be run again.
 When adding

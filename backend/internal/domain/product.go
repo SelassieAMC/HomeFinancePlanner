@@ -4,9 +4,10 @@ import "time"
 
 // Product is a thing the user has bought, find-or-created from bill item and
 // manual transaction item names. Lines link to their product via
-// bill_items.product_id and transaction_items.product_id; editing
-// name/unit/category propagates to those lines (line names are not snapshots,
-// unlike bills' market_name). ImagePath is the server-side file path and is
+// bill_items.product_id and transaction_items.product_id and are snapshots:
+// they keep the name/unit/category they were created with — product edits
+// update the products row only (the merge flow is the one exception,
+// rewriting the items it redirects). ImagePath is the server-side file path and is
 // never exposed; HasImage tells the UI whether GET /products/{id}/photo
 // returns an image. The purchase stats are display-only, computed from linked
 // accepted bill lines and manual transaction item lines.

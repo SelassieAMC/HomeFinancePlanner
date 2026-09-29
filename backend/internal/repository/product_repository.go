@@ -327,8 +327,9 @@ func (r *ProductRepository) storePrices(ctx context.Context, query string, id in
 // transaction, so the name index never sees both rows under the same NOCASE
 // name (drop is deleted before keep is renamed). Redirected items get the
 // kept product's final name/unit/category straight away (unit keeps its
-// historical line value when final.unit is empty), mirroring Update's
-// propagation semantics. image_path is untouched: photo files are owned by
+// historical line value when final.unit is empty), the one place line
+// fields are rewritten; a plain product edit never touches historical
+// lines. image_path is untouched: photo files are owned by
 // the service, which transfers or removes them after the transaction commits.
 func (r *ProductRepository) Merge(ctx context.Context, keepID, dropID int64, final domain.Product) (domain.Product, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -408,54 +409,21 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (domai
 	return r.GetByID(ctx, id)
 }
 
-// Update rewrites the user-editable fields and propagates name/unit/category
-// to the linked bill items and transaction items in one transaction (their
-// names are not snapshots, unlike bills' market_name). A cleared unit keeps
-// historical line units. It deliberately never touches image_path — photo
+// Update rewrites the user-editable fields on the products row only. Linked
+// bill items and transaction items are snapshots: they keep the name/unit/
+// category they were created with (unlike the merge flow, which rewrites the
+// items it redirects). It deliberately never touches image_path — photo
 // files are owned by SetPhoto only.
 func (r *ProductRepository) Update(ctx context.Context, p domain.Product) (domain.Product, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return domain.Product{}, fmt.Errorf("begin product update: %w", err)
-	}
-	defer tx.Rollback()
-
-	res, err := tx.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE products SET name = ?, brand = ?, unit = ?, category_id = ?, description = ?, updated_at = ?
 		WHERE id = ?`,
 		p.Name, p.Brand, p.Unit, p.CategoryID, p.Description, time.Now().Unix(), p.ID)
 	if err != nil {
-		tx.Rollback()
 		return domain.Product{}, mapWriteError("update product", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		tx.Rollback()
 		return domain.Product{}, domain.ErrNotFound
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE bill_items
-		SET name = ?,
-		    unit = CASE WHEN TRIM(?) = '' THEN unit ELSE ? END,
-		    category_id = ?
-		WHERE product_id = ?`,
-		p.Name, p.Unit, p.Unit, p.CategoryID, p.ID); err != nil {
-		tx.Rollback()
-		return domain.Product{}, fmt.Errorf("propagate product to bill items: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE transaction_items
-		SET name = ?,
-		    unit = CASE WHEN TRIM(?) = '' THEN unit ELSE ? END,
-		    category_id = ?
-		WHERE product_id = ?`,
-		p.Name, p.Unit, p.Unit, p.CategoryID, p.ID); err != nil {
-		tx.Rollback()
-		return domain.Product{}, fmt.Errorf("propagate product to transaction items: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return domain.Product{}, fmt.Errorf("commit product update: %w", err)
 	}
 	return r.GetByID(ctx, p.ID)
 }

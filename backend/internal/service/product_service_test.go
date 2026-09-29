@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -299,6 +301,180 @@ func longString(n int) string {
 	return string(out)
 }
 
+// strp boxes a string, for the optional standard_name input.
+func strp(v string) *string { return &v }
+
+// TestProductServiceUpdateLearnsMapping covers the product-edit twin of the
+// bill workflow's learnMappingOverrides: a submitted standard_name records
+// the mapping decision (source user), untouched saves write nothing,
+// renames carry a mapped decision to the new raw key, and a cleared field
+// records identity.
+func TestProductServiceUpdateLearnsMapping(t *testing.T) {
+	ctx := context.Background()
+	newSvc := func() (*ProductService, *fakeProductStore, *fakeProductMappingStore) {
+		products := newFakeProductStore()
+		cats := &fakeCategoryStore{cats: map[int64]domain.Category{
+			1: {ID: 1, Name: "Dairy", Kind: "product"},
+		}}
+		mappings := newFakeProductMappingStore()
+		svc := NewProductService(products, cats, t.TempDir(), mappings, nil, nil, nil, time.Second, nil)
+		return svc, products, mappings
+	}
+	seed := func(products *fakeProductStore, p domain.Product) domain.Product {
+		t.Helper()
+		created, err := products.Create(ctx, p)
+		if err != nil {
+			t.Fatalf("seed product: %v", err)
+		}
+		return created
+	}
+
+	t.Run("new standard on unmapped product", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "WHL MLK"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "WHL MLK", CategoryID: idp(1), StandardName: strp("Whole Milk 1L"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 {
+			t.Fatalf("upserts = %+v, want one decision", mappings.upserts)
+		}
+		m := mappings.upserts[0]
+		if m.RawName != "WHL MLK" || m.StandardName != "Whole Milk 1L" ||
+			m.Source != domain.MappingSourceUser || m.CategoryID == nil || *m.CategoryID != 1 {
+			t.Fatalf("upsert = %+v, want WHL MLK → Whole Milk 1L (user, category 1)", m)
+		}
+	})
+
+	t.Run("untouched prefill on mapped product writes nothing", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "WHL MLK", StandardName: "Whole Milk 1L", CategoryID: idp(1)})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "WHL MLK", CategoryID: idp(1), StandardName: strp("Whole Milk 1L"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 0 {
+			t.Fatalf("upserts = %+v, want none on an untouched save", mappings.upserts)
+		}
+	})
+
+	t.Run("untouched prefill on unmapped product writes nothing", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "MLK"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "MLK", StandardName: strp("MLK"), // prefill of an unmapped raw name
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 0 {
+			t.Fatalf("upserts = %+v, want none — the name stays open for AI suggestions", mappings.upserts)
+		}
+	})
+
+	t.Run("rename carries a mapped decision to the new raw key", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "WHL MLK", StandardName: "Whole Milk 1L", CategoryID: idp(1)})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "WHL MLK 1L", CategoryID: idp(1), StandardName: strp("Whole Milk 1L"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 {
+			t.Fatalf("upserts = %+v, want the decision carried to the new name", mappings.upserts)
+		}
+		m := mappings.upserts[0]
+		if m.RawName != "WHL MLK 1L" || m.StandardName != "Whole Milk 1L" {
+			t.Fatalf("upsert = %+v, want WHL MLK 1L → Whole Milk 1L", m)
+		}
+	})
+
+	t.Run("rename of an unmapped product writes nothing", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "MLK"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "Milk", StandardName: strp("MLK"), // untouched prefill
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 0 {
+			t.Fatalf("upserts = %+v, want none — no opinion was expressed", mappings.upserts)
+		}
+	})
+
+	t.Run("cleared field records identity", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "WHL MLK", StandardName: "Whole Milk 1L"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "WHL MLK", StandardName: strp(""),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 || mappings.upserts[0].StandardName != "WHL MLK" {
+			t.Fatalf("upserts = %+v, want identity WHL MLK → WHL MLK", mappings.upserts)
+		}
+	})
+
+	t.Run("category change syncs the mapping", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		// Mapped decision, but the row had no category yet.
+		p := seed(products, domain.Product{Name: "WHL MLK", StandardName: "Whole Milk 1L"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "WHL MLK", CategoryID: idp(1), StandardName: strp("Whole Milk 1L"),
+		}); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if len(mappings.upserts) != 1 {
+			t.Fatalf("upserts = %+v, want the category synced into the mapping", mappings.upserts)
+		}
+		m := mappings.upserts[0]
+		if m.StandardName != "Whole Milk 1L" || m.CategoryID == nil || *m.CategoryID != 1 {
+			t.Fatalf("upsert = %+v, want Whole Milk 1L with category 1", m)
+		}
+	})
+
+	t.Run("nil mapping store leaves the save working", func(t *testing.T) {
+		products := newFakeProductStore()
+		svc := NewProductService(products, &fakeCategoryStore{cats: map[int64]domain.Category{}},
+			t.TempDir(), nil, nil, nil, nil, time.Second, nil)
+		p := seed(products, domain.Product{Name: "MLK"})
+		updated, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "Milk", StandardName: strp("Whole Milk 1L"),
+		})
+		if err != nil {
+			t.Fatalf("update without mappings: %v", err)
+		}
+		if updated.Name != "Milk" {
+			t.Fatalf("updated = %+v, want the rename applied", updated)
+		}
+	})
+
+	t.Run("oversized standard fails the save", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		p := seed(products, domain.Product{Name: "MLK"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "MLK", StandardName: strp(longString(201)),
+		}); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("oversized standard = %v, want ErrValidation", err)
+		}
+		if len(mappings.upserts) != 0 {
+			t.Fatalf("upserts = %+v, want none — the save failed", mappings.upserts)
+		}
+	})
+
+	t.Run("mapping failure is non-fatal", func(t *testing.T) {
+		svc, products, mappings := newSvc()
+		mappings.upsertErr = errors.New("boom")
+		p := seed(products, domain.Product{Name: "MLK"})
+		if _, err := svc.Update(ctx, p.ID, ProductInput{
+			Name: "MLK", StandardName: strp("Whole Milk 1L"),
+		}); err != nil {
+			t.Fatalf("update with failing upsert: %v", err)
+		}
+	})
+}
+
 // --- normalization memory & backfill job -------------------------------------
 
 // fakeTextNormalizer is a TextNormalizer stub delegating to a function; every
@@ -441,6 +617,99 @@ func TestProductServiceRunNormalizationJobCompletes(t *testing.T) {
 	}
 	if !strings.HasSuffix(prompt, `["TOMATOS","JOGHURT 500G"]`) {
 		t.Errorf("prompt does not end with the raw-name array: ...%q", prompt[min(len(prompt), 200):])
+	}
+}
+
+// promptNames extracts the raw-name JSON array the job appends to the
+// normalization prompt (the batch the call was asked to standardize).
+func promptNames(t *testing.T, prompt string) []string {
+	t.Helper()
+	i := strings.LastIndex(prompt, "[")
+	if i < 0 {
+		t.Fatalf("normalization prompt has no name array: %.80q", prompt)
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(prompt[i:]), &names); err != nil {
+		t.Fatalf("decode prompt name array: %v", err)
+	}
+	return names
+}
+
+func TestProductServiceNormalizationHalvesSlowBatches(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	for i := 1; i <= 8; i++ {
+		mappings.products = append(mappings.products,
+			domain.Product{ID: int64(i), Name: fmt.Sprintf("PRD %d", i)})
+	}
+	// A model slower than the per-call deadline: batches over 3 names time
+	// out, smaller ones answer (each name maps to itself + " Std").
+	normalizer := &fakeTextNormalizer{fn: func(_ context.Context, _ domain.AIProvider, prompt string) ([]domain.ProductNameMapping, error) {
+		names := promptNames(t, prompt)
+		if len(names) > 3 {
+			return nil, context.DeadlineExceeded
+		}
+		out := make([]domain.ProductNameMapping, len(names))
+		for i, name := range names {
+			out[i] = domain.ProductNameMapping{RawName: name, StandardName: name + " Std"}
+		}
+		return out, nil
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	job, err := svc.RunNormalization(ctx)
+	if err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	if job.Status != domain.ProductNormalizationRunning || job.TotalNames != 8 {
+		t.Fatalf("started job = %+v, want running with 8 unmapped names", job)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationDone
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.ProcessedNames != 8 || st.MappedNames != 8 || st.Error != "" {
+		t.Fatalf("finished job = %+v, want 8/8 without error", st)
+	}
+	// The over-deadline batches (8, 4) were retried on halves; the working
+	// size is remembered for the rest of the process.
+	if svc.batchSize != 2 {
+		t.Fatalf("learned batch size = %d, want 2", svc.batchSize)
+	}
+	if len(normalizer.prompts) != 6 {
+		t.Fatalf("normalizer calls = %d, want 8-timeout, 4-timeout, then four 2-name batches", len(normalizer.prompts))
+	}
+	if got := len(promptNames(t, normalizer.prompts[2])); got != 2 {
+		t.Fatalf("first successful call held %d names, want the halved batch", got)
+	}
+}
+
+func TestProductServiceNormalizationFailsWhenEvenOneNameTimesOut(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	mappings.products = []domain.Product{{ID: 1, Name: "WHL MLK 1L"}}
+	normalizer := &fakeTextNormalizer{fn: func(context.Context, domain.AIProvider, string) ([]domain.ProductNameMapping, error) {
+		return nil, context.DeadlineExceeded
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	if _, err := svc.RunNormalization(ctx); err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationFailed
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(st.Error, "LLM_TIMEOUT") || !strings.Contains(st.Error, "timed out") {
+		t.Fatalf("job error = %q, want the actionable timeout advice", st.Error)
 	}
 }
 

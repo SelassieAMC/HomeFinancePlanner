@@ -192,6 +192,8 @@ export interface ProductInput {
   unit?: string;
   category_id?: number | null;
   description?: string;
+  /** Normalization-mapping decision for the raw name; omitted = untouched. */
+  standard_name?: string;
 }
 
 /** Pre-save rename check: the matched product and the merge plan to confirm.

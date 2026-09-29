@@ -312,3 +312,95 @@ func TestProductRepositoryStatsIncludeManualItems(t *testing.T) {
 	}
 	_ = reweID
 }
+
+func TestProductRepositoryUpdateLeavesLinesUntouched(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProductRepository(db)
+	_, milkID, _, _ := seedProductStats(t, db)
+
+	seedCat := func(name string) int64 {
+		t.Helper()
+		res, err := db.Exec(`INSERT INTO categories (name, created_at) VALUES (?, 100)`, name)
+		if err != nil {
+			t.Fatalf("seed category %q: %v", name, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("seed category id: %v", err)
+		}
+		return id
+	}
+	drinksCat, groceryCat := seedCat("Drinks"), seedCat("Grocery")
+
+	// A bill line carrying its own unit/category — the snapshot Update must
+	// not touch, unlike the seed lines (empty unit, NULL category).
+	res, err := db.Exec(`
+		INSERT INTO bills (store_id, market_name, date, currency, status, created_at, updated_at)
+		VALUES (NULL, 'Market', '2026-06-10', 'EUR', 'accepted', 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed bill: %v", err)
+	}
+	billID, _ := res.LastInsertId()
+	res, err = db.Exec(`
+		INSERT INTO bill_items (bill_id, product_id, name, unit, category_id, unit_price_cents, line_total_cents)
+		VALUES (?, ?, 'Mlk 1L', 'ml', ?, 111, 111)`,
+		billID, milkID, drinksCat)
+	if err != nil {
+		t.Fatalf("seed snapshot bill item: %v", err)
+	}
+	snapshotItemID, _ := res.LastInsertId()
+
+	// A manual purchase line for the same product.
+	res, err = db.Exec(`INSERT INTO accounts (name, type, currency, created_at, updated_at) VALUES ('Wallet', 'cash', 'EUR', 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	accountID, _ := res.LastInsertId()
+	seedManualPurchase(t, db, accountID, milkID, "2026-05-10", "EUR", 189)
+
+	updated, err := repo.Update(ctx, domain.Product{
+		ID: milkID, Name: "Milk Fresh", Unit: "l", CategoryID: &groceryCat,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Name != "Milk Fresh" || updated.Unit != "l" ||
+		updated.CategoryID == nil || *updated.CategoryID != groceryCat {
+		t.Fatalf("updated product = %+v; want Milk Fresh / l / grocery", updated)
+	}
+
+	// The products row changed, but every linked line kept its snapshot.
+	var bName, bUnit string
+	var bCat sql.NullInt64
+	if err := db.QueryRow(`
+		SELECT name, unit, category_id FROM bill_items WHERE id = ?`, snapshotItemID).
+		Scan(&bName, &bUnit, &bCat); err != nil {
+		t.Fatalf("scan bill item: %v", err)
+	}
+	if bName != "Mlk 1L" || bUnit != "ml" || !bCat.Valid || bCat.Int64 != drinksCat {
+		t.Fatalf("bill item = %q/%q/%v; want Mlk 1L / ml / drinks", bName, bUnit, bCat)
+	}
+	var rewrites int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM bill_items WHERE product_id = ? AND name = 'Milk Fresh'`,
+		milkID).Scan(&rewrites); err != nil {
+		t.Fatalf("count rewritten bill items: %v", err)
+	}
+	if rewrites != 0 {
+		t.Fatalf("%d bill items were rewritten to the product's new name", rewrites)
+	}
+	var tName string
+	if err := db.QueryRow(`
+		SELECT name FROM transaction_items WHERE product_id = ?`, milkID).Scan(&tName); err != nil {
+		t.Fatalf("scan transaction item: %v", err)
+	}
+	if tName != "Milk" {
+		t.Fatalf("transaction item name = %q; want the seeded snapshot %q", tName, "Milk")
+	}
+
+	// Unknown id: no row, no side effects.
+	if _, err := repo.Update(ctx, domain.Product{ID: 424242, Name: "Ghost"}); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("update unknown = %v; want ErrNotFound", err)
+	}
+}
