@@ -37,10 +37,9 @@ type ProductService struct {
 	// timeout bounds one AI call of the backfill job.
 	timeout time.Duration
 	// batchSize is the working batch size of the backfill job: it starts at
-	// normalizationBatch and halves whenever a call outlives timeout (slow
-	// local models need minutes to emit a full batch), so later batches of
-	// the same process fit the deadline. Only the job's single-flight run
-	// touches it.
+	// normalizationBatch and shrinks when a call outlives timeout (slow local
+	// models need minutes to emit a full batch), so later batches of the same
+	// process fit the deadline. Only the job's single-flight run touches it.
 	batchSize int
 	log       *slog.Logger
 }
@@ -609,8 +608,8 @@ func (s *ProductService) build(ctx context.Context, in ProductInput) (domain.Pro
 // normalizationBatch is the initial bound on one AI call of the backfill
 // job: small enough for any model's context window and for a single-call
 // retry, large enough that a fast connector covers the catalogue in a few
-// round trips. Slow local models that outlive the per-call deadline make
-// the job halve its working batch size instead of failing (see batchSize).
+// round trips. A call that outlives the per-call deadline shrinks the
+// working batch size instead of failing (see batchSize).
 const normalizationBatch = 40
 
 // ProductNormalizeResult is the GET /products/normalize response: does this
@@ -711,7 +710,14 @@ func (s *ProductService) RunNormalization(ctx context.Context) (domain.ProductNo
 // Names the model leaves unanswered stay unmapped, so they would come back in
 // the next batch forever (one AI call per round trip). Every raw text gets a
 // single ask per run: `asked` excludes them from later batches, and the job
-// finishes once everything still unmapped has already been asked.
+// finishes once everything still unmapped has already been asked. Timed-out
+// batches are the one exception: their names stay in `asked` but are also
+// remembered in `timedOutAt`, and once nothing else is left they are un-asked
+// for one more round at the halved size — see normalizeBatch for why an
+// immediate retry is pointless. Because every deferral shrinks batchSize
+// below the failed size, and the re-ask runs at that smaller size, the
+// recursion bottoms out: a timeout on a single-name batch fails the run with
+// actionable advice instead of burning a deadline per remaining name.
 func (s *ProductService) runNormalizationJob() {
 	ctx := context.Background()
 	job, err := s.mappings.GetJob(ctx)
@@ -720,16 +726,45 @@ func (s *ProductService) runNormalizationJob() {
 		return
 	}
 	asked := make(map[string]bool)
+	// Raw names (lower-cased, the `asked` keys) whose batch outlived the
+	// per-call deadline, mapped to the batch size that timed out. Entries
+	// are dropped when their names are picked up again for the re-ask.
+	timedOutAt := make(map[string]int)
 	var lastErr error
 	for {
-		remaining, err := s.mappings.CountUnmappedProductNames(ctx)
+		// The limit is widened by len(asked) so that asked rows within the
+		// fetch window still leave a full fresh batch behind them. It
+		// follows the working batch size, which shrinks when a call outlives
+		// the per-call deadline.
+		names, err := s.mappings.UnmappedProductNames(ctx, s.batchSize+len(asked))
 		if err != nil {
 			s.failNormalizationJob(ctx, job, err)
 			return
 		}
-		// Nothing left, or everything left was asked (and skipped by the
-		// model) in an earlier batch of this run.
-		if remaining == 0 || remaining <= int64(len(asked)) {
+		var fresh []domain.Product
+		for _, p := range names {
+			if asked[strings.ToLower(p.Name)] {
+				continue
+			}
+			fresh = append(fresh, p)
+		}
+		// Everything still unmapped was asked (and skipped by the model) in
+		// an earlier batch of this run — except names whose batch timed
+		// out: they get one more chance at the halved size, now that the
+		// rest of the run gave the model time to finish the abandoned
+		// generations. Names beyond the fetch window keep their deferral
+		// and are re-offered on the next pass.
+		if len(fresh) == 0 {
+			deferred := false
+			for key, size := range timedOutAt {
+				if size > s.batchSize {
+					delete(asked, key)
+					deferred = true
+				}
+			}
+			if deferred {
+				continue
+			}
 			if lastErr != nil {
 				s.failNormalizationJob(ctx, job, lastErr)
 				return
@@ -743,30 +778,59 @@ func (s *ProductService) runNormalizationJob() {
 				"processed", job.ProcessedNames, "mapped", job.MappedNames)
 			return
 		}
-		// Already-asked names sort ahead of fresh ones (id order), so widen
-		// the limit to keep full fresh batches coming through. The limit
-		// follows the working batch size, which halves when the model is
-		// slower than the per-call deadline.
-		names, err := s.mappings.UnmappedProductNames(ctx, s.batchSize+len(asked))
-		if err != nil {
-			s.failNormalizationJob(ctx, job, err)
-			return
-		}
-		var fresh []domain.Product
-		for _, p := range names {
-			key := strings.ToLower(p.Name)
-			if asked[key] {
+		// After a deferral sweep the fetch can return more fresh names than
+		// batchSize, so feed the AI in chunks of the working size. Names are
+		// marked asked per chunk: a chunk that is abandoned leaves the rest
+		// of the window fresh for the next fetch.
+		for len(fresh) > 0 {
+			size := s.batchSize
+			if size > len(fresh) {
+				size = len(fresh)
+			}
+			chunk := fresh[:size]
+			for _, p := range chunk {
+				key := strings.ToLower(p.Name)
+				asked[key] = true
+				delete(timedOutAt, key)
+			}
+			err := s.normalizeBatch(ctx, chunk, &job)
+			if err == nil {
+				fresh = fresh[size:]
 				continue
 			}
-			asked[key] = true
-			fresh = append(fresh, p)
-		}
-		if err := s.normalizeBatch(ctx, fresh, &job); err != nil {
+			// A call that outlives the deadline is deferred, not retried
+			// here: the model server keeps generating the abandoned
+			// request, and an immediate retry of any size queues behind it
+			// and burns its own full deadline just waiting. Halve the
+			// working size and let the rest of the run drain the queue;
+			// the deferred names are re-asked at the end of the run.
+			if errors.Is(err, context.DeadlineExceeded) {
+				if len(chunk) <= 1 {
+					// Nothing left to shrink: the model cannot finish a
+					// single name within the deadline (or is still busy
+					// with an enormous earlier request).
+					s.failNormalizationJob(ctx, job, fmt.Errorf(
+						"AI call timed out after %s even for a single name — the model may still be busy finishing an earlier request (wait a moment and run the analysis again), or it is too slow for LLM_TIMEOUT: use a faster model or raise LLM_TIMEOUT: %w",
+						s.timeout, err))
+					return
+				}
+				for _, p := range chunk {
+					timedOutAt[strings.ToLower(p.Name)] = len(chunk)
+				}
+				s.batchSize = len(chunk) / 2
+				if s.batchSize < 1 {
+					s.batchSize = 1
+				}
+				s.log.Warn("product normalization call timed out, batch deferred to the end of the run",
+					"names", len(chunk), "timeout", s.timeout, "batch_size", s.batchSize, "error", err)
+				break
+			}
 			// Not fatal: keep draining, remember the error for the final
 			// status. Re-running the job retries the names this batch held.
 			lastErr = err
 			s.log.Warn("product normalization batch failed, continuing with the next",
-				"names", len(fresh), "error", err)
+				"names", len(chunk), "error", err)
+			fresh = fresh[size:]
 		}
 	}
 }
@@ -775,22 +839,14 @@ func (s *ProductService) runNormalizationJob() {
 // records the results (source 'ai'). Progress counters are persisted after
 // every successful call so the status endpoint can show live progress.
 //
-// A call that outlives the per-call deadline — a slow local model can take
-// longer to emit a full batch than a receipt read — is retried on half the
-// batch, down to a single name, and the halved size is remembered for the
-// rest of the process. Only a timeout is retried; a batch whose single
-// remaining name still times out fails the job with an actionable error.
+// A call that outlives the per-call deadline is NOT retried here, unlike what
+// an interactive flow would do: a local model keeps generating the abandoned
+// request server-side, so an immediate retry — of any size, down to a single
+// name — queues behind it and burns its own full deadline just waiting (the
+// "timed out even for a single name" cascade). The caller defers the batch to
+// the end of the run and halves the working size, so the retry happens after
+// the model has had the rest of the run to drain the queue.
 func (s *ProductService) normalizeBatch(ctx context.Context, products []domain.Product, job *domain.ProductNormalizationJob) error {
-	// A batch larger than the working size is split up front: a slow model
-	// already taught the job the deadline-fit size (the second half of a
-	// timeout-driven split), so don't burn another timeout on it.
-	if len(products) > s.batchSize && len(products) > 1 {
-		mid := len(products) / 2
-		if err := s.normalizeBatch(ctx, products[:mid], job); err != nil {
-			return err
-		}
-		return s.normalizeBatch(ctx, products[mid:], job)
-	}
 	provider, err := s.providers.DefaultBillProvider(ctx)
 	if err != nil {
 		return err
@@ -801,21 +857,10 @@ func (s *ProductService) normalizeBatch(ctx context.Context, products []domain.P
 	}
 
 	answers, err := s.normalizeCall(ctx, provider, prompt, products)
-	if err == nil {
-		return s.recordNormalized(ctx, products, answers, job)
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
+	if err != nil {
 		return err
 	}
-	if len(products) == 1 {
-		return fmt.Errorf("AI call timed out after %s even for a single name — use a faster model or raise LLM_TIMEOUT: %w", s.timeout, err)
-	}
-	mid := len(products) / 2
-	s.batchSize = mid
-	if err := s.normalizeBatch(ctx, products[:mid], job); err != nil {
-		return err
-	}
-	return s.normalizeBatch(ctx, products[mid:], job)
+	return s.recordNormalized(ctx, products, answers, job)
 }
 
 // normalizeCall runs one prompt-only AI call for the given products and

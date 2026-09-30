@@ -841,8 +841,9 @@ func TestProductServiceNormalizationHalvesSlowBatches(t *testing.T) {
 	if st.ProcessedNames != 8 || st.MappedNames != 8 || st.Error != "" {
 		t.Fatalf("finished job = %+v, want 8/8 without error", st)
 	}
-	// The over-deadline batches (8, 4) were retried on halves; the working
-	// size is remembered for the rest of the process.
+	// The over-deadline batches (8, 4) were deferred and re-asked at the
+	// halved size once the rest of the run was drained; the working size is
+	// remembered for the rest of the process.
 	if svc.batchSize != 2 {
 		t.Fatalf("learned batch size = %d, want 2", svc.batchSize)
 	}
@@ -876,6 +877,61 @@ func TestProductServiceNormalizationFailsWhenEvenOneNameTimesOut(t *testing.T) {
 	}
 	if !strings.Contains(st.Error, "LLM_TIMEOUT") || !strings.Contains(st.Error, "timed out") {
 		t.Fatalf("job error = %q, want the actionable timeout advice", st.Error)
+	}
+}
+
+func TestProductServiceNormalizationDefersTimedOutBatches(t *testing.T) {
+	mappings := newFakeProductMappingStore()
+	for i := 1; i <= 45; i++ {
+		mappings.products = append(mappings.products,
+			domain.Product{ID: int64(i), Name: fmt.Sprintf("PRD %d", i)})
+	}
+	// A model stuck on the big first batch (say, still generating an
+	// abandoned request server-side): anything over 30 names times out,
+	// smaller batches answer. An immediate retry of the timed-out batch
+	// would time out too — it must be deferred while fresh names drain.
+	normalizer := &fakeTextNormalizer{fn: func(_ context.Context, _ domain.AIProvider, prompt string) ([]domain.ProductNameMapping, error) {
+		names := promptNames(t, prompt)
+		if len(names) > 30 {
+			return nil, context.DeadlineExceeded
+		}
+		out := make([]domain.ProductNameMapping, len(names))
+		for i, name := range names {
+			out[i] = domain.ProductNameMapping{RawName: name, StandardName: name + " Std", GenericName: "Family"}
+		}
+		return out, nil
+	}}
+	svc := newNormalizationJobService(t, mappings, normalizer)
+	ctx := context.Background()
+
+	if _, err := svc.RunNormalization(ctx); err != nil {
+		t.Fatalf("RunNormalization: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st, err := svc.NormalizationStatus(ctx)
+		return err == nil && st.Status == domain.ProductNormalizationDone
+	})
+	st, err := svc.NormalizationStatus(ctx)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.ProcessedNames != 45 || st.MappedNames != 45 || st.Error != "" {
+		t.Fatalf("finished job = %+v, want 45/45 without error", st)
+	}
+	if len(normalizer.prompts) != 5 {
+		t.Fatalf("normalizer calls = %d, want 40-timeout, 5, 20, 5, 15", len(normalizer.prompts))
+	}
+	// The call right after the timeout carried the five FRESH names, not a
+	// retry of the timed-out batch — the deferred names only come back once
+	// the rest of the run has drained (calls 3 and 4).
+	if got := promptNames(t, normalizer.prompts[1]); len(got) != 5 || got[0] != "PRD 41" {
+		t.Fatalf("second call names = %v, want the five fresh names starting at PRD 41", got)
+	}
+	if got := len(promptNames(t, normalizer.prompts[2])); got != 20 {
+		t.Fatalf("third call held %d names, want the deferred batch retried at the halved size 20", got)
+	}
+	if svc.batchSize != 20 {
+		t.Fatalf("learned batch size = %d, want 20", svc.batchSize)
 	}
 }
 

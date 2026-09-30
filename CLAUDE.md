@@ -259,8 +259,12 @@ backfill job (`POST /products/normalization/run`, status on
 product names with no mapping — or a mapping with no recorded family — to the
 `default_for_bills` connector in batches of 40
 under the `product_normalization` prompt key (a batch that outlives the
-per-call `LLM_TIMEOUT` — slow local models — is retried on halves down to a
-single name, and the working batch size is remembered for the process); for
+per-call `LLM_TIMEOUT` — slow local models — is deferred, not retried
+immediately: the model server keeps generating the abandoned request, so an
+instant retry of any size queues behind it and times out too — its names are
+re-asked at the halved size once the rest of the run has drained the queue,
+a timeout on a single-name batch fails the run with actionable advice, and
+the working batch size is remembered for the process); for
 existing mappings it only gap-fills the family, preserving the reviewed
 standard name/category/source —
 products are never modified,
