@@ -309,9 +309,9 @@ export interface Bill {
   card_last_digits?: string;
   currency: string;
   items_subtotal_cents: number;
-  discount_cents: number;
+  discount_cents: number; // receipt-wide discount, subtracted from the item sum in the total
   vat_cents: number;
-  total_cents: number; // computed: sum of lines (VAT included in prices)
+  total_cents: number; // computed: sum of lines − global discount (VAT included in prices)
   printed_total_cents: number; // as printed on the receipt (warning when ≠ total_cents)
   status: BillStatus;
   extracted_by: string;
@@ -419,9 +419,9 @@ export interface BillDraft {
   currency?: string;
   items: BillDraftItem[];
   items_subtotal_cents: number; // sum of the line totals
-  discount_cents: number; // informational
+  discount_cents: number; // receipt-wide discount, subtracted from the item sum in the total
   vat_cents: number;
-  total_cents: number; // computed: sum of lines (VAT included in prices)
+  total_cents: number; // computed: sum of lines − global discount (VAT included in prices)
   printed_total_cents: number; // as printed on the receipt
   budget_id?: number | null; // budget the whole bill counts toward
 }
@@ -506,7 +506,7 @@ export interface BillConfirmInput {
   payment_method: string;
   card_last_digits: string;
   currency: string;
-  discount_cents: number;
+  discount_cents: number; // receipt-wide discount, subtracted from the item sum in the total
   vat_cents: number;
   printed_total_cents: number; // carried through for the mismatch warning
   budget_id?: number; // optional budget this bill counts toward

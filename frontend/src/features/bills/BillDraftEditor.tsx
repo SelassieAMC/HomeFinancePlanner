@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Store } from '../../types/domain';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Product, Store } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
+import { productsApi } from '../../api/products';
 import {
   Button,
   CategorySelect,
+  ProductAutocomplete,
   Spinner,
   ErrorMessage,
   EmptyState,
@@ -122,6 +124,78 @@ function itemIcon(categoryId: number | null | undefined, categories: Category[])
   return cat?.icon || '🛒';
 }
 
+/**
+ * Money input with a ± sign-flip button for fields where negatives are
+ * legitimate (deposit/refund unit prices — money back). Phone decimal
+ * keypads (inputMode="decimal") have no minus key, so those fields flip the
+ * sign by tapping the toggle: it parses the field's current value, flips
+ * the sign, commits and rewrites the uncontrolled input's DOM value to
+ * match. Fields that are positive by nature (a discount is inherently a
+ * subtraction of the main price) pass negative={false} and get only the
+ * shared reject-revert semantics: an empty field commits 0 (clearing zeroes
+ * the amount); other rejected input (unparseable text, negatives) reverts
+ * the DOM value instead of leaving stale text behind.
+ */
+function SignedMoneyInput({
+  valueCents,
+  negative,
+  ariaLabel,
+  onCommit,
+}: {
+  valueCents: number;
+  /** Negatives are legitimate on this field (deposit/refund lines). */
+  negative: boolean;
+  ariaLabel: string;
+  onCommit: (cents: number) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function revert() {
+    if (inputRef.current) inputRef.current.value = (valueCents / 100).toFixed(2);
+  }
+
+  function flip() {
+    const input = inputRef.current;
+    if (!input) return;
+    const cents = dollarsToCents(input.value);
+    if (!Number.isFinite(cents)) return;
+    const flipped = -cents;
+    input.value = (flipped / 100).toFixed(2);
+    if (flipped !== valueCents) onCommit(flipped);
+  }
+
+  return (
+    <div className="money-input-row">
+      <input
+        ref={inputRef}
+        inputMode="decimal"
+        defaultValue={(valueCents / 100).toFixed(2)}
+        aria-label={ariaLabel}
+        onBlur={(e) => {
+          const raw = e.target.value.trim();
+          const cents = raw === '' ? 0 : dollarsToCents(raw);
+          if (!Number.isFinite(cents) || (cents < 0 && !negative)) {
+            revert();
+            return;
+          }
+          if (cents !== valueCents) onCommit(cents);
+        }}
+      />
+      {negative && (
+        <button
+          type="button"
+          className="sign-toggle"
+          onClick={flip}
+          aria-label={`Flip the sign of ${ariaLabel}`}
+          title="Flip sign (phone keypads have no minus key)"
+        >
+          ±
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Dropdown label for a budget: its category (icon + name) + amount. */
 function budgetLabel(b: Budget, categories: Category[]): string {
   const cat = categories.find((c) => c.id === b.category_id);
@@ -173,9 +247,11 @@ export function BillDraftEditor({
     : draft.items;
 
   // Everything money-wise is computed live from the edited lines. VAT is
-  // already included in each item's price, so the total is just the sum.
+  // already included in each item's price, so it is never added again; the
+  // bill-level discount is the receipt-wide rebate printed after the lines
+  // (e.g. "10% Rabatt") and IS subtracted from the item sum.
   const linesSum = draft.items.reduce((sum, it) => sum + it.line_total_cents, 0);
-  const computedTotal = linesSum;
+  const computedTotal = linesSum - draft.discount_cents;
   const printed = draft.printed_total_cents;
   const mismatch = printed > 0 && printed !== computedTotal;
   const savings =
@@ -199,8 +275,22 @@ export function BillDraftEditor({
     [stores, draft.market_name],
   );
 
+  // Latest draft for async callbacks and synchronous multi-part edits: the
+  // draft lives in the page's state, so the props closure goes stale between
+  // two onChange calls in one event — picking a product fires onValueChange
+  // (the name) and then onPick (the product info), and the second update must
+  // build on the first, not on the pre-pick draft.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  /** Commits the next draft and keeps draftRef ahead of the re-render. */
+  function updateDraft(next: BillDraft) {
+    draftRef.current = next;
+    onChange(next);
+  }
+
   function updateHeader(patch: Partial<BillDraft>) {
-    onChange({ ...draft, ...patch });
+    updateDraft({ ...draftRef.current, ...patch });
   }
 
   // The default wallet account, matched like the backend's wallet convention:
@@ -242,9 +332,9 @@ export function BillDraftEditor({
   }
 
   function updateItem(id: number, patch: Partial<BillDraftItem>) {
-    onChange({
-      ...draft,
-      items: draft.items.map((it) => {
+    updateDraft({
+      ...draftRef.current,
+      items: draftRef.current.items.map((it) => {
         if (it.id !== id) return it;
         const next = { ...it, ...patch };
         // "Leergut" lines are bottle/crate deposit returns — money back, so
@@ -259,9 +349,67 @@ export function BillDraftEditor({
     });
   }
 
+  // Per item id, the article name a normalization lookup already ran for —
+  // bill items live in the page-held draft, so the guard cannot ride on the
+  // line object like TransactionForm's normalizedFor.
+  const normalizedForRef = useRef(new Map<number, string>());
+
+  /**
+   * Picking a catalogue product fills the line's product info from it.
+   * Prices, quantity and the discount stay as printed on the receipt. A
+   * null pick (Enter with no suggestions) keeps the typed name — the
+   * product is find-or-created on confirm.
+   */
+  function fillFromProduct(it: BillDraftItem, p: Product | null) {
+    if (!p) return;
+    updateItem(it.id, {
+      // The article input shows the picked product's name, not the
+      // partially typed text.
+      name: p.name,
+      // Identity fallback like everywhere else; an empty generic stays
+      // empty ("no broader family known" is a real state).
+      standard_name: p.standard_name || p.name,
+      generic_name: p.generic_name || '',
+      // Keep the line's existing value when the product has none.
+      brand: p.brand || it.brand,
+      unit: p.unit || it.unit,
+      category_id: p.category_id ?? it.category_id,
+    });
+  }
+
+  /**
+   * Name-mapping memory lookup when the article field is left: fills the
+   * standardized/generic name (only when empty — the AI suggestion or a
+   * user edit wins) and the category (only when unset) of a freely-typed
+   * name, mirroring the manual-transaction form. Deposit/return lines are
+   * never normalized and the typed name is never rewritten; failures are
+   * best-effort and leave the fields as typed.
+   */
+  async function lookupNormalization(it: BillDraftItem) {
+    const name = it.name.trim();
+    if (!name || it.is_return || name.toLowerCase().includes('leergut')) return;
+    if (normalizedForRef.current.get(it.id) === name) return;
+    normalizedForRef.current.set(it.id, name);
+    try {
+      const res = await productsApi.normalizeName(name);
+      if (!res.matched) return;
+      // Apply only while the line still carries the looked-up name — it may
+      // have been edited (or picked from the autocomplete) in the meantime.
+      const current = draftRef.current.items.find((i) => i.id === it.id);
+      if (!current || current.is_return || current.name.trim() !== name) return;
+      updateItem(it.id, {
+        standard_name: current.standard_name || res.standard_name,
+        generic_name: current.generic_name || res.generic_name,
+        category_id: current.category_id ?? (res.category_id ?? null),
+      });
+    } catch {
+      /* Best-effort fill; failures just leave the fields as typed. */
+    }
+  }
+
   /** Drops a line from the draft (wrong extraction, duplicated, …). */
   function removeItem(id: number) {
-    onChange({ ...draft, items: draft.items.filter((it) => it.id !== id) });
+    updateDraft({ ...draftRef.current, items: draftRef.current.items.filter((it) => it.id !== id) });
     if (addedItemId === id) setAddedItemId(null);
   }
 
@@ -272,10 +420,10 @@ export function BillDraftEditor({
    */
   function addItem() {
     const id = draft.items.reduce((max, it) => Math.max(max, it.id), 0) + 1;
-    onChange({
-      ...draft,
+    updateDraft({
+      ...draftRef.current,
       items: [
-        ...draft.items,
+        ...draftRef.current.items,
         {
           id,
           name: '',
@@ -510,7 +658,7 @@ export function BillDraftEditor({
         <div className="bill-warning">
           ⚠️ The calculated total ({formatCents(computedTotal, currency)}) does not
           match the amount printed on the receipt ({formatCents(printed, currency)}).
-          Check the article lines or the VAT below.
+          Check the article lines, the market discount or the VAT below.
         </div>
       )}
 
@@ -589,17 +737,14 @@ export function BillDraftEditor({
               <div className="item-detail">
                 <div className="item-field">
                   <span>Article</span>
-                  <input
-                    className="cell-input cell-input-name"
-                    defaultValue={it.name}
+                  <ProductAutocomplete
+                    value={it.name}
+                    onValueChange={(v) => updateItem(it.id, { name: v })}
+                    onPick={(p) => fillFromProduct(it, p)}
+                    onBlur={() => void lookupNormalization(it)}
+                    currency={currency}
                     autoFocus={addedItemId === it.id}
-                    placeholder="Article name"
-                    aria-label="Article name"
-                    onBlur={(e) =>
-                      e.target.value.trim() !== it.name &&
-                      e.target.value.trim() !== '' &&
-                      updateItem(it.id, { name: e.target.value.trim() })
-                    }
+                    ariaLabel="Article name"
                   />
                 </div>
                 {!it.is_return && (
@@ -609,6 +754,7 @@ export function BillDraftEditor({
                       <span className="item-field-note">on receipt: {it.name || '—'}</span>
                     </span>
                     <input
+                      key={`${it.id}:${it.standard_name || it.name}`}
                       defaultValue={it.standard_name || it.name}
                       placeholder="Human-readable name"
                       aria-label={`Standardized name for ${it.name}`}
@@ -625,6 +771,7 @@ export function BillDraftEditor({
                   <div className="item-field">
                     <span>Generic product</span>
                     <input
+                      key={`${it.id}:${it.generic_name ?? ''}`}
                       defaultValue={it.generic_name || ''}
                       placeholder="e.g. Frozen Shaped Potatoes"
                       aria-label={`Generic product family for ${it.name}`}
@@ -637,6 +784,17 @@ export function BillDraftEditor({
                     />
                   </div>
                 )}
+                <div className="item-field">
+                  <span>Category</span>
+                  <CategorySelect
+                    categories={categories}
+                    kind="product"
+                    value={it.category_id ?? null}
+                    ariaLabel={`Category for ${it.name}`}
+                    emptyLabel="Unclassified"
+                    onChange={(category_id) => updateItem(it.id, { category_id })}
+                  />
+                </div>
                 <div className="item-field-grid">
                   <div className="item-field">
                     <span>Brand</span>
@@ -703,39 +861,22 @@ export function BillDraftEditor({
                 <div className="item-field-grid">
                   <div className="item-field">
                     <span>Unit price</span>
-                    <input
-                      inputMode="decimal"
-                      defaultValue={(it.unit_price_cents / 100).toFixed(2)}
-                      aria-label={`Unit price for ${it.name}`}
-                      onBlur={(e) => {
-                        const cents = dollarsToCents(e.target.value);
-                        // Deposit/refund lines may have negative prices.
-                        const allowed =
-                          Number.isFinite(cents) &&
-                          (cents >= 0 || negativeAllowed(it)) &&
-                          cents !== it.unit_price_cents;
-                        if (allowed) {
-                          updateItem(it.id, { unit_price_cents: cents });
-                        } else {
-                          e.target.value = (it.unit_price_cents / 100).toFixed(2);
-                        }
-                      }}
+                    <SignedMoneyInput
+                      valueCents={it.unit_price_cents}
+                      negative={negativeAllowed(it)}
+                      ariaLabel={`Unit price for ${it.name}`}
+                      onCommit={(cents) => updateItem(it.id, { unit_price_cents: cents })}
                     />
                   </div>
                   <div className="item-field">
                     <span>Discount</span>
-                    <input
-                      inputMode="decimal"
-                      defaultValue={(it.discount_cents / 100).toFixed(2)}
-                      aria-label={`Discount for ${it.name}`}
-                      onBlur={(e) => {
-                        const cents = dollarsToCents(e.target.value) || 0;
-                        // Deposit/refund lines may carry negative discounts
-                        // (e.g. a printed rebate refund).
-                        if ((cents >= 0 || negativeAllowed(it)) && cents !== it.discount_cents) {
-                          updateItem(it.id, { discount_cents: cents });
-                        }
-                      }}
+                    {/* Positive by nature — a discount is a subtraction of the
+                        main price, so no ± (even on deposit lines). */}
+                    <SignedMoneyInput
+                      valueCents={it.discount_cents}
+                      negative={false}
+                      ariaLabel={`Discount for ${it.name}`}
+                      onCommit={(cents) => updateItem(it.id, { discount_cents: cents })}
                     />
                   </div>
                   <div className="item-field">
@@ -744,17 +885,6 @@ export function BillDraftEditor({
                       {formatCents(it.line_total_cents, currency)}
                     </strong>
                   </div>
-                </div>
-                <div className="item-field">
-                  <span>Category</span>
-                  <CategorySelect
-                    categories={categories}
-                    kind="product"
-                    value={it.category_id ?? null}
-                    ariaLabel={`Category for ${it.name}`}
-                    emptyLabel="Unclassified"
-                    onChange={(category_id) => updateItem(it.id, { category_id })}
-                  />
                 </div>
                 <div className="item-field">
                   <span>Budget</span>
@@ -794,10 +924,16 @@ export function BillDraftEditor({
             <input
               inputMode="decimal"
               defaultValue={(draft.discount_cents / 100).toFixed(2)}
-              aria-label="Market discount"
+              aria-label="Market discount (receipt-wide, reduces the total)"
               onBlur={(e) => {
-                const cents = dollarsToCents(e.target.value) || 0;
-                if (cents >= 0 && cents !== draft.discount_cents) {
+                const raw = e.target.value.trim();
+                const cents = raw === '' ? 0 : dollarsToCents(raw);
+                // The receipt-wide discount is always a positive reduction —
+                // rejected input reverts the DOM value instead of leaving
+                // stale text behind.
+                if (!Number.isFinite(cents) || cents < 0) {
+                  e.target.value = (draft.discount_cents / 100).toFixed(2);
+                } else if (cents !== draft.discount_cents) {
                   updateHeader({ discount_cents: cents });
                 }
               }}
@@ -810,8 +946,11 @@ export function BillDraftEditor({
               defaultValue={(draft.vat_cents / 100).toFixed(2)}
               aria-label="Total VAT/IVA"
               onBlur={(e) => {
-                const cents = dollarsToCents(e.target.value) || 0;
-                if (cents >= 0 && cents !== draft.vat_cents) {
+                const raw = e.target.value.trim();
+                const cents = raw === '' ? 0 : dollarsToCents(raw);
+                if (!Number.isFinite(cents) || cents < 0) {
+                  e.target.value = (draft.vat_cents / 100).toFixed(2);
+                } else if (cents !== draft.vat_cents) {
                   updateHeader({ vat_cents: cents });
                 }
               }}

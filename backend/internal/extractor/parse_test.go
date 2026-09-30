@@ -52,10 +52,10 @@ func TestParseBillJSON_PinnedSchema(t *testing.T) {
 	if draft.Items[1].Quantity != 1 { // missing quantity defaults to 1
 		t.Errorf("default quantity: %v", draft.Items[1].Quantity)
 	}
-	// The total is the sum of the lines (VAT is already included in the item
-	// prices and is informational only); the printed value is kept separately
-	// for the mismatch warning.
-	if draft.ItemsSubtotalCents != 500 || draft.DiscountCents != 50 || draft.VATCents != 45 || draft.TotalCents != 500 {
+	// The total is the sum of the lines minus the bill-level discount (VAT is
+	// already included in the item prices and is informational only); the
+	// printed value is kept separately for the mismatch warning.
+	if draft.ItemsSubtotalCents != 500 || draft.DiscountCents != 50 || draft.VATCents != 45 || draft.TotalCents != 450 {
 		t.Errorf("totals: subtotal=%d discount=%d vat=%d total=%d",
 			draft.ItemsSubtotalCents, draft.DiscountCents, draft.VATCents, draft.TotalCents)
 	}
@@ -103,8 +103,8 @@ func TestParseBillJSON_StripsFencesAndProse(t *testing.T) {
 }
 
 func TestParseBillJSON_FillsMissingTotal(t *testing.T) {
-	// Without a printed total the computed total (sum of lines) is used, so
-	// no mismatch warning appears.
+	// Without a printed total the computed total (sum of lines minus the
+	// global discount) is used, so no mismatch warning appears.
 	raw := `{"market_name":"M","date":"2026-05-03","payment_method":"card",
 		"items":[{"name":"Milk","quantity":2,"unit_price":5.00,"line_total":10.00}],
 		"discount_total":1.00,"vat_total":0.81}`
@@ -112,14 +112,39 @@ func TestParseBillJSON_FillsMissingTotal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draft.TotalCents != 1000 {
+	if draft.TotalCents != 900 {
 		t.Errorf("derived total: %d", draft.TotalCents)
 	}
-	if draft.PrintedTotalCents != 1000 { // no printed total → equals computed, no warning
+	if draft.PrintedTotalCents != 900 { // no printed total → equals computed, no warning
 		t.Errorf("printed fallback: %d", draft.PrintedTotalCents)
 	}
 	if draft.ItemsSubtotalCents != 1000 {
 		t.Errorf("line sum subtotal: %d", draft.ItemsSubtotalCents)
+	}
+}
+
+// A receipt with a receipt-wide discount (e.g. "10% Rabatt" printed after the
+// article lines) reconciles: the item sum minus the global discount equals the
+// printed total, so no false mismatch warning appears.
+func TestParseBillJSON_GlobalDiscountReconciles(t *testing.T) {
+	raw := `{"market_name":"REWE","date":"2026-05-03","payment_method":"card",
+		"items":[
+			{"name":"Cola 1.5L","quantity":1,"unit_price":5.00,"line_total":5.00},
+			{"name":"Chips","quantity":1,"unit_price":5.00,"line_total":5.00}
+		],
+		"discount_total":1.00,"total_paid":9.00}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.ItemsSubtotalCents != 1000 || draft.DiscountCents != 100 {
+		t.Errorf("subtotal=%d discount=%d (want 1000, 100)", draft.ItemsSubtotalCents, draft.DiscountCents)
+	}
+	if draft.TotalCents != 900 {
+		t.Errorf("computed total: %d (want 900 — item sum minus the global discount)", draft.TotalCents)
+	}
+	if draft.PrintedTotalCents != 900 {
+		t.Errorf("printed total: %d (want 900)", draft.PrintedTotalCents)
 	}
 }
 

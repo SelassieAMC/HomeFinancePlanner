@@ -794,7 +794,8 @@ func (s *BillService) resolveProvider(ctx context.Context, providerID string) (d
 }
 
 // buildBill validates the confirmed draft and turns it into a Bill ready for
-// persistence. The total is always computed from the edited lines + VAT; the
+// persistence. The total is always computed from the edited lines minus the
+// bill-level global discount (VAT is already included in the prices); the
 // receipt's printed amount is carried through for the mismatch warning.
 func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput, source *billScanSource) (domain.Bill, error) {
 	if in.VATCents < 0 || in.DiscountCents < 0 || in.PrintedTotalCents < 0 {
@@ -890,9 +891,11 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 	}
 
 	// The total is never taken from the client: it is always recomputed as the
-	// sum of the lines (VAT is already included in each item's price, so VAT
-	// must not be added again). Card digits imply card payment.
-	total := itemsSubtotal
+	// sum of the lines minus the bill-level discount — the receipt-wide rebate
+	// printed after the article lines (e.g. "10% Rabatt"), which the lines
+	// themselves do not carry. VAT is already included in each item's price,
+	// so VAT must not be added again. Card digits imply card payment.
+	total := itemsSubtotal - in.DiscountCents
 	printed := in.PrintedTotalCents
 	if printed <= 0 {
 		printed = total // nothing printed → no mismatch warning

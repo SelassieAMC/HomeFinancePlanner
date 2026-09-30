@@ -196,12 +196,14 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 	if wire.VATTotal != nil {
 		draft.VATCents = toCents(*wire.VATTotal)
 	}
-	// VAT is already included in each item's price, so the total is simply the
-	// sum of the lines — VAT is informational and must never be added again.
+	// VAT is already included in each item's price, so the total is the sum of
+	// the lines minus the bill-level discount — VAT is informational and must
+	// never be added again, while the receipt-wide discount (e.g. "10%
+	// Rabatt") printed after the lines is a real reduction of the paid amount.
 	// The amount printed on the receipt is kept separately so the UI can warn
 	// when the computed value does not match it (a sign of a mis-read line).
 	draft.ItemsSubtotalCents = toCents(itemsSubtotal)
-	draft.TotalCents = draft.ItemsSubtotalCents
+	draft.TotalCents = draft.ItemsSubtotalCents - draft.DiscountCents
 	if wire.TotalPaid != nil {
 		draft.PrintedTotalCents = toCents(*wire.TotalPaid)
 	} else {

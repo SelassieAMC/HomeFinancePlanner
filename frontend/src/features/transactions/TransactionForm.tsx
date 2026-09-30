@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Account, Category, Store, Transaction, TransactionInput, TransactionKind } from '../../types/domain';
 import { productsApi } from '../../api/products';
 import { dollarsToCents, formatCents } from '../../lib/money';
-import { categoriesBySection } from '../../lib/categories';
 import {
   Button,
   CategorySelect,
@@ -271,18 +270,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             </option>
           ))}
         </select>
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} aria-label="Category">
-          <option value="">Category…</option>
-          {categoriesBySection(categories, 'expense').map(([section, cats]) => (
-            <optgroup key={section} label={section}>
-              {cats.map((c) => (
-                <option key={c.id} value={c.id} title={c.description}>
-                  {c.icon ? `${c.icon} ${c.name}` : c.name}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+        <CategorySelect
+          categories={categories}
+          kind="expense"
+          value={categoryId ? Number(categoryId) : null}
+          onChange={(id) => setCategoryId(id ? String(id) : '')}
+          ariaLabel="Category"
+          emptyLabel="Category…"
+        />
       </div>
       <div className="form-row">
         <input

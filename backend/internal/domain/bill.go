@@ -63,7 +63,7 @@ type Bill struct {
 	ItemsSubtotalCents int64      `json:"items_subtotal_cents"`
 	DiscountCents      int64      `json:"discount_cents"`
 	VATCents           int64      `json:"vat_cents"`
-	TotalCents         int64      `json:"total_cents"`         // computed: sum of lines (VAT already included in prices)
+	TotalCents         int64      `json:"total_cents"`         // computed: sum of lines − global discount (VAT already included in prices)
 	PrintedTotalCents  int64      `json:"printed_total_cents"` // as printed on the receipt (warning when ≠ TotalCents)
 	Status             BillStatus `json:"status"`
 	ImagePath          string     `json:"image_path,omitempty"`   // server-side path of part 1; not exposed
@@ -125,7 +125,8 @@ type BillItemDraft struct {
 
 // BillDraft is the normalized extraction result, held in memory until the user
 // confirms it — drafts are never persisted. TotalCents is always computed from
-// the lines (VAT included in prices); PrintedTotalCents is the amount printed on the receipt and
+// the lines minus the global discount (VAT included in prices);
+// PrintedTotalCents is the amount printed on the receipt and
 // drives the "calculated total does not match the receipt" warning.
 type BillDraft struct {
 	MarketName         string          `json:"market_name"`
@@ -135,9 +136,9 @@ type BillDraft struct {
 	Currency           string          `json:"currency,omitempty"`
 	Items              []BillItemDraft `json:"items"`
 	ItemsSubtotalCents int64           `json:"items_subtotal_cents"` // sum of the line totals
-	DiscountCents      int64           `json:"discount_cents"`       // informational only
+	DiscountCents      int64           `json:"discount_cents"`       // receipt-wide discount, subtracted from the item sum in the total
 	VATCents           int64           `json:"vat_cents"`
-	TotalCents         int64           `json:"total_cents"`         // computed: sum of lines (VAT already included in prices)
+	TotalCents         int64           `json:"total_cents"`         // computed: sum of lines − global discount (VAT already included in prices)
 	PrintedTotalCents  int64           `json:"printed_total_cents"` // as printed on the receipt
 }
 
@@ -195,8 +196,8 @@ type BillScan struct {
 // BillConfirmInput is the (possibly user-corrected) draft the client sends
 // back when confirming a scan. The bill and its expense transaction are
 // created from these values in one step. The server recomputes the total from
-// the lines; PrintedTotalCents carries the receipt's printed amount
-// through unchanged for the mismatch warning.
+// the lines minus the global discount; PrintedTotalCents carries the
+// receipt's printed amount through unchanged for the mismatch warning.
 type BillConfirmInput struct {
 	// MarketName is matched case-insensitively against existing stores; the
 	// server find-or-creates a store from it and links the bill.
@@ -205,7 +206,7 @@ type BillConfirmInput struct {
 	PaymentMethod     string          `json:"payment_method"`
 	CardLastDigits    string          `json:"card_last_digits"`
 	Currency          string          `json:"currency"`
-	DiscountCents     int64           `json:"discount_cents"` // informational
+	DiscountCents     int64           `json:"discount_cents"` // receipt-wide discount, subtracted from the item sum in the total
 	VATCents          int64           `json:"vat_cents"`
 	PrintedTotalCents int64           `json:"printed_total_cents"`
 	BudgetID          *int64          `json:"budget_id,omitempty"` // optional budget this bill counts toward

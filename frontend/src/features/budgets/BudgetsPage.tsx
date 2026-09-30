@@ -5,8 +5,14 @@ import { summaryApi } from '../../api/summary';
 import { categoriesApi } from '../../api/categories';
 import type { Budget } from '../../types/domain';
 import { formatCents } from '../../lib/money';
-import { categoriesBySection } from '../../lib/categories';
-import { Button, Card, Spinner, ErrorMessage, EmptyState } from '../../components/ui';
+import {
+  Button,
+  Card,
+  CategorySelect,
+  Spinner,
+  ErrorMessage,
+  EmptyState,
+} from '../../components/ui';
 
 // Budgets are open-ended envelopes: they stay open — accumulating attributed
 // spend — until they are marked finished and closed. Progress is lifetime,
@@ -91,18 +97,14 @@ export function BudgetsPage() {
 
       <Card title="Add budget">
         <form className="form-row" onSubmit={handleCreate}>
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
-            <option value="">Category…</option>
-            {categoriesBySection(categories.data ?? [], 'expense').map(([section, cats]) => (
-              <optgroup key={section} label={section}>
-                {cats.map((c) => (
-                  <option key={c.id} value={c.id} title={c.description}>
-                    {c.icon ? `${c.icon} ${c.name}` : c.name}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+          <CategorySelect
+            categories={categories.data ?? []}
+            kind="expense"
+            value={categoryId ? Number(categoryId) : null}
+            onChange={(id) => setCategoryId(id ? String(id) : '')}
+            ariaLabel="Budget category"
+            emptyLabel="Category…"
+          />
           <input
             placeholder={`Budget amount (${currency})`}
             inputMode="decimal"

@@ -18,6 +18,8 @@ interface Props {
   currency?: string;
   placeholder?: string;
   ariaLabel: string;
+  /** Focus the input on mount (e.g. a just-added bill line's article). */
+  autoFocus?: boolean;
   /** Fires when the input loses focus (before any suggestion pick). */
   onBlur?: () => void;
 }
@@ -32,6 +34,7 @@ export function ProductAutocomplete({
   currency = '',
   placeholder,
   ariaLabel,
+  autoFocus,
   onBlur,
 }: Props) {
   const [matches, setMatches] = useState<Product[]>([]);
@@ -131,6 +134,7 @@ export function ProductAutocomplete({
         value={value}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        autoFocus={autoFocus}
         role="combobox"
         aria-expanded={showList}
         aria-controls="product-autocomplete-list"

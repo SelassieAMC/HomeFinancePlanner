@@ -229,7 +229,7 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
           <span>{formatCents(bill.items_subtotal_cents, currency)}</span>
         </div>
         <div className="bill-total-line">
-          <span>Market discount (informational)</span>
+          <span>Market discount</span>
           <span>{formatCents(bill.discount_cents, currency)}</span>
         </div>
         <div className="bill-total-line">

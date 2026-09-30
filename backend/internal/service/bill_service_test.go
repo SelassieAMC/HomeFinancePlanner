@@ -1315,6 +1315,51 @@ func TestBuildBillRejectsNegativeForNormalCategory(t *testing.T) {
 	}
 }
 
+// The bill-level discount is the receipt-wide rebate printed after the article
+// lines (e.g. "10% Rabatt") — it reduces the total below the item sum, so a
+// discounted receipt reconciles with its printed amount instead of showing a
+// false mismatch.
+func TestBuildBillGlobalDiscountReducesTotal(t *testing.T) {
+	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	ctx := context.Background()
+
+	bill, err := svc.buildBill(ctx, domain.BillConfirmInput{
+		MarketName:        "REWE",
+		Currency:          "EUR",
+		DiscountCents:     200,
+		PrintedTotalCents: 800,
+		Items: []domain.BillItemDraft{
+			{Name: "Cola 1.5L", Quantity: 1, UnitPriceCents: 600, LineTotalCents: 600},
+			{Name: "Chips", Quantity: 1, UnitPriceCents: 400, LineTotalCents: 400},
+		},
+	}, &billScanSource{})
+	if err != nil {
+		t.Fatalf("buildBill: %v", err)
+	}
+	if bill.ItemsSubtotalCents != 1000 {
+		t.Fatalf("item sum must stay 1000, got %d", bill.ItemsSubtotalCents)
+	}
+	if bill.TotalCents != 800 {
+		t.Fatalf("global discount must reduce the total to 800, got %d", bill.TotalCents)
+	}
+	if bill.PrintedTotalCents != 800 {
+		t.Fatalf("printed total: %d", bill.PrintedTotalCents)
+	}
+
+	// A negative bill-level discount stays rejected (totals must not be
+	// negative).
+	_, err = svc.buildBill(ctx, domain.BillConfirmInput{
+		MarketName:    "REWE",
+		DiscountCents: -100,
+		Items:         []domain.BillItemDraft{{Name: "Cola", Quantity: 1, UnitPriceCents: 200}},
+	}, &billScanSource{})
+	if err == nil {
+		t.Fatal("expected negative bill-level discount to be rejected")
+	}
+}
+
 func ptrInt64(v int64) *int64 { return &v }
 
 func TestResolveDraftCategoriesNewTaxonomyAliases(t *testing.T) {

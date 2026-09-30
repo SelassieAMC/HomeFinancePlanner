@@ -169,7 +169,22 @@ is a 400. Negative item prices are allowed
 only for "Leergut" lines or items under a category with `allows_negative` (the
 seeded "Deposit & Returns" product category covers Pfand/Leergut) — the same
 rule applies to manual transaction item lines, whose money-back lines also stay
-unlinked from products. The **purchase cart** keeps its items client-side only
+unlinked from products. The bill total is always recomputed as the sum of the
+line totals **minus the bill-level global discount** (`discount_cents`, the
+receipt-wide rebate printed after the article lines, e.g. "10% Rabatt" —
+per-line discounts are already inside the lines), so discounted receipts
+reconcile with their printed amount; VAT stays informational (already included
+in the prices). In the review editor, only the deposit/refund **unit
+price** carries a ± sign-flip button (phone decimal keypads have no minus
+key) — discounts are positive by nature and never get one. The per-item
+Category sits with the product name fields (it is what marks a line "Deposit
+& Returns" and thereby allows the negative), and the Article field is a
+product autocomplete: typing suggests catalogue products, picking one fills
+the standardized/generic name, brand, measure and category (never the
+prices, which come from the receipt), free entry is find-or-created on
+confirm, and leaving a freely typed name looks up the name-mapping memory to
+fill empty standardized/generic names and an unset category (deposit/return
+lines are never looked up). The **purchase cart** keeps its items client-side only
 (React Context + `localStorage` under `hfp.cart.v1`); confirming it starts a
 persisted **offer search** (`offer_searches` table, token-polling pipeline like
 bill scans): the connector flagged **default for web search** is asked for

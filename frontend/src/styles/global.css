@@ -190,7 +190,8 @@ body {
 }
 
 .form-row input,
-.form-row select {
+.form-row select,
+.form-row .category-select {
   min-width: 120px;
   flex: 1;
 }
@@ -208,11 +209,20 @@ body {
   margin: 1rem 0 0.75rem;
 }
 
+/* The category combobox trigger shows only the current choice, so it needs a
+   steadier width than the old select (which sized to its longest option). */
+.filter-row .category-select {
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+
 /* 16px (1rem — body's 15px lives on body, not html) so iOS never auto-zooms
-   a focused control. */
+   a focused control. The category combobox's trigger rides along so it looks
+   exactly like the selects it replaces. */
 input,
 select,
-textarea {
+textarea,
+.category-select-trigger {
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -227,13 +237,15 @@ textarea {
 @media (pointer: coarse), (max-width: 768px) {
   input,
   select,
-  textarea {
+  textarea,
+  .category-select-trigger {
     min-height: 44px;
   }
 }
 
 input:focus,
 select:focus,
+.category-select-trigger:focus,
 .btn:focus-visible {
   outline: 2px solid var(--gold);
   outline-offset: 1px;
@@ -996,7 +1008,8 @@ select:focus,
 }
 
 .form-grid input,
-.form-grid select {
+.form-grid select,
+.form-grid .category-select-trigger {
   font-weight: 400;
   color: var(--text);
 }
@@ -1228,6 +1241,42 @@ select:focus,
   min-width: 100px;
   padding: 0.3rem 0.5rem;
   font-size: 0.9rem;
+}
+
+/* Money field with a ± sign toggle (bill draft). Phone decimal keypads
+   have no minus key, so negative-allowed lines (deposit/refund) get an
+   explicit tap target that flips the amount's sign. */
+.money-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.3rem;
+}
+
+.money-input-row input {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sign-toggle {
+  flex: none;
+  width: 2.25rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .sign-toggle:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
 }
 
 .cell-input-name {
@@ -1480,9 +1529,15 @@ select:focus,
 }
 
 .item-detail input,
-.item-detail select {
+.item-detail select,
+.item-detail .category-select-trigger {
   padding: 0.4rem 0.5rem;
   font-size: 0.95rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.item-detail .category-select {
   width: 100%;
   min-width: 0;
 }
@@ -1493,7 +1548,8 @@ select:focus,
 @media (pointer: coarse), (max-width: 768px) {
   .cell-input,
   .item-detail input,
-  .item-detail select {
+  .item-detail select,
+  .item-detail .category-select-trigger {
     font-size: 1rem;
   }
 }
@@ -1626,7 +1682,8 @@ select:focus,
   }
 
   .form-row input,
-  .form-row select {
+  .form-row select,
+  .form-row .category-select {
     min-width: 0;
   }
 }
@@ -1977,6 +2034,103 @@ select:focus,
   color: var(--text-muted);
 }
 
+/* --- Category dropdown (searchable) ------------------------------------------
+   A select-shaped trigger opening a panel with a search input and the
+   category list. Absolutely positioned like the product autocomplete's
+   dropdown, relative to the wrapping .category-select. */
+.category-select {
+  position: relative;
+}
+
+.category-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.category-select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-select-caret {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.category-select-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  min-width: 220px;
+  padding: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.category-select-search {
+  width: 100%;
+  margin-bottom: 0.35rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.category-select-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.category-select-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.category-select-option.is-active {
+  background: rgba(255, 176, 32, 0.14);
+}
+
+.category-select-option.is-selected {
+  font-weight: 700;
+}
+
+.category-select-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-select-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.category-select-empty {
+  padding: 0.45rem 0.55rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 /* --- Manual transaction item lines -------------------------------------------
    Two-row grid per line on narrow screens, one row on wide ones (name grows,
    numbers stay compact like the bill draft's .cell-input-num). */
@@ -2029,7 +2183,8 @@ select:focus,
   text-align: right;
 }
 
-.transaction-line select {
+.transaction-line select,
+.transaction-line .category-select {
   flex: 0 1 auto;
   min-width: 72px;
 }
