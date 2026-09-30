@@ -733,6 +733,47 @@ select:focus,
   font-weight: 600;
 }
 
+/* Grouped products view: each family row expands into a nested mini table of
+ * its member products. The expander chevron sits in front of the family name;
+ * the member count is a small pill beside it. */
+.group-toggle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.group-count {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.group-members > td {
+  background: color-mix(in srgb, var(--surface) 92%, var(--border));
+  padding: 0 0.5rem 0.5rem;
+  /* The wrapper cell spans the whole table — it must not inherit the
+   * first-column ellipsis clipping (the mini table would be cut off). */
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+}
+
+.group-members-table {
+  margin: 0.4rem 0 0;
+}
+
+.group-members-table th,
+.group-members-table td {
+  padding: 0.35rem 0.6rem;
+}
+
+.group-members-table th {
+  font-size: 0.68rem;
+}
+
 /* Standardized (normalized) name of a product, muted next to the raw text. */
 .product-standard {
   font-size: 0.78rem;

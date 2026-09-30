@@ -336,6 +336,32 @@ func (f *fakeProductStore) List(context.Context, domain.ProductFilters) (domain.
 	return domain.ProductPage{Items: out}, nil
 }
 
+// ListGrouped folds the stored rows into one group per generic name (raw
+// name when no family), the same rule the real repository applies. No
+// service test filters or pages the grouped list — the shape is what matters.
+func (f *fakeProductStore) ListGrouped(context.Context, domain.ProductFilters) (domain.ProductGroupPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	groups := []domain.ProductGroup{}
+	byKey := map[string]int{}
+	for _, p := range f.items {
+		key := p.GenericName
+		if key == "" {
+			key = p.Name
+		}
+		key = strings.ToLower(key)
+		idx, ok := byKey[key]
+		if !ok {
+			idx = len(groups)
+			byKey[key] = idx
+			groups = append(groups, domain.ProductGroup{GenericName: key, Items: []domain.Product{}})
+		}
+		groups[idx].Items = append(groups[idx].Items, p)
+		groups[idx].ProductCount++
+	}
+	return domain.ProductGroupPage{Items: groups}, nil
+}
+
 func (f *fakeProductStore) GetByID(_ context.Context, id int64) (domain.Product, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

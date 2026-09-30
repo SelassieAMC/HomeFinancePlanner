@@ -87,6 +87,9 @@ type StoreStore interface {
 // (name/unit/category) in the same transaction.
 type ProductStore interface {
 	List(ctx context.Context, f domain.ProductFilters) (domain.ProductPage, error)
+	// ListGrouped collapses the catalogue into generic-product families (one
+	// row per generic name, members embedded) — the grouped products view.
+	ListGrouped(ctx context.Context, f domain.ProductFilters) (domain.ProductGroupPage, error)
 	GetByID(ctx context.Context, id int64) (domain.Product, error)
 	FindByName(ctx context.Context, name string) (domain.Product, error)
 	Create(ctx context.Context, p domain.Product) (domain.Product, error)

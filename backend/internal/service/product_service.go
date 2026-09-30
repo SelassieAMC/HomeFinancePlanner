@@ -112,6 +112,13 @@ func (s *ProductService) List(ctx context.Context, f domain.ProductFilters) (dom
 	return s.products.List(ctx, f)
 }
 
+// ListGrouped returns the catalogue collapsed into generic-product families:
+// one group row per generic name, member products embedded, filtered and
+// sorted as groups (the name filter matches the group key).
+func (s *ProductService) ListGrouped(ctx context.Context, f domain.ProductFilters) (domain.ProductGroupPage, error) {
+	return s.products.ListGrouped(ctx, f)
+}
+
 func (s *ProductService) Get(ctx context.Context, id int64) (domain.Product, error) {
 	return s.products.GetByID(ctx, id)
 }

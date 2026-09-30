@@ -36,6 +36,10 @@ type Product struct {
 	AvgPriceCents    *int64 `json:"avg_price_cents,omitempty"`
 	BestPriceCents   *int64 `json:"best_price_cents,omitempty"`
 	PriceCurrency    string `json:"price_currency,omitempty"`
+	// LastStoreName is the store of the most recent purchase, display-only. It
+	// is filled by the grouped catalogue listing alone (the flat list keeps
+	// its column set); "—" when the newest bill had no store.
+	LastStoreName string `json:"last_store_name,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -96,6 +100,34 @@ type ProductNormalizationJob struct {
 	Error          string                        `json:"error,omitempty"`
 	CreatedAt      time.Time                     `json:"created_at"`
 	UpdatedAt      time.Time                     `json:"updated_at"`
+}
+
+// ProductGroup is one row of the grouped product catalogue: every product
+// whose normalization mapping shares a GenericName collapses into one family
+// row, with the member products embedded. A product with no generic family
+// (empty GenericName) forms its own single-member group under its raw name,
+// so every product is listed exactly once. AvgPriceCents averages the members'
+// own average prices, quoted in PriceCurrency — the currency of the group's
+// most recent purchase — so unlike currencies never mix.
+type ProductGroup struct {
+	GenericName      string    `json:"generic_name"`
+	CategoryName     string    `json:"category_name,omitempty"` // category of the most-bought member
+	ProductCount     int       `json:"product_count"`
+	TimesBought      int64     `json:"times_bought"`
+	LastPurchaseDate string    `json:"last_purchase_date,omitempty"` // YYYY-MM-DD
+	AvgPriceCents    *int64    `json:"avg_price_cents,omitempty"`
+	BestPriceCents   *int64    `json:"best_price_cents,omitempty"`
+	PriceCurrency    string    `json:"price_currency,omitempty"`
+	Items            []Product `json:"items"`
+}
+
+// ProductGroupPage is the paged grouped-list result (the same envelope as
+// ProductPage; sorting and the name filter work on the group, not the member).
+type ProductGroupPage struct {
+	Items  []ProductGroup `json:"items"`
+	Total  int64          `json:"total"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
 }
 
 // ProductFilters narrows the paged product list. Sort must be one of the

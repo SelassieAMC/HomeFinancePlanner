@@ -172,8 +172,26 @@ export interface Product {
   avg_price_cents?: number; // average over lines in the latest currency
   best_price_cents?: number; // lowest price ever paid, in the latest currency
   price_currency?: string; // currency latest/avg/best price are quoted in
+  last_store_name?: string; // store of the most recent purchase (grouped listing only)
   created_at: string;
   updated_at: string;
+}
+
+/** One generic-product family of the grouped catalogue (GET /products/grouped):
+ *  every product whose mapping shares a generic name, members embedded. A
+ *  product with no family groups under its raw name. The price columns are
+ *  family aggregates — the average/best of the members' own averages, quoted
+ *  in the currency of the family's most recent purchase. */
+export interface ProductGroup {
+  generic_name: string;
+  category_name?: string; // category of the most-bought member
+  product_count: number;
+  times_bought: number;
+  last_purchase_date?: string; // YYYY-MM-DD of the family's most recent purchase
+  avg_price_cents?: number;
+  best_price_cents?: number;
+  price_currency?: string;
+  items: Product[];
 }
 
 /** Latest price of a product at one store (details modal breakdown). */

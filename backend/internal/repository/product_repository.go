@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -182,6 +183,343 @@ func (r *ProductRepository) List(ctx context.Context, f domain.ProductFilters) (
 		return domain.ProductPage{}, err
 	}
 	return domain.ProductPage{Items: items, Total: total, Limit: limit, Offset: f.Offset}, nil
+}
+
+// productGroupedQuery is the base read of the grouped catalogue: every
+// product with its purchase stats plus the store of its most recent purchase
+// (the mini table's "store" column) and the group key — the mapping's generic
+// family, falling back to the raw name for products with no family, so every
+// product lands in exactly one group. ListGrouped folds these rows in Go:
+// the name filter matches the group key, but a matching group still lists all
+// of its members — a WHERE on the key would truncate groups.
+const productGroupedQuery = `
+WITH lines AS (
+	SELECT bi.product_id, b.date AS bill_date, bi.unit_price_cents, b.currency,
+	       COALESCE(st.name, '—') AS store_name, 'b' AS src, b.id AS src_id, bi.id AS line_id
+	FROM bill_items bi JOIN bills b ON b.id = bi.bill_id
+	LEFT JOIN stores st ON st.id = b.store_id
+	WHERE b.status = 'accepted' AND bi.is_return = 0
+	UNION ALL
+	SELECT ti.product_id, t.date AS bill_date, ti.unit_price_cents, t.currency,
+	       COALESCE(st.name, '—'), 't', t.id, ti.id
+	FROM transaction_items ti JOIN transactions t ON t.id = ti.transaction_id
+	LEFT JOIN stores st ON st.id = t.store_id
+	WHERE ti.product_id IS NOT NULL
+),
+ranked AS (
+	SELECT product_id, bill_date, unit_price_cents, currency, store_name,
+	       ROW_NUMBER() OVER (PARTITION BY product_id
+	         ORDER BY bill_date DESC, src, src_id DESC, line_id DESC) AS rn
+	FROM lines
+),
+latest AS (
+	SELECT product_id,
+	       MAX(CASE WHEN rn = 1 THEN unit_price_cents END) AS latest_price_cents,
+	       MAX(CASE WHEN rn = 1 THEN currency END) AS price_currency,
+	       MAX(CASE WHEN rn = 1 THEN store_name END) AS last_store_name
+	FROM ranked
+	GROUP BY product_id
+),
+stats AS (
+	SELECT r.product_id,
+	       COUNT(*) AS times_bought,
+	       MAX(r.bill_date) AS last_purchase_date,
+	       l.latest_price_cents, l.price_currency, l.last_store_name,
+	       CAST(ROUND(AVG(CASE WHEN r.currency = l.price_currency
+	                       THEN r.unit_price_cents END)) AS INTEGER) AS avg_price_cents,
+	       MIN(CASE WHEN r.currency = l.price_currency
+	                THEN r.unit_price_cents END) AS best_price_cents
+	FROM ranked r JOIN latest l ON l.product_id = r.product_id
+	GROUP BY r.product_id
+)
+SELECT p.id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), p.brand, p.unit, p.category_id, c.name, p.description, p.image_path,
+       p.created_at, p.updated_at,
+       COALESCE(s.times_bought, 0) AS times_bought,
+       s.last_purchase_date, s.latest_price_cents, s.price_currency,
+       s.avg_price_cents, s.best_price_cents, COALESCE(s.last_store_name, ''),
+       COALESCE(NULLIF(pnm.generic_name, ''), p.name COLLATE NOCASE) AS group_key
+FROM products p
+LEFT JOIN categories c ON c.id = p.category_id
+LEFT JOIN product_name_mappings pnm ON pnm.raw_name = p.name COLLATE NOCASE
+LEFT JOIN stats s ON s.product_id = p.id
+ORDER BY group_key COLLATE NOCASE, p.name COLLATE NOCASE`
+
+// ListGrouped returns the catalogue collapsed into generic-product families:
+// one group row per generic name (products with no family group under their
+// raw name), members embedded, paged and sorted as groups. The name filter
+// matches the group key; the category filter keeps every group with at least
+// one member in the category.
+func (r *ProductRepository) ListGrouped(ctx context.Context, f domain.ProductFilters) (domain.ProductGroupPage, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	sortKey := f.Sort
+	switch sortKey {
+	case "name", "updated_at", "created_at", "times_bought", "last_purchase", "avg_price", "best_price":
+	default:
+		sortKey = "name"
+	}
+	desc := strings.EqualFold(f.Order, "desc")
+
+	rows, err := r.db.QueryContext(ctx, productGroupedQuery)
+	if err != nil {
+		return domain.ProductGroupPage{}, fmt.Errorf("list product groups: %w", err)
+	}
+	defer rows.Close()
+
+	// Fold the products into groups. Keys fold case-insensitively — the AI may
+	// have spelled one family two ways — and the first-seen spelling (the
+	// query orders by group key) is the one displayed.
+	type fold struct {
+		name  string
+		items []domain.Product
+	}
+	var order []*fold
+	byKey := map[string]*fold{}
+	for rows.Next() {
+		p, groupKey, err := scanGroupedProduct(rows)
+		if err != nil {
+			return domain.ProductGroupPage{}, fmt.Errorf("scan product group row: %w", err)
+		}
+		key := strings.ToLower(groupKey)
+		g, ok := byKey[key]
+		if !ok {
+			g = &fold{name: groupKey}
+			byKey[key] = g
+			order = append(order, g)
+		}
+		g.items = append(g.items, p)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.ProductGroupPage{}, err
+	}
+
+	// Aggregate each fold into a group, applying the name filter (group key
+	// only) and the category filter (any member matches, all members stay).
+	name := strings.ToLower(f.Name)
+	groups := make([]groupRow, 0, len(order))
+	for _, g := range order {
+		if name != "" && !strings.Contains(strings.ToLower(g.name), name) {
+			continue
+		}
+		if f.CategoryID != nil && !groupHasCategory(g.items, *f.CategoryID) {
+			continue
+		}
+		grp := domain.ProductGroup{
+			GenericName:  g.name,
+			ProductCount: len(g.items),
+			Items:        g.items,
+		}
+		catTimes := int64(-1)
+		for _, p := range g.items {
+			grp.TimesBought += p.TimesBought
+			if p.LastPurchaseDate > grp.LastPurchaseDate {
+				grp.LastPurchaseDate = p.LastPurchaseDate
+			}
+			// The group's category is the one of its most-bought categorized member.
+			if p.CategoryName != "" && p.TimesBought > catTimes {
+				grp.CategoryName = p.CategoryName
+				catTimes = p.TimesBought
+			}
+		}
+		groupPrice(&grp)
+		item := groupRow{group: grp}
+		for _, p := range g.items {
+			if p.UpdatedAt.After(item.updated) {
+				item.updated = p.UpdatedAt
+			}
+			if p.CreatedAt.After(item.created) {
+				item.created = p.CreatedAt
+			}
+		}
+		groups = append(groups, item)
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		c := compareGroups(sortKey, groups[i], groups[j])
+		if desc {
+			c = -c
+		}
+		if c != 0 {
+			return c < 0
+		}
+		// Stable tie-break so paging never reshuffles: group name ascending.
+		return strings.ToLower(groups[i].group.GenericName) < strings.ToLower(groups[j].group.GenericName)
+	})
+
+	total := int64(len(groups))
+	start, end := f.Offset, f.Offset+limit
+	if start > len(groups) {
+		start = len(groups)
+	}
+	if end > len(groups) {
+		end = len(groups)
+	}
+	page := make([]domain.ProductGroup, 0, end-start)
+	for _, g := range groups[start:end] {
+		page = append(page, g.group)
+	}
+	return domain.ProductGroupPage{Items: page, Total: total, Limit: limit, Offset: f.Offset}, nil
+}
+
+// groupRow pairs a group with the max member timestamps its sort keys need
+// (they are not part of the JSON payload).
+type groupRow struct {
+	group   domain.ProductGroup
+	updated time.Time
+	created time.Time
+}
+
+// scanGroupedProduct reads one productGroupedQuery row (product columns plus
+// the derived last store and group key), mirroring scanProduct.
+func scanGroupedProduct(row interface{ Scan(dest ...any) error }) (domain.Product, string, error) {
+	var (
+		p             domain.Product
+		groupKey      string
+		imagePath     string
+		createdAt     int64
+		updatedAt     int64
+		categoryID    sql.NullInt64
+		categoryName  sql.NullString
+		lastPurchase  sql.NullString
+		latestPrice   sql.NullInt64
+		avgPrice      sql.NullInt64
+		bestPrice     sql.NullInt64
+		priceCurrency sql.NullString
+		lastStore     sql.NullString
+	)
+	if err := row.Scan(&p.ID, &p.Name, &p.StandardName, &p.GenericName, &p.Brand, &p.Unit,
+		&categoryID, &categoryName, &p.Description, &imagePath,
+		&createdAt, &updatedAt, &p.TimesBought, &lastPurchase,
+		&latestPrice, &priceCurrency, &avgPrice, &bestPrice, &lastStore, &groupKey); err != nil {
+		return domain.Product{}, "", err
+	}
+	if categoryID.Valid {
+		v := categoryID.Int64
+		p.CategoryID = &v
+	}
+	p.CategoryName = categoryName.String
+	p.HasImage = imagePath != ""
+	if lastPurchase.Valid {
+		p.LastPurchaseDate = lastPurchase.String
+	}
+	if latestPrice.Valid {
+		v := latestPrice.Int64
+		p.LatestPriceCents = &v
+	}
+	if avgPrice.Valid {
+		v := avgPrice.Int64
+		p.AvgPriceCents = &v
+	}
+	if bestPrice.Valid {
+		v := bestPrice.Int64
+		p.BestPriceCents = &v
+	}
+	p.PriceCurrency = priceCurrency.String
+	p.LastStoreName = lastStore.String
+	p.CreatedAt = time.Unix(createdAt, 0).UTC()
+	p.UpdatedAt = time.Unix(updatedAt, 0).UTC()
+	return p, groupKey, nil
+}
+
+// groupHasCategory reports whether any member carries the category id.
+func groupHasCategory(items []domain.Product, categoryID int64) bool {
+	for _, p := range items {
+		if p.CategoryID != nil && *p.CategoryID == categoryID {
+			return true
+		}
+	}
+	return false
+}
+
+// groupPrice fills the group's price aggregate: PriceCurrency is the currency
+// of the member with the most recent purchase (never bought → no currency,
+// no prices), AvgPriceCents averages the members' own average prices in that
+// currency, BestPriceCents takes their lowest — currencies never mix.
+func groupPrice(grp *domain.ProductGroup) {
+	currencyDate := ""
+	for _, p := range grp.Items {
+		if p.PriceCurrency == "" {
+			continue
+		}
+		if grp.PriceCurrency == "" || p.LastPurchaseDate > currencyDate {
+			grp.PriceCurrency = p.PriceCurrency
+			currencyDate = p.LastPurchaseDate
+		}
+	}
+	if grp.PriceCurrency == "" {
+		return
+	}
+	var sum, count, best int64
+	for _, p := range grp.Items {
+		if p.PriceCurrency != grp.PriceCurrency {
+			continue
+		}
+		if p.AvgPriceCents != nil {
+			sum += *p.AvgPriceCents
+			count++
+		}
+		if p.BestPriceCents != nil && (best == 0 || *p.BestPriceCents < best) {
+			best = *p.BestPriceCents
+		}
+	}
+	if count > 0 {
+		v := (sum + count/2) / count
+		grp.AvgPriceCents = &v
+	}
+	if best != 0 {
+		grp.BestPriceCents = &best
+	}
+}
+
+// compareGroups orders two groups by the sort key: < 0, 0 or > 0. Never-bought
+// (no price/date) sorts first ascending, like SQL NULL ordering.
+func compareGroups(key string, a, b groupRow) int {
+	switch key {
+	case "updated_at":
+		return a.updated.Compare(b.updated)
+	case "created_at":
+		return a.created.Compare(b.created)
+	case "times_bought":
+		return cmpInt64(a.group.TimesBought, b.group.TimesBought)
+	case "last_purchase":
+		return strings.Compare(a.group.LastPurchaseDate, b.group.LastPurchaseDate)
+	case "avg_price":
+		return cmpPrice(a.group.AvgPriceCents, b.group.AvgPriceCents)
+	case "best_price":
+		return cmpPrice(a.group.BestPriceCents, b.group.BestPriceCents)
+	default: // "name"
+		return strings.Compare(strings.ToLower(a.group.GenericName), strings.ToLower(b.group.GenericName))
+	}
+}
+
+func cmpInt64(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+// cmpPrice compares two optional cent amounts; nil (never bought) sorts first.
+func cmpPrice(a, b *int64) int {
+	if a == nil || b == nil {
+		switch {
+		case a == nil && b == nil:
+			return 0
+		case a == nil:
+			return -1
+		default:
+			return 1
+		}
+	}
+	return cmpInt64(*a, *b)
 }
 
 // GetByID returns one product with its purchase stats, or domain.ErrNotFound.

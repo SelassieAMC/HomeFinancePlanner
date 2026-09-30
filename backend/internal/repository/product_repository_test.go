@@ -404,3 +404,108 @@ func TestProductRepositoryUpdateLeavesLinesUntouched(t *testing.T) {
 		t.Fatalf("update unknown = %v; want ErrNotFound", err)
 	}
 }
+
+// TestProductRepositoryListGrouped covers the grouped catalogue view: family
+// grouping by the mapping's generic name (raw-name fallback for unmapped
+// products), the name filter working on the group key, the category filter
+// keeping whole groups, the family price aggregate and group-level sorting.
+func TestProductRepositoryListGrouped(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProductRepository(db)
+	_, milkID, _, _ := seedProductStats(t, db)
+
+	// A second milk that shares Milk's family: "Oat Milk" maps to the generic
+	// "Milk" — a family of two. Cola and Nothing stay unmapped (single-member
+	// groups under their raw names).
+	seed := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(query, args...); err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+	}
+	oatID := int64(0)
+	res, err := db.Exec(`INSERT INTO products (name, created_at, updated_at) VALUES ('Oat Milk', 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed oat milk: %v", err)
+	}
+	oatID, _ = res.LastInsertId()
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, source, created_at, updated_at)
+	      VALUES ('Milk', 'Milk', 'Milk', 'user', 100, 100)`)
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, source, created_at, updated_at)
+	      VALUES ('Oat Milk', 'Oat Milk', 'Milk', 'ai', 100, 100)`)
+
+	page, err := repo.ListGrouped(ctx, domain.ProductFilters{Sort: "name"})
+	if err != nil {
+		t.Fatalf("list grouped: %v", err)
+	}
+	// Groups name-ascending: Cola, Milk (Milk + Oat Milk), Nothing.
+	if page.Total != 3 || len(page.Items) != 3 {
+		t.Fatalf("groups = %d/%d; want 3/3", page.Total, len(page.Items))
+	}
+	milk := page.Items[1]
+	if milk.GenericName != "Milk" || milk.ProductCount != 2 || milk.TimesBought != 4 {
+		t.Fatalf("milk group = %+v; want family Milk, 2 products, 4 bought", milk)
+	}
+	if len(milk.Items) != 2 || milk.Items[0].Name != "Milk" || milk.Items[1].Name != "Oat Milk" {
+		t.Fatalf("milk members = %+v; want Milk + Oat Milk", milk.Items)
+	}
+	// Family price: the members' own aggregates averaged in the group's
+	// currency — USD, Oat Milk's most recent purchase's currency is none (it
+	// was never bought), so the group's only priced member decides. Milk's
+	// avg is 160 → the family average is 160, best 150.
+	if milk.PriceCurrency != "USD" || milk.AvgPriceCents == nil || *milk.AvgPriceCents != 160 {
+		t.Fatalf("milk price = %v %q; want 160 USD", milk.AvgPriceCents, milk.PriceCurrency)
+	}
+	if milk.BestPriceCents == nil || *milk.BestPriceCents != 150 {
+		t.Fatalf("milk best = %v; want 150", milk.BestPriceCents)
+	}
+	// The mini table's store column: Milk's latest purchase is the Aldi line.
+	if milk.Items[0].LastStoreName != "Aldi" {
+		t.Fatalf("milk last store = %q; want Aldi", milk.Items[0].LastStoreName)
+	}
+	if page.Items[0].GenericName != "Cola" || page.Items[2].GenericName != "Nothing" {
+		t.Fatalf("group order = %s, %s; want Cola first, Nothing last",
+			page.Items[0].GenericName, page.Items[2].GenericName)
+	}
+	// A never-bought single member: no currency, no prices, no store.
+	if page.Items[2].Items[0].LastStoreName != "" || page.Items[2].PriceCurrency != "" {
+		t.Fatalf("nothing group = %+v; want empty price/store", page.Items[2])
+	}
+
+	// Name filter matches the group key, not the member names.
+	page, err = repo.ListGrouped(ctx, domain.ProductFilters{Name: "ilk"})
+	if err != nil {
+		t.Fatalf("list grouped filtered: %v", err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].GenericName != "Milk" {
+		t.Fatalf("filtered groups = %+v; want only the Milk family", page.Items)
+	}
+
+	// Group-level sorting: times_bought descending puts the Milk family (4)
+	// first; the never-bought group (0) last.
+	page, err = repo.ListGrouped(ctx, domain.ProductFilters{Sort: "times_bought", Order: "desc"})
+	if err != nil {
+		t.Fatalf("list grouped sorted: %v", err)
+	}
+	if page.Items[0].GenericName != "Milk" || page.Items[len(page.Items)-1].GenericName != "Nothing" {
+		t.Fatalf("times_bought order = %s…%s; want Milk first, Nothing last",
+			page.Items[0].GenericName, page.Items[len(page.Items)-1].GenericName)
+	}
+
+	// Paging works on groups: one group per page, name-ascending → the Milk
+	// family is page 2.
+	page, err = repo.ListGrouped(ctx, domain.ProductFilters{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatalf("list grouped paged: %v", err)
+	}
+	if page.Total != 3 || len(page.Items) != 1 || page.Items[0].GenericName != "Milk" {
+		t.Fatalf("paged groups = %+v; want total 3, the Milk family on page 2", page.Items)
+	}
+
+	// The embedded members are the catalogue rows themselves.
+	if page.Items[0].Items[0].ID != milkID || page.Items[0].Items[1].ID != oatID {
+		t.Fatalf("milk member ids = %d, %d; want %d, %d",
+			page.Items[0].Items[0].ID, page.Items[0].Items[1].ID, milkID, oatID)
+	}
+}

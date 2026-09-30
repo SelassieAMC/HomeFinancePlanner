@@ -147,9 +147,21 @@ shared store → comparison dialog where the user picks which record to keep),
 and `POST /products/{id}/merge` redirects the loser's bill items to the keeper
 (purchase history — prices included — combines under it) and deletes the loser
 row in one transaction. Products cannot
-be created or deleted through the API; `GET /api/v1/products` is the only
-paginated endpoint (`{items, total, limit, offset}` envelope, sort key
-whitelist). A receipt too long for one photo can be uploaded as **several
+be created or deleted through the API; the two paginated endpoints are
+`GET /api/v1/products` (flat list) and `GET /api/v1/products/grouped`
+(the products view grouped by generic product family:
+`{items, total, limit, offset}` envelope, sort key whitelist). The grouped
+listing folds the catalogue in Go on top of one store-aware stats read —
+one row per generic name, members embedded with their latest price and last
+store (`last_store_name`), products with no family grouped under their raw
+name; the name filter and sorting work on the group, the price columns are
+family aggregates (average/best of the members' own averages in the family's
+most recent purchase currency), and the category filter keeps whole groups
+(any member matches). The group-level edit only changes the generic name:
+the frontend sends one unchanged-field PUT per member with the new
+`generic_name`, which learns it into every member's normalization mapping
+(source user) — membership itself is decided by the mappings, never by the
+edit. A receipt too long for one photo can be uploaded as **several
 files in one scan**: `POST /bills/scan` accepts repeated `image` multipart
 parts (1 = unchanged single receipt; 2..`MaxBillScanFiles`=8 = one receipt
 split across consecutive parts, merged into ONE bill by the AI read — the

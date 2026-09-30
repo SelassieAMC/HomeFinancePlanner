@@ -103,6 +103,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.
 	// /{id}/photo is 4 segments next to a 2-segment /{id} — unambiguous, like
 	// the store logo routes.
 	mux.HandleFunc("GET /api/v1/products", productH.List)
+	mux.HandleFunc("GET /api/v1/products/grouped", productH.ListGrouped)
 	mux.HandleFunc("GET /api/v1/products/normalize", productH.NormalizeName)
 	mux.HandleFunc("POST /api/v1/products/normalization/run", productH.RunNormalization)
 	mux.HandleFunc("GET /api/v1/products/normalization", productH.NormalizationStatus)

@@ -4,6 +4,7 @@ import type {
   Paged,
   Product,
   ProductFilters,
+  ProductGroup,
   ProductInput,
   ProductMergeCheck,
   ProductMergeInput,
@@ -29,6 +30,11 @@ function toQuery(filters: ProductFilters): string {
 export const productsApi = {
   list: (filters: ProductFilters = {}, init?: { signal?: AbortSignal }) =>
     apiClient.get<Paged<Product>>(`${BASE}/products${toQuery(filters)}`, init),
+  /** Grouped catalogue: one row per generic product family, members embedded.
+   *  The name filter and sorting work on the group (its generic name), the
+   *  price columns are family aggregates. */
+  listGrouped: (filters: ProductFilters = {}, init?: { signal?: AbortSignal }) =>
+    apiClient.get<Paged<ProductGroup>>(`${BASE}/products/grouped${toQuery(filters)}`, init),
   /** Normalization memory lookup for one raw text (no AI call): what the
    *  standardized name is, if any mapping exists. matched:false → unmapped. */
   normalizeName: (name: string) =>

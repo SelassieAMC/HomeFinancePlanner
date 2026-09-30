@@ -28,8 +28,11 @@ type productRequest struct {
 	GenericName  *string `json:"generic_name"`
 }
 
-// List returns the paged product list (name/category filters, sort, order).
-func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
+// productFiltersFromQuery parses the shared list filters (name/category,
+// sort, order, paging). The two list endpoints give Name and Sort their own
+// meaning — the flat list works on products, the grouped list on generic
+// families — but the query shape is identical.
+func productFiltersFromQuery(w http.ResponseWriter, r *http.Request) (service.ProductFilters, bool) {
 	q := r.URL.Query()
 
 	f := service.ProductFilters{
@@ -43,12 +46,37 @@ func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
 			respondError(w, r, http.StatusBadRequest, "invalid category_id")
-			return
+			return f, false
 		}
 		f.CategoryID = &id
 	}
+	return f, true
+}
 
+// List returns the paged product list (name/category filters, sort, order).
+func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
+	f, ok := productFiltersFromQuery(w, r)
+	if !ok {
+		return
+	}
 	page, err := h.Svc.List(r.Context(), f)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondPage(w, r, page.Items, page.Total, page.Limit, page.Offset)
+}
+
+// ListGrouped returns the catalogue collapsed into generic-product families
+// (one row per generic name, members embedded) — the grouped products view.
+// The name filter and sorting work on the group, the price column is the
+// family average.
+func (h *ProductHandler) ListGrouped(w http.ResponseWriter, r *http.Request) {
+	f, ok := productFiltersFromQuery(w, r)
+	if !ok {
+		return
+	}
+	page, err := h.Svc.ListGrouped(r.Context(), f)
 	if err != nil {
 		respondServiceError(w, r, err)
 		return
