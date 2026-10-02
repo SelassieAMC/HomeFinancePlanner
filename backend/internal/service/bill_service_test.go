@@ -629,6 +629,75 @@ func TestWorkerMarksFailure(t *testing.T) {
 	}
 }
 
+func TestWorkerRetriesTimeoutsWithEscalatingBudgets(t *testing.T) {
+	oldSettle := timeoutRetrySettle
+	timeoutRetrySettle = 10 * time.Millisecond
+	t.Cleanup(func() { timeoutRetrySettle = oldSettle })
+
+	var mu sync.Mutex
+	var deadlines []time.Duration
+	attempt := 0
+	svc, scanStore, _, _, _ := newTestBillService(t, func(ctx context.Context, _ []domain.ReceiptFile, _ domain.AIProvider, _ string) (domain.BillDraft, error) {
+		mu.Lock()
+		attempt++
+		n := attempt
+		if dl, ok := ctx.Deadline(); ok {
+			deadlines = append(deadlines, time.Until(dl))
+		}
+		mu.Unlock()
+		if n < 3 {
+			return domain.BillDraft{}, context.DeadlineExceeded
+		}
+		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "USD"}, nil
+	})
+	// The service harness passes extractTimeout = 5s, so the escalating
+	// budgets are 5s → 10s → 20s.
+	wantMin := []time.Duration{4 * time.Second, 9 * time.Second, 19 * time.Second}
+	wantMax := []time.Duration{6 * time.Second, 11 * time.Second, 21 * time.Second}
+
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(context.Background(), res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deadlines) != 3 {
+		t.Fatalf("expected 3 extraction attempts, got %d", len(deadlines))
+	}
+	for i, got := range deadlines {
+		if got < wantMin[i] || got > wantMax[i] {
+			t.Fatalf("attempt %d budget = %s, want ~%s", i+1, got, wantMin[i]+time.Second)
+		}
+	}
+}
+
+func TestWorkerFailsAfterMaxTimeoutRetries(t *testing.T) {
+	oldSettle := timeoutRetrySettle
+	timeoutRetrySettle = 10 * time.Millisecond
+	t.Cleanup(func() { timeoutRetrySettle = oldSettle })
+
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{}, context.DeadlineExceeded
+	})
+
+	res, err := svc.Scan(context.Background(), scanFile(testImage()), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(context.Background(), res.ScanToken)
+		return err == nil && row.Status == domain.BillScanFailed
+	})
+	row, _ := scanStore.GetByToken(context.Background(), res.ScanToken)
+	if !strings.Contains(row.Error, "timed out after 3 attempts") || !strings.Contains(row.Error, "LLM_TIMEOUT") {
+		t.Fatalf("exhausted-retry message not recorded: %q", row.Error)
+	}
+}
+
 func TestConfirmGuardsScanState(t *testing.T) {
 	svc, scanStore, billStore, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "USD"}, nil

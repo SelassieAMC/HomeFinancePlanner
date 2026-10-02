@@ -976,6 +976,14 @@ select:focus,
   word-break: break-word;
 }
 
+/* ✕ button on a staged (not yet sent) receipt photo — inline, compact. */
+.remove-picked {
+  padding: 0.05rem 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
 .hint-text {
   color: var(--text-muted);
   font-size: 0.85rem;

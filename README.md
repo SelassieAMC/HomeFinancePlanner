@@ -159,3 +159,7 @@ POST   /api/v1/settings/ai/test/{id}
 
 See [CLAUDE.md](CLAUDE.md) for the enforced architecture rules, folder
 layout, and command reference.
+
+## KILL APP
+sudo lsof -i :5002
+kill -9 <PID>

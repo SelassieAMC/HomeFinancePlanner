@@ -1489,10 +1489,10 @@ func (s *BillService) sweepStaleScans() {
 		_ = os.Remove(path)
 	}
 
-	// A stranded analyzing row gets re-enqueued once it is older than two
-	// extraction timeouts (never while an in-flight extraction can still be
-	// running).
-	staleBefore := time.Now().Add(-2 * s.extractTimeout)
+	// A stranded analyzing row gets re-enqueued once it is older than the
+	// worst possible runtime of one scan (never while an in-flight extraction
+	// — possibly on a widened timeout retry — can still be running).
+	staleBefore := time.Now().Add(-worstScanRuntime(s.extractTimeout))
 	if staleAnalyzing, err := s.scans.List(s.ctx, []domain.BillScanStatus{domain.BillScanAnalyzing}, scanQueueCapacity); err == nil {
 		for _, scan := range staleAnalyzing {
 			if scan.UpdatedAt.Before(staleBefore) {

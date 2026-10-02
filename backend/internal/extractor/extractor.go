@@ -18,14 +18,23 @@ import (
 // Extractor runs bill extraction against an AI connector.
 type Extractor struct {
 	client *http.Client
+	// numCtx overrides the Ollama context window (num_ctx). 0 = model default.
+	// The default window (2048/4096) is consumed by the prompt, the image
+	// tokens AND a long receipt's JSON output at once — small receipts fit,
+	// big ones truncate mid-JSON.
+	numCtx int
 }
 
 // New builds an Extractor whose outbound calls honor the given timeout.
-func New(timeout time.Duration) *Extractor {
+func New(timeout time.Duration, numCtx ...int) *Extractor {
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
-	return &Extractor{client: &http.Client{Timeout: timeout}}
+	e := &Extractor{client: &http.Client{Timeout: timeout}}
+	if len(numCtx) > 0 {
+		e.numCtx = numCtx[0]
+	}
+	return e
 }
 
 // Extract sends the receipt's files to the provider with the given prompt and
@@ -40,6 +49,22 @@ func (e *Extractor) Extract(ctx context.Context, files []domain.ReceiptFile, pro
 	for i, f := range files {
 		if err := checkFileTypeSupport(provider, f.MimeType); err != nil {
 			return domain.BillDraft{}, fmt.Errorf("file %d of %d: %w", i+1, len(files), err)
+		}
+	}
+
+	// The request context carries the attempt's budget (the scan worker
+	// retries a timeout with a escalated budget — LLM_TIMEOUT ×2, ×4). The
+	// client's total-request timer is baked in at LLM_TIMEOUT, so a widened
+	// context alone would still kill the retry: align the timer with the
+	// context deadline instead. Call sites without a deadline keep the
+	// unmodified client.
+	if deadline, ok := ctx.Deadline(); ok && e.client.Timeout > 0 {
+		if budget := time.Until(deadline); budget > e.client.Timeout {
+			client := *e.client
+			client.Timeout = budget
+			local := *e
+			local.client = &client
+			e = &local
 		}
 	}
 

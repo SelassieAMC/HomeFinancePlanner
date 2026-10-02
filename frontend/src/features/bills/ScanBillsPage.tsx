@@ -61,6 +61,9 @@ export function ScanBillsPage() {
   // Checked = the selected files are consecutive parts of ONE long receipt,
   // sent as a single scan and merged into one bill by the AI read.
   const [groupAsOneBill, setGroupAsOneBill] = useState(false);
+  // Staged but not yet sent photos/PDFs: camera taps and file picks append
+  // here, and the confirm button below submits the whole batch for analysis.
+  const [picked, setPicked] = useState<File[]>([]);
   // Shown after a re-read is enqueued: analysis runs in the background.
   const [rereadSent, setRereadSent] = useState(false);
   const navigate = useNavigate();
@@ -131,19 +134,46 @@ export function ScanBillsPage() {
       });
   }, [searchParams]);
 
-  // Uploads the selected receipts. Analysis runs in the background — the user
-  // only gets an upload summary here and checks the result later in the bills
-  // view. With "one bill" unchecked, each file is its own scan. With it
-  // checked and several files selected, they are sent as ONE grouped scan
-  // (the consecutive parts of one long receipt) and merged into a single
-  // bill by the AI read. Files over the size limit are skipped client-side.
-  async function handleFiles(files: FileList | null) {
+  // Stages the newly chosen files without uploading: the user collects
+  // camera shots and file picks first and confirms the batch with the button
+  // below. The list is copied synchronously and eagerly — the onChange that
+  // calls this clears input.value right after, which detaches the FileList,
+  // so deferring the copy into a state updater would read an emptied list.
+  // Duplicates of an already-staged file (same name, size and timestamp) are
+  // dropped — the server rejects a photo twice within one upload anyway.
+  function handleFiles(files: FileList | null) {
     if (!files || files.length === 0 || busy) return;
+    setError(null);
+    const fresh: File[] = [];
+    const seen = new Set(picked.map((f) => `${f.name} ${f.size} ${f.lastModified}`));
+    for (const file of Array.from(files)) {
+      const key = `${file.name} ${file.size} ${file.lastModified}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      fresh.push(file);
+    }
+    if (fresh.length === 0) return;
+    setPicked((prev) => [...prev, ...fresh]);
+  }
+
+  function removePicked(index: number) {
+    setPicked((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // Sends the staged batch for analysis — the confirm button in the capture
+  // card. Analysis runs in the background — the user only gets an upload
+  // summary here and checks the result later in the bills view. With "one
+  // bill" unchecked, each file is its own scan. With it checked and several
+  // files staged, they are sent as ONE grouped scan (the consecutive parts of
+  // one long receipt) and merged into a single bill by the AI read. Files
+  // over the size limit are skipped client-side.
+  async function submitForScan() {
+    if (picked.length === 0 || busy) return;
     setError(null);
     setUploadResults([]);
     setBusy('extract');
 
-    const list = Array.from(files);
+    const list = picked;
     const results: UploadOutcome[] = [];
 
     if (groupAsOneBill && list.length > 1) {
@@ -174,6 +204,10 @@ export function ScanBillsPage() {
     }
     setUploadResults(results);
     setBusy(null);
+    // Sent receipts leave the staging list; on a total failure (everything
+    // skipped or rejected) it stays as it is, so the list can be fixed up
+    // with the ✕ buttons and retried without picking the files again.
+    if (results.some((r) => r.ok)) setPicked([]);
   }
 
   // One receipt split across several files: a single grouped upload with every
@@ -302,6 +336,7 @@ export function ScanBillsPage() {
     setDraft(null);
     setAccepted(null);
     setError(null);
+    setPicked([]);
     setUploadResults([]);
     setPhase('capture');
   }
@@ -368,17 +403,58 @@ export function ScanBillsPage() {
           </label>
           {groupAsOneBill && (
             <p className="hint-inline">
-              Photos are sent in the order you selected them — pick them
+              Photos are sent in the order they appear below — add them
               top-to-bottom (part 1 = top of the receipt).
             </p>
           )}
           <p className="hint-text">
-            On a phone, “Take photo” opens the camera directly. You can pick
-            several receipts at once. Photos (JPEG, HEIC) and PDF receipts are
-            accepted — each file up to {MAX_BILL_IMAGE_BYTES >> 20} MB, at most{' '}
-            {MAX_BILL_SCAN_FILES} files per grouped receipt. Flat, well-lit
-            receipts read best.
+            Take or choose as many photos as you need — they are collected
+            below and only sent when you press “Confirm &amp; scan”. Photos
+            (JPEG, HEIC) and PDF receipts are accepted — each file up to{' '}
+            {MAX_BILL_IMAGE_BYTES >> 20} MB, at most {MAX_BILL_SCAN_FILES}{' '}
+            files per grouped receipt. Flat, well-lit receipts read best.
           </p>
+          {picked.length > 0 && (
+            <ul className="upload-results">
+              {picked.map((file, index) => (
+                <li key={`${file.name} ${index}`}>
+                  <span aria-hidden="true">📄</span> {file.name}
+                  <span className="hint-inline">
+                    {' '}— {(file.size / (1024 * 1024)).toFixed(1)} MB
+                  </span>{' '}
+                  <button
+                    type="button"
+                    className="btn btn-ghost remove-picked"
+                    onClick={() => removePicked(index)}
+                    disabled={busy !== null}
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="camera-row">
+            <Button
+              onClick={submitForScan}
+              disabled={busy !== null || picked.length === 0}
+              title={
+                picked.length === 0
+                  ? 'Take or choose photos first'
+                  : undefined
+              }
+            >
+              ✅ Confirm &amp; scan{picked.length > 0 ? ` (${picked.length})` : ''}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setPicked([])}
+              disabled={busy !== null || picked.length === 0}
+            >
+              Clear
+            </Button>
+          </div>
           {busy === 'extract' && (
             <Spinner label="Uploading receipts — they are analysed in the background…" />
           )}
