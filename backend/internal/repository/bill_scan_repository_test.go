@@ -66,6 +66,14 @@ func TestBillScanRepository_CreateStoresEveryPart(t *testing.T) {
 	if _, err := repo.GetByFileHash(ctx, "hash-unknown"); err != domain.ErrNotFound {
 		t.Errorf("unknown hash: err = %v, want ErrNotFound", err)
 	}
+
+	// A failed scan is a dead end — its photos must stay re-uploadable.
+	if err := repo.MarkFailed(ctx, "tok-multi", "reading failed"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	if got, _ := repo.GetByFileHash(ctx, "hash-top"); got.ScanToken == "tok-multi" {
+		t.Errorf("failed scan still matches GetByFileHash — the re-upload would stay blocked")
+	}
 }
 
 // Delete returns the removed scan with all its parts so the caller can remove

@@ -25,6 +25,7 @@ type Config struct {
 	LogFile            string     // append target for logs; "none" = stdout only
 	AIEncryptionKey    string     // passphrase for encrypting AI API keys at rest
 	LLMTimeout         time.Duration
+	LLMNumCtx          int           // Ollama context-window override (0 = model default)
 	FXTimeout          time.Duration // outbound timeout for the exchange-rates API
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
@@ -51,6 +52,15 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("LLM_TIMEOUT: %w", err)
 	}
 
+	// The default window of some local vision models (2048/4096) is consumed by
+	// the prompt, the image tokens AND a long receipt's JSON output at once —
+	// big receipts truncate mid-JSON. 0 keeps the model default (sane for
+	// hosted models, which run large windows anyway).
+	llmNumCtx, err := envInt("LLM_NUM_CTX", 0)
+	if err != nil {
+		return Config{}, fmt.Errorf("LLM_NUM_CTX: %w", err)
+	}
+
 	fxTimeout, err := envDuration("FX_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return Config{}, fmt.Errorf("FX_TIMEOUT: %w", err)
@@ -68,6 +78,7 @@ func Load() (Config, error) {
 		LogFile:            envString("LOG_FILE", "./data/server.log"),
 		AIEncryptionKey:    envString("AI_ENCRYPTION_KEY", ""),
 		LLMTimeout:         llmTimeout,
+		LLMNumCtx:          llmNumCtx,
 		FXTimeout:          fxTimeout,
 		ReadTimeout:        30 * time.Second,
 		WriteTimeout:       llmTimeout + 60*time.Second,

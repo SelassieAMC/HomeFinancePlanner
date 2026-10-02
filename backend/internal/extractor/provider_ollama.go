@@ -15,6 +15,18 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
+// ollamaVisionDiscipline guards reasoning vision models against their main
+// failure mode on hard-to-read receipts: they fall into an endless
+// deliberation loop ("Let me analyze… hmm, hmm… let me re-check…"), narrating
+// character by character until the output window fills (done_reason "length")
+// and no JSON is ever written. Cloud models with a bigger output window get
+// through; local ones die with the truncation error below. The instruction is
+// appended here in code — not part of the managed ai_prompts row — so it
+// applies regardless of which prompt text the user has customized.
+const ollamaVisionDiscipline = `
+
+OUTPUT DISCIPLINE — read once, decide once. Do NOT narrate your work, do NOT reason about or deliberate over the receipt, do NOT recheck or second-guess anything. Read the receipt, then immediately write the final JSON with your single best interpretation of every field and character — an uncertain character is written as your best guess, never investigated. Output ONLY the JSON object, nothing before or after it.`
+
 // ollamaChat calls the native Ollama chat API with the receipt files
 // attached to the message (one base64 image per part). Works with vision
 // models (llama3.2-vision, gemma3, moondream, …).
@@ -34,11 +46,11 @@ func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, 
 		"messages": []map[string]any{
 			{
 				"role":    "user",
-				"content": prompt,
+				"content": prompt + ollamaVisionDiscipline,
 				"images":  images,
 			},
 		},
-		"options": map[string]any{"temperature": 0},
+		"options": e.chatOptions(),
 	}
 
 	var resp struct {
@@ -46,9 +58,20 @@ func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, 
 			Content  string `json:"content"`
 			Thinking string `json:"thinking"`
 		} `json:"message"`
+		DoneReason string `json:"done_reason"`
 	}
 	if err := e.postJSON(ctx, url, nil, payload, &resp); err != nil {
 		return "", err
+	}
+	if resp.DoneReason == "length" {
+		// The generation filled the context before reaching the answer — this
+		// never yields a usable JSON object, and the parser's "no JSON object
+		// found" would send the user retrying into the same wall. Vision
+		// models do it when the photo is hard to read: a rotated receipt makes
+		// them loop over the text until the window is gone. It can also mean
+		// the window is simply too small for prompt + images + the JSON
+		// answer (num_ctx).
+		return "", fmt.Errorf("model %q ran out of output space before it wrote the JSON answer — the photo is probably hard to read (rotated or blurry): retake it with the receipt text upright, or use a faster AI connector", provider.Model)
 	}
 	if strings.TrimSpace(resp.Message.Content) == "" {
 		// A thinking model occasionally ends its turn with the answer inside

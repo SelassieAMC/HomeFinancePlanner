@@ -259,6 +259,75 @@ func TestCompleteText_OllamaThinkingFallback(t *testing.T) {
 	}
 }
 
+// A turn cut off at the context limit (done_reason "length") never reaches
+// the JSON answer — it must fail with the actionable retake/upright message
+// instead of the parser's cryptic "no JSON object found".
+func TestExtract_OllamaTruncatedOutput(t *testing.T) {
+	provider, requests := newOllamaChatFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		chatJSON(t, w, `{"done_reason":"length","message":{"content":"Let me analyze this receipt. It's rotated 90 degre"}}`)
+	})
+	_, err := New(0).Extract(context.Background(), []domain.ReceiptFile{{Data: []byte("fake-image"), MimeType: "image/jpeg"}}, provider, "read this receipt")
+	if err == nil || !strings.Contains(err.Error(), "ran out of output space") {
+		t.Fatalf("error = %v, want the truncation message", err)
+	}
+	if !strings.Contains(err.Error(), "upright") {
+		t.Errorf("error = %v, want it to name the rotated-photo cause", err)
+	}
+	// The truncation override beats the reasoning-block fallback: the thinking
+	// field may hold partial musing, but the answer was never written.
+	if len(*requests) != 1 {
+		t.Fatalf("requests = %d, want 1 (no retry inside the extractor)", len(*requests))
+	}
+}
+
+// The num_ctx override rides along on a bill-chat request when one is
+// configured (LLM_NUM_CTX) and stays absent otherwise.
+func TestExtract_OllamaNumCtx(t *testing.T) {
+	respond := func(w http.ResponseWriter, r *http.Request) {
+		chatJSON(t, w, `{"message":{"content":"{\"market_name\":\"REWE\",\"items\":[{\"name\":\"MILCH\"}]}"}}`)
+	}
+	files := []domain.ReceiptFile{{Data: []byte("fake-image"), MimeType: "image/jpeg"}}
+
+	provider, requests := newOllamaChatFixture(t, respond)
+	if _, err := New(0, 16384).Extract(context.Background(), files, provider, "read this receipt"); err != nil {
+		t.Fatal(err)
+	}
+	options, _ := (*requests)[0]["options"].(map[string]any)
+	if options["num_ctx"] != float64(16384) {
+		t.Errorf("options = %v, want num_ctx honoured", options)
+	}
+
+	provider, requests = newOllamaChatFixture(t, respond)
+	if _, err := New(0).Extract(context.Background(), files, provider, "read this receipt"); err != nil {
+		t.Fatal(err)
+	}
+	options, _ = (*requests)[0]["options"].(map[string]any)
+	if _, has := options["num_ctx"]; has {
+		t.Errorf("default extractor options = %v, want no num_ctx key", options)
+	}
+}
+
+// The anti-deliberation discipline rides in code on every Ollama bill read —
+// appended to the (user-managed) prompt, regardless of its content.
+func TestExtract_OllamaAppendsVisionDiscipline(t *testing.T) {
+	provider, requests := newOllamaChatFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		chatJSON(t, w, `{"message":{"content":"{\"market_name\":\"REWE\",\"items\":[]}"}}`)
+	})
+	files := []domain.ReceiptFile{{Data: []byte("fake-image"), MimeType: "image/jpeg"}}
+	if _, err := New(0).Extract(context.Background(), files, provider, "read this receipt"); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := (*requests)[0]["messages"].([]any)
+	user, _ := msgs[0].(map[string]any)
+	content, _ := user["content"].(string)
+	if !strings.HasPrefix(content, "read this receipt") {
+		t.Errorf("content = %q, want the managed prompt first", content)
+	}
+	if !strings.Contains(content, "OUTPUT DISCIPLINE") {
+		t.Errorf("content = %q, want the anti-deliberation discipline appended", content)
+	}
+}
+
 // A turn with neither content nor reasoning is an error naming the model.
 func TestCompleteText_OllamaEmptyEverywhere(t *testing.T) {
 	provider, _ := newOllamaChatFixture(t, func(w http.ResponseWriter, r *http.Request) {

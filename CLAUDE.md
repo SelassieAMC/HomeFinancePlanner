@@ -125,6 +125,7 @@ All configuration is env-driven (`internal/config`):
 | `LOG_FILE` | `./data/server.log` | log append target (records also go to stdout); `none` = stdout only |
 | `AI_ENCRYPTION_KEY` | *(empty)* | AES-256-GCM passphrase for AI provider keys; required in production |
 | `LLM_TIMEOUT` | `5m` | per-extraction timeout for AI bill scanning (large local vision models need minutes) |
+| `LLM_NUM_CTX` | `0` | Ollama context-window override (`options.num_ctx`) for bill reads; `0` = model default — raise it when a local vision model's default window truncates big receipts mid-JSON |
 | `FX_TIMEOUT` | `10s` | outbound timeout for the exchange-rates API (Frankfurter/ECB), cached 24h |
 
 ## Current State

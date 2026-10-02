@@ -11,6 +11,7 @@ import type { Bill, BillDraft, BillScan } from '../../types/domain';
 import { useAsync } from '../../hooks/useAsync';
 import { usePolling } from '../../hooks/usePolling';
 import { formatCents } from '../../lib/money';
+import { decodeImage, reencodeFileRotated } from '../../lib/image';
 import { Button, Card, Spinner, ErrorMessage, Dialog } from '../../components/ui';
 import {
   BillDraftEditor,
@@ -64,6 +65,9 @@ export function ScanBillsPage() {
   // Staged but not yet sent photos/PDFs: camera taps and file picks append
   // here, and the confirm button below submits the whole batch for analysis.
   const [picked, setPicked] = useState<File[]>([]);
+  // Preview URL per staged entry (null = not decodable in-browser, e.g. a
+  // PDF) — rebuilt when a file is rotated into a new blob.
+  const [thumbs, setThumbs] = useState<(string | null)[]>([]);
   // Shown after a re-read is enqueued: analysis runs in the background.
   const [rereadSent, setRereadSent] = useState(false);
   const navigate = useNavigate();
@@ -154,6 +158,51 @@ export function ScanBillsPage() {
     }
     if (fresh.length === 0) return;
     setPicked((prev) => [...prev, ...fresh]);
+  }
+
+  // Preview URLs track the staged entries: one thumb per file, null when the
+  // browser cannot render it. Each rebuild revokes the previous generation —
+  // the staged files are local blobs, so the URLs are free to die with them.
+  const thumbsRef = useRef<(string | null)[]>([]);
+  useEffect(() => {
+    const previous = thumbsRef.current;
+    let cancelled = false;
+    Promise.all(
+      picked.map((file) =>
+        decodeImage(file).then(
+          (b) => {
+            if (b !== null) b.close();
+            return b !== null ? URL.createObjectURL(file) : null;
+          },
+          () => null,
+        ),
+      ),
+    ).then((next) => {
+      if (cancelled) {
+        for (const u of next) if (u !== null) URL.revokeObjectURL(u);
+        return;
+      }
+      for (const u of previous) if (u !== null) URL.revokeObjectURL(u);
+      thumbsRef.current = next;
+      setThumbs(next);
+    });
+    return () => {
+      cancelled = true; // the next run (or none) still revokes both generations
+    };
+  }, [picked]);
+
+  // Turns one staged photo a quarter-turn clockwise and swaps in the
+  // re-encoded file, so both the preview and the upload show it upright.
+  async function rotatePicked(index: number) {
+    const file = picked[index];
+    if (!file || busy) return;
+    try {
+      const turned = await reencodeFileRotated(file, 1);
+      setPicked((prev) => prev.map((f, i) => (i === index ? turned : f)));
+    } catch {
+      // Not decodable in this browser (PDF, HEIC in Chromium) — the rotate
+      // controls stay disabled; the original file is uploaded unchanged.
+    }
   }
 
   function removePicked(index: number) {
@@ -412,25 +461,52 @@ export function ScanBillsPage() {
             below and only sent when you press “Confirm &amp; scan”. Photos
             (JPEG, HEIC) and PDF receipts are accepted — each file up to{' '}
             {MAX_BILL_IMAGE_BYTES >> 20} MB, at most {MAX_BILL_SCAN_FILES}{' '}
-            files per grouped receipt. Flat, well-lit receipts read best.
+            files per grouped receipt. Flat, well-lit receipts read best, and
+            the receipt text must run <em>horizontally</em> like reading lines —
+            turn a photo upright with the ↻ button before scanning.
           </p>
           {picked.length > 0 && (
             <ul className="upload-results">
               {picked.map((file, index) => (
-                <li key={`${file.name} ${index}`}>
-                  <span aria-hidden="true">📄</span> {file.name}
-                  <span className="hint-inline">
-                    {' '}— {(file.size / (1024 * 1024)).toFixed(1)} MB
-                  </span>{' '}
-                  <button
-                    type="button"
-                    className="btn btn-ghost remove-picked"
-                    onClick={() => removePicked(index)}
-                    disabled={busy !== null}
-                    aria-label={`Remove ${file.name}`}
-                  >
-                    ✕
-                  </button>
+                <li key={`${file.name} ${index}`} className="picked-entry">
+                  {thumbs[index] !== null && thumbs[index] !== undefined ? (
+                    <img
+                      className="picked-thumb"
+                      src={thumbs[index] as string}
+                      alt={`Preview of ${file.name}`}
+                    />
+                  ) : (
+                    <span className="picked-thumb picked-thumb-blank" aria-hidden="true">
+                      📄
+                    </span>
+                  )}
+                  <span className="picked-meta">
+                    {file.name}
+                    <span className="hint-inline">
+                      {' '}— {(file.size / (1024 * 1024)).toFixed(1)} MB
+                    </span>
+                  </span>
+                  <span className="picked-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost remove-picked"
+                      onClick={() => rotatePicked(index)}
+                      disabled={busy !== null || thumbs[index] === null}
+                      aria-label={`Turn ${file.name} upright`}
+                      title="Turn the photo one quarter-turn — the receipt text must read horizontally"
+                    >
+                      ↻
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost remove-picked"
+                      onClick={() => removePicked(index)}
+                      disabled={busy !== null}
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      ✕
+                    </button>
+                  </span>
                 </li>
               ))}
             </ul>

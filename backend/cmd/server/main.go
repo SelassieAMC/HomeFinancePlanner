@@ -69,7 +69,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	billExtractor := extractor.New(cfg.LLMTimeout)
+	billExtractor := extractor.New(cfg.LLMTimeout, cfg.LLMNumCtx)
 	fetcher := fx.New(cfg.FXTimeout)
 	settingsSvc := service.NewSettingsService(settingsRepo, box, billExtractor)
 	fxSvc := service.NewFXService(settingsRepo, fetcher, log)

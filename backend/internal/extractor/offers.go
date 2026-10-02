@@ -274,16 +274,22 @@ func (e *Extractor) textChat(ctx context.Context, provider domain.AIProvider, pr
 			"messages": []map[string]any{
 				{"role": "user", "content": prompt},
 			},
-			"options": map[string]any{"temperature": 0},
+			"options": e.chatOptions(),
 		}
 		var resp struct {
 			Message struct {
 				Content  string `json:"content"`
 				Thinking string `json:"thinking"`
 			} `json:"message"`
+			DoneReason string `json:"done_reason"`
 		}
 		if err := e.postJSON(ctx, baseURL(provider)+"/api/chat", nil, payload, &resp); err != nil {
 			return "", err
+		}
+		if resp.DoneReason == "length" {
+			// Same truncation check as the bill read, but the prompt here is a
+			// text completion — the model filled the context before finishing.
+			return "", fmt.Errorf("model %q ran out of output space before finishing the answer — send fewer names per call, or raise the Ollama context (LLM_NUM_CTX)", provider.Model)
 		}
 		if strings.TrimSpace(resp.Message.Content) == "" {
 			// A thinking model occasionally ends its turn with the answer

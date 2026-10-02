@@ -37,6 +37,16 @@ func New(timeout time.Duration, numCtx ...int) *Extractor {
 	return e
 }
 
+// chatOptions builds the sampling options shared by the Ollama chat calls.
+// numCtx > 0 overrides the model's context window (options.num_ctx).
+func (e *Extractor) chatOptions() map[string]any {
+	options := map[string]any{"temperature": 0}
+	if e.numCtx > 0 {
+		options["num_ctx"] = e.numCtx
+	}
+	return options
+}
+
 // Extract sends the receipt's files to the provider with the given prompt and
 // returns the normalized draft. One file is a classic single-photo receipt;
 // several files are the parts of one long receipt — the prompt tells the model

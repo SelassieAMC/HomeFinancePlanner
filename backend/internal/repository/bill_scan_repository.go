@@ -92,12 +92,17 @@ func (r *BillScanRepository) GetByToken(ctx context.Context, token string) (doma
 
 // GetByFileHash returns the (single) scan row carrying this receipt-part hash,
 // or domain.ErrNotFound. Used to reject re-uploads of a receipt that is
-// already being processed — any part matching is a conflict.
+// already in the pipeline — any part matching is a conflict. Failed scans
+// are dead ends the user can only abandon, so they do NOT match: a photo
+// whose read failed must be re-uploadable (with a retake, a rotation or a
+// different connector). Done scans still match — their receipt is awaiting
+// review and may or may not become a bill (the bill dedup covers the saved
+// ones separately).
 func (r *BillScanRepository) GetByFileHash(ctx context.Context, hash string) (domain.BillScan, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+billScanColumns+`
 		 FROM bill_scans s JOIN bill_scan_files f ON f.scan_id = s.id
-		 WHERE f.file_hash = ? LIMIT 1`, hash)
+		 WHERE f.file_hash = ? AND s.status != ? LIMIT 1`, hash, domain.BillScanFailed)
 	s, err := scanBillScan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.BillScan{}, domain.ErrNotFound
