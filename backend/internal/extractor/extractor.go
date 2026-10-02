@@ -47,6 +47,24 @@ func (e *Extractor) chatOptions() map[string]any {
 	return options
 }
 
+// visionDiscipline is appended to every bill-read prompt in code — not part
+// of the managed ai_prompts row — so the behavior rules apply whatever the
+// user customized there. Two problems it fixes, both observed in real reads:
+//
+//   - reasoning vision models fall into an endless deliberation loop on
+//     hard-to-read receipts, narrating and re-checking character by
+//     character until the output window fills (Ollama done_reason "length")
+//     and no JSON is ever written;
+//   - receipts (Lidl/German ones in particular) print discount *markers* as
+//     their own lines ("Preisvorteil", "Rabattaktion") — those are
+//     annotations of the price-reduced line, not purchases, and counting
+//     them as items inflates both the item list and the total.
+const visionDiscipline = `
+
+OUTPUT DISCIPLINE — read once, decide once. Do NOT narrate your work, do NOT reason about or deliberate over the receipt, do NOT recheck or second-guess anything. Read the receipt, then immediately write the final JSON with your single best interpretation of every field and character — an uncertain character is written as your best guess, never investigated. Output ONLY the JSON object, nothing before or after it.
+
+DISCOUNT MARKERS — a line that only announces a saving (e.g. "Preisvorteil", "Rabattaktion", "Rabatt", "you save X", "% off") is NOT an item. Attach the saving as the "discount" of the price-reduced item line it belongs to; never list the marker itself as an item.`
+
 // Extract sends the receipt's files to the provider with the given prompt and
 // returns the normalized draft. One file is a classic single-photo receipt;
 // several files are the parts of one long receipt — the prompt tells the model
@@ -77,6 +95,8 @@ func (e *Extractor) Extract(ctx context.Context, files []domain.ReceiptFile, pro
 			e = &local
 		}
 	}
+
+	prompt += visionDiscipline
 
 	var raw string
 	var err error

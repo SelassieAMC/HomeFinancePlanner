@@ -15,18 +15,6 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// ollamaVisionDiscipline guards reasoning vision models against their main
-// failure mode on hard-to-read receipts: they fall into an endless
-// deliberation loop ("Let me analyze… hmm, hmm… let me re-check…"), narrating
-// character by character until the output window fills (done_reason "length")
-// and no JSON is ever written. Cloud models with a bigger output window get
-// through; local ones die with the truncation error below. The instruction is
-// appended here in code — not part of the managed ai_prompts row — so it
-// applies regardless of which prompt text the user has customized.
-const ollamaVisionDiscipline = `
-
-OUTPUT DISCIPLINE — read once, decide once. Do NOT narrate your work, do NOT reason about or deliberate over the receipt, do NOT recheck or second-guess anything. Read the receipt, then immediately write the final JSON with your single best interpretation of every field and character — an uncertain character is written as your best guess, never investigated. Output ONLY the JSON object, nothing before or after it.`
-
 // ollamaChat calls the native Ollama chat API with the receipt files
 // attached to the message (one base64 image per part). Works with vision
 // models (llama3.2-vision, gemma3, moondream, …).
@@ -46,7 +34,7 @@ func (e *Extractor) ollamaChat(ctx context.Context, provider domain.AIProvider, 
 		"messages": []map[string]any{
 			{
 				"role":    "user",
-				"content": prompt + ollamaVisionDiscipline,
+				"content": prompt,
 				"images":  images,
 			},
 		},

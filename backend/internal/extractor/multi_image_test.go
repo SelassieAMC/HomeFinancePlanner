@@ -204,6 +204,32 @@ func TestExtract_UnsupportedPartIsNamed(t *testing.T) {
 	}
 }
 
+// The vision discipline is code-owned and rides on the prompt of every
+// provider family, not just the Ollama one (which grew the endless-deliberation
+// loop the discipline was written for).
+func TestExtract_AppendsVisionDisciplineToOpenAI(t *testing.T) {
+	url, requests := newCaptureFixture(t, func(w http.ResponseWriter) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":`+quoteJSON(t, billDraftJSON)+`}}]}`)
+	})
+	provider := domain.AIProvider{ID: "p1", Type: domain.AIProviderOpenAI, BaseURL: url, Model: "gpt-4o"}
+
+	if _, err := New(0).Extract(context.Background(), multiParts(), provider, "read this receipt"); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	req := requireOneRequest(t, requests)
+	messages, _ := req["messages"].([]any)
+	text, _ := messages[0].(map[string]any)["content"].([]any)
+	promptText, _ := text[0].(map[string]any)["text"].(string)
+	if !strings.HasPrefix(promptText, "read this receipt") {
+		t.Errorf("prompt text = %q, want the managed prompt first", promptText)
+	}
+	for _, rule := range []string{"OUTPUT DISCIPLINE", "DISCOUNT MARKERS"} {
+		if !strings.Contains(promptText, rule) {
+			t.Errorf("prompt text missing %q", rule)
+		}
+	}
+}
+
 // quoteJSON marshals s into a JSON string literal (quote escaping included).
 func quoteJSON(t *testing.T, s string) string {
 	t.Helper()
