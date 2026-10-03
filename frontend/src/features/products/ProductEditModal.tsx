@@ -31,6 +31,9 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   const [name, setName] = useState(product.name);
   const [brand, setBrand] = useState(product.brand ?? '');
   const [unit, setUnit] = useState(product.unit ?? '');
+  // Printed size magnitude ("500" for "500ml") as text; '' keeps it untouched
+  // (learned values survive), a non-positive number clears it.
+  const [unitValue, setUnitValue] = useState(product.unit_value != null ? String(product.unit_value) : '');
   const [categoryId, setCategoryId] = useState<number | null>(product.category_id ?? null);
   const [description, setDescription] = useState(product.description ?? '');
   // Prefilled with the remembered standard name (raw name when unmapped);
@@ -51,10 +54,14 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   function buildInput(): ProductInput {
+    // Decimal comma tolerated; blank = untouched, non-positive = clear.
+    const magnitude = unitValue.trim().replace(',', '.');
+    const parsed = magnitude === '' ? NaN : Number(magnitude);
     return {
       name: name.trim(),
       brand: brand.trim(),
       unit: unit.trim().toLowerCase(),
+      unit_value: magnitude === '' ? undefined : parsed > 0 ? parsed : 0,
       category_id: categoryId,
       description: description.trim(),
       standard_name: standardName.trim(),
@@ -167,12 +174,23 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
               <div className="form-row-2">
                 <label>
                   Measure
-                  <UnitSelect
-                    value={unit}
-                    ariaLabel="Product measure"
-                    emptyLabel="No measure"
-                    onChange={setUnit}
-                  />
+                  <div className="unit-value-row">
+                    <UnitSelect
+                      value={unit}
+                      ariaLabel="Product measure"
+                      emptyLabel="No measure"
+                      onChange={setUnit}
+                    />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={unitValue}
+                      onChange={(e) => setUnitValue(e.target.value)}
+                      placeholder="500"
+                      aria-label="Product size value"
+                      title="Printed size magnitude, e.g. 500 for a 500ml bottle; 0 clears it"
+                    />
+                  </div>
                 </label>
                 <label>
                   Category

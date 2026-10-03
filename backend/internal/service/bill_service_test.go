@@ -2328,6 +2328,7 @@ type fakeProductMappingStore struct {
 
 	creates   []domain.ProductNameMapping
 	upserts   []domain.ProductNameMapping
+	links     [][2]any // raw, product id
 	lookups   []string
 	findErr   error
 	createErr error
@@ -2389,13 +2390,37 @@ func (f *fakeProductMappingStore) Upsert(_ context.Context, m domain.ProductName
 		return domain.ProductNameMapping{}, f.upsertErr
 	}
 	key := strings.ToLower(m.RawName)
-	if _, ok := f.items[key]; !ok {
+	if old, ok := f.items[key]; ok {
+		// Mirror the repository's COALESCE: a payload without a product id
+		// keeps the stored link.
+		if m.ProductID == nil {
+			m.ProductID = old.ProductID
+		}
+	} else {
 		f.next++
 		m.ID = f.next
 	}
 	m.UpdatedAt = time.Now().UTC()
 	f.items[key] = m
 	return m, nil
+}
+
+// LinkProduct records the call and mirrors the update's guard (only a
+// missing or stale link is written).
+func (f *fakeProductMappingStore) LinkProduct(_ context.Context, raw string, productID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.links = append(f.links, [2]any{raw, productID})
+	m, ok := f.items[strings.ToLower(raw)]
+	if !ok {
+		return nil // nothing to link — non-fatal by contract
+	}
+	if m.ProductID == nil || *m.ProductID != productID {
+		id := productID
+		m.ProductID = &id
+		f.items[strings.ToLower(raw)] = m
+	}
+	return nil
 }
 
 // UnmappedProductNames lists the seeded products whose name has no mapping
@@ -2712,5 +2737,110 @@ func TestConfirmProductRaceReFindsWinner(t *testing.T) {
 	}
 	if bill.Items[0].ProductID == nil || *bill.Items[0].ProductID != productID {
 		t.Fatalf("line not linked to the raced product: %v", bill.Items[0].ProductID)
+	}
+}
+
+// floatPtr is a small helper for building *float64 magnitudes in tests.
+func floatPtr(v float64) *float64 { return &v }
+
+// TestConfirmUnitValueLearnsOnConfirm covers the printed size magnitude in the
+// confirm flow: lines carry it, new products are seeded with it, an existing
+// product's decided magnitude is never overwritten, a NULL one is learned, and
+// the raw text's mapping gains the convenience product link.
+func TestConfirmUnitValueLearnsAndCarries(t *testing.T) {
+	// A product with a decided magnitude and one with none yet — the draft
+	// reprints both (NOCASE) plus one brand-new line.
+	half := 0.5
+	draft := domain.BillDraft{
+		MarketName: "ALDI", Currency: "USD",
+		Items: []domain.BillItemDraft{
+			{Name: "WATER 500ML", Unit: "ml", UnitValue: floatPtr(1500), Quantity: 1, UnitPriceCents: 45, LineTotalCents: 45}, // decided 0.5 stays
+			{Name: "BREAD", Unit: "pcs", UnitValue: nil, Quantity: 1, UnitPriceCents: 150, LineTotalCents: 150},               // NULL → learns
+			{Name: "COLA ZERO 1.5L", Unit: "l", UnitValue: floatPtr(1.5), Quantity: 1, UnitPriceCents: 210, LineTotalCents: 210},
+		},
+	}
+	svc, scanStore, _, _, _, products := newTestBillServiceWithProducts(t,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return draft, nil
+		})
+	products.insert(domain.Product{Name: "Water 500ml", Unit: "ml", UnitValue: &half})
+	products.insert(domain.Product{Name: "Bread", Unit: "pcs"})
+
+	bill := confirmDraft(t, svc, scanStore, []byte("receipt-1"), domain.BillConfirmInput{
+		MarketName: "ALDI", Currency: "USD", Items: draft.Items,
+	})
+
+	// Lines keep the magnitudes they were confirmed with.
+	if got := bill.Items[0].UnitValue; got == nil || *got != 1500 {
+		t.Errorf("water line unit_value = %v; want 1500", got)
+	}
+	if got := bill.Items[2].UnitValue; got == nil || *got != 1.5 {
+		t.Errorf("cola line unit_value = %v; want 1.5", got)
+	}
+
+	water, err := products.FindByName(context.Background(), "water 500ml")
+	if err != nil {
+		t.Fatalf("water product missing: %v", err)
+	}
+	if water.UnitValue == nil || *water.UnitValue != 0.5 {
+		t.Errorf("decided magnitude overwritten: %v; want 0.5", water.UnitValue)
+	}
+	bread, err := products.FindByName(context.Background(), "bread")
+	if err != nil {
+		t.Fatalf("bread product missing: %v", err)
+	}
+	if bread.UnitValue != nil {
+		t.Errorf("unneeded learn on a NULL-capable product: got %v; want NULL", bread.UnitValue)
+	}
+	cola, err := products.FindByName(context.Background(), "cola zero 1.5l")
+	if err != nil {
+		t.Fatalf("cola product missing: %v", err)
+	}
+	if cola.UnitValue == nil || *cola.UnitValue != 1.5 {
+		t.Errorf("new product not seeded with the magnitude: %v; want 1.5", cola.UnitValue)
+	}
+
+	// A magnitude someone cleared (0) must never win over a set one: a second
+	// confirm of water with unit_value 0 leaves the decided 0.5 in place.
+	draft.Items[0].UnitValue = floatPtr(0)
+	confirmDraft(t, svc, scanStore, []byte("receipt-2"), domain.BillConfirmInput{
+		MarketName: "ALDI", Currency: "USD", Items: draft.Items,
+	})
+	water2, _ := products.FindByName(context.Background(), "water 500ml")
+	if water2.UnitValue == nil || *water2.UnitValue != 0.5 {
+		t.Errorf("0-magnitude line erased the decided value: %v; want 0.5", water2.UnitValue)
+	}
+}
+
+// TestConfirmLinksMappingToProduct asserts the opportunistic convenience link:
+// confirming a line calls LinkProduct with the raw text and the resolved
+// (find-or-created) product id; deposit returns and unmapped names stay silent.
+func TestConfirmLinksMappingToProduct(t *testing.T) {
+	draft := domain.BillDraft{
+		MarketName: "ALDI", Currency: "USD",
+		Items: []domain.BillItemDraft{
+			{Name: "WHL MLK 1L", Unit: "l", Quantity: 1, UnitPriceCents: 120, LineTotalCents: 120},
+			{Name: "LEERGUT 8", Quantity: 1, UnitPriceCents: -25, LineTotalCents: -25},
+		},
+	}
+	mappings := newFakeProductMappingStore()
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Whole Milk 1L", Source: domain.MappingSourceAI,
+	})
+	svc, scanStore := newTestBillServiceWithMappings(t, mappings,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return draft, nil
+		})
+
+	confirmDraft(t, svc, scanStore, []byte("receipt-1"), domain.BillConfirmInput{
+		MarketName: "ALDI", Currency: "USD", Items: draft.Items,
+	})
+
+	if len(mappings.links) != 1 {
+		t.Fatalf("links recorded: %v; want exactly one (the purchase line)", mappings.links)
+	}
+	raw, id := mappings.links[0][0], mappings.links[0][1]
+	if raw != "WHL MLK 1L" || id.(int64) <= 0 {
+		t.Fatalf("link = %v %v; want raw text + a positive product id", raw, id)
 	}
 }

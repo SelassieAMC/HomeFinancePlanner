@@ -110,20 +110,21 @@ type Transaction struct {
 // computed server-side (quantity × unit price − discount, clamped to ≥ 0
 // unless the line allows negatives).
 type TransactionItem struct {
-	ID             int64   `json:"id"`
-	TransactionID  int64   `json:"transaction_id"`
-	ProductID      *int64  `json:"product_id"`
-	ProductName    string  `json:"product_name,omitempty"` // display-only join
-	Name           string  `json:"name"`
-	StandardName   string  `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
-	GenericName    string  `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = none known)
-	Brand          string  `json:"brand,omitempty"`
-	Unit           string  `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
-	CategoryID     *int64  `json:"category_id"`    // seeds a newly created product only
-	Quantity       float64 `json:"quantity"`
-	UnitPriceCents int64   `json:"unit_price_cents"`
-	DiscountCents  int64   `json:"discount_cents"`
-	LineTotalCents int64   `json:"line_total_cents"`
+	ID             int64    `json:"id"`
+	TransactionID  int64    `json:"transaction_id"`
+	ProductID      *int64   `json:"product_id"`
+	ProductName    string   `json:"product_name,omitempty"` // display-only join
+	Name           string   `json:"name"`
+	StandardName   string   `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
+	GenericName    string   `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = none known)
+	Brand          string   `json:"brand,omitempty"`
+	Unit           string   `json:"unit,omitempty"`       // measure: kg, g, l, ml, pcs, …
+	UnitValue      *float64 `json:"unit_value,omitempty"` // entered size magnitude ("500" for "500ml"); nil = unknown
+	CategoryID     *int64   `json:"category_id"`          // seeds a newly created product only
+	Quantity       float64  `json:"quantity"`
+	UnitPriceCents int64    `json:"unit_price_cents"`
+	DiscountCents  int64    `json:"discount_cents"`
+	LineTotalCents int64    `json:"line_total_cents"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

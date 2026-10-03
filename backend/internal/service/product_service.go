@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -51,10 +52,13 @@ type ProductFilters = domain.ProductFilters
 // managed separately through SetPhoto/RemovePhoto. StandardName and
 // GenericName are the optional normalization-mapping decisions for the
 // product's raw name — nil means the client didn't touch the field.
+// UnitValue is three-state in the same way: nil keeps the stored magnitude,
+// ≤ 0 (or a non-finite value) clears it, > 0 sets it.
 type ProductInput struct {
 	Name         string
 	Brand        string
 	Unit         string
+	UnitValue    *float64
 	CategoryID   *int64
 	Description  string
 	StandardName *string
@@ -250,6 +254,7 @@ func (s *ProductService) learnMapping(ctx context.Context, old, updated domain.P
 		StandardName: standard,
 		GenericName:  generic,
 		CategoryID:   categoryID,
+		ProductID:    &updated.ID,
 		Source:       domain.MappingSourceUser,
 	}); err != nil {
 		s.log.Warn("learn product mapping override", "raw", raw, "error", err)
@@ -603,10 +608,18 @@ func (s *ProductService) build(ctx context.Context, in ProductInput) (domain.Pro
 			return domain.Product{}, validationError("category %d is not a product category", *in.CategoryID)
 		}
 	}
+	// unit_value: nil = untouched; a pointer is sanitized to a plain number so
+	// a non-finite payload clears (like 0) instead of corrupting REAL math.
+	unitValue := in.UnitValue
+	if unitValue != nil && (math.IsNaN(*unitValue) || math.IsInf(*unitValue, 0)) {
+		v := 0.0
+		unitValue = &v
+	}
 	return domain.Product{
 		Name:        strings.TrimSpace(in.Name),
 		Brand:       brand,
 		Unit:        unit,
+		UnitValue:   unitValue,
 		CategoryID:  in.CategoryID,
 		Description: description,
 	}, nil
@@ -908,11 +921,13 @@ func (s *ProductService) recordNormalized(ctx context.Context, products []domain
 		existing, err := s.mappings.FindByRawName(ctx, p.Name)
 		switch {
 		case errors.Is(err, domain.ErrNotFound):
+			productID := p.ID
 			if _, cerr := s.mappings.Create(ctx, domain.ProductNameMapping{
 				RawName:      p.Name,
 				StandardName: answer.StandardName,
 				GenericName:  answer.GenericName,
 				CategoryID:   p.CategoryID,
+				ProductID:    &productID,
 				Source:       domain.MappingSourceAI,
 			}); cerr != nil {
 				if !errors.Is(cerr, domain.ErrConflict) {

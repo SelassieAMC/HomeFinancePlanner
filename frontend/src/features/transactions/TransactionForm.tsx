@@ -31,6 +31,8 @@ interface LineDraft {
   name: string;
   brand: string;
   unit: string;
+  /** Printed size magnitude ("500" for "500ml"); '' = unknown. */
+  unit_value: string;
   category_id: number | null;
   qty: string;
   price: string;
@@ -46,7 +48,17 @@ interface LineDraft {
 let nextLineKey = 1;
 
 function newLine(): LineDraft {
-  return { key: nextLineKey++, name: '', brand: '', unit: '', category_id: null, qty: '1', price: '', discount: '' };
+  return {
+    key: nextLineKey++,
+    name: '',
+    brand: '',
+    unit: '',
+    unit_value: '',
+    category_id: null,
+    qty: '1',
+    price: '',
+    discount: '',
+  };
 }
 
 function lineFromItem(item: NonNullable<Transaction['items']>[number]): LineDraft {
@@ -55,6 +67,7 @@ function lineFromItem(item: NonNullable<Transaction['items']>[number]): LineDraf
     name: item.name,
     brand: item.brand ?? '',
     unit: item.unit ?? '',
+    unit_value: item.unit_value != null ? String(item.unit_value) : '',
     category_id: item.category_id ?? null,
     qty: String(item.quantity),
     price: (item.unit_price_cents / 100).toString(),
@@ -200,6 +213,11 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       }
       const price = dollarsToCents(line.price);
       const discount = line.discount.trim() === '' ? 0 : dollarsToCents(line.discount);
+      // Printed size magnitude, decimal comma tolerated; blank or non-positive
+      // stays "unknown".
+      const unitValueRaw = line.unit_value.trim().replace(',', '.');
+      const unitValueNumber = unitValueRaw === '' ? NaN : Number(unitValueRaw);
+      const unitValue = Number.isFinite(unitValueNumber) && unitValueNumber > 0 ? unitValueNumber : undefined;
       // "Leergut" and allows_negative categories are money back; anything
       // else must not go negative (the backend rejects it).
       if (!lineAllowsNegative(line, categories) && (price < 0 || discount < 0)) {
@@ -212,6 +230,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         name: line.name.trim(),
         brand: line.brand.trim() || undefined,
         unit: line.unit || undefined,
+        unit_value: unitValue,
         category_id: line.category_id,
         quantity: Number(line.qty),
         unit_price_cents: price,
@@ -350,6 +369,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                     name: p ? p.name : line.name,
                     brand: p?.brand || line.brand,
                     unit: p?.unit || line.unit,
+                    unit_value: p?.unit_value != null ? String(p.unit_value) : line.unit_value,
                     category_id: p?.category_id ?? line.category_id,
                     normalizedFor: undefined,
                     normalizedName: undefined,
@@ -371,11 +391,21 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 aria-label={`Item ${i + 1} quantity`}
                 placeholder="Qty"
               />
-              <UnitSelect
-                value={line.unit}
-                onChange={(unit) => updateLine(line.key, { unit })}
-                ariaLabel={`Item ${i + 1} unit`}
-              />
+              <div className="unit-value-row">
+                <UnitSelect
+                  value={line.unit}
+                  onChange={(unit) => updateLine(line.key, { unit })}
+                  ariaLabel={`Item ${i + 1} unit`}
+                />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={line.unit_value}
+                  onChange={(e) => updateLine(line.key, { unit_value: e.target.value })}
+                  aria-label={`Item ${i + 1} size value`}
+                  placeholder="500"
+                />
+              </div>
               <input
                 className="transaction-line-num"
                 inputMode="decimal"

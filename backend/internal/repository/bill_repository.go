@@ -68,9 +68,9 @@ func (r *BillRepository) Create(ctx context.Context, b domain.Bill) (domain.Bill
 	for _, item := range b.Items {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO bill_items
-				(bill_id, name, brand, unit, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id, product_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, item.Name, item.Brand, item.Unit, item.CategoryID, item.Quantity, item.UnitPriceCents,
+				(bill_id, name, brand, unit, unit_value, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id, product_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, item.Name, item.Brand, item.Unit, item.UnitValue, item.CategoryID, item.Quantity, item.UnitPriceCents,
 			item.DiscountCents, item.LineTotalCents, item.IsReturn, item.BudgetID, item.ProductID); err != nil {
 			tx.Rollback()
 			return domain.Bill{}, mapWriteError("create bill item", err)
@@ -127,9 +127,9 @@ func (r *BillRepository) Update(ctx context.Context, b domain.Bill) (domain.Bill
 	for _, item := range b.Items {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO bill_items
-				(bill_id, name, brand, unit, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id, product_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			b.ID, item.Name, item.Brand, item.Unit, item.CategoryID, item.Quantity, item.UnitPriceCents,
+				(bill_id, name, brand, unit, unit_value, category_id, quantity, unit_price_cents, discount_cents, line_total_cents, is_return, budget_id, product_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			b.ID, item.Name, item.Brand, item.Unit, item.UnitValue, item.CategoryID, item.Quantity, item.UnitPriceCents,
 			item.DiscountCents, item.LineTotalCents, item.IsReturn, item.BudgetID, item.ProductID); err != nil {
 			tx.Rollback()
 			return domain.Bill{}, mapWriteError("update bill item", err)
@@ -342,7 +342,7 @@ func (r *BillRepository) Stats(ctx context.Context, groupBy, month, from, to str
 
 func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]domain.BillItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT bi.id, bi.bill_id, bi.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), bi.brand, bi.unit, bi.category_id, COALESCE(c.name, ''),
+		SELECT bi.id, bi.bill_id, bi.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), bi.brand, bi.unit, bi.unit_value, bi.category_id, COALESCE(c.name, ''),
 		       bi.quantity, bi.unit_price_cents, bi.discount_cents, bi.line_total_cents, bi.is_return, bi.budget_id, bi.product_id
 		FROM bill_items bi
 		LEFT JOIN categories c ON c.id = bi.category_id
@@ -356,7 +356,7 @@ func (r *BillRepository) itemsForBill(ctx context.Context, billID int64) ([]doma
 	out := []domain.BillItem{}
 	for rows.Next() {
 		var it domain.BillItem
-		if err := rows.Scan(&it.ID, &it.BillID, &it.Name, &it.StandardName, &it.GenericName, &it.Brand, &it.Unit, &it.CategoryID, &it.CategoryName,
+		if err := rows.Scan(&it.ID, &it.BillID, &it.Name, &it.StandardName, &it.GenericName, &it.Brand, &it.Unit, &it.UnitValue, &it.CategoryID, &it.CategoryName,
 			&it.Quantity, &it.UnitPriceCents, &it.DiscountCents, &it.LineTotalCents, &it.IsReturn, &it.BudgetID, &it.ProductID); err != nil {
 			return nil, fmt.Errorf("scan bill item: %w", err)
 		}
@@ -448,4 +448,72 @@ func scanBill(row interface{ Scan(dest ...any) error }) (domain.Bill, error) {
 	b.CreatedAt = time.Unix(createdAt, 0).UTC()
 	b.UpdatedAt = time.Unix(upd, 0).UTC()
 	return b, nil
+}
+
+// BillItemsMissingUnitValue lists scanned receipt lines the one-time backfill
+// still has to resolve, joined with the magnitude their linked product
+// carries (when any), plus the deposit/return exclusion of the catalogue
+// query — Leergut/Pfand lines never get a size.
+func (r *BillRepository) BillItemsMissingUnitValue(ctx context.Context, limit int) ([]domain.UnitValueRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT bi.id, bi.name, bi.unit, p.unit_value, p.unit
+		FROM bill_items bi
+		LEFT JOIN categories c ON c.id = bi.category_id
+		LEFT JOIN products p ON p.id = bi.product_id
+		WHERE bi.unit_value IS NULL
+		  AND (c.allows_negative IS NULL OR c.allows_negative = 0)
+		  AND lower(bi.name) NOT LIKE '%leergut%'
+		ORDER BY bi.id
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list bill items missing unit_value: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.UnitValueRow{}
+	for rows.Next() {
+		var (
+			row         domain.UnitValueRow
+			value       sql.NullFloat64
+			productUnit sql.NullString
+		)
+		if err := rows.Scan(&row.ID, &row.Name, &row.Unit, &value, &productUnit); err != nil {
+			return nil, fmt.Errorf("scan bill item missing unit_value: %w", err)
+		}
+		if value.Valid {
+			v := value.Float64
+			row.ProductUnitValue = &v
+		}
+		row.ProductUnit = productUnit.String
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// BackfillBillItemUnitValues writes parsed/copied magnitudes in one
+// transaction; the unit is rewritten only for rows whose fix carries one (the
+// worker derives that from the line's empty unit), and the IS NULL guard makes
+// concurrent writes idempotent. bill_items keeps no updated_at (snapshot
+// lines are never versioned).
+func (r *BillRepository) BackfillBillItemUnitValues(ctx context.Context, fixes []domain.UnitValueFix) error {
+	if len(fixes) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin backfill bill items transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, fix := range fixes {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE bill_items SET
+			    unit_value = ?,
+			    unit = CASE WHEN ? IS NOT NULL AND (unit IS NULL OR unit = '') THEN ? ELSE unit END
+			WHERE id = ? AND unit_value IS NULL`,
+			fix.UnitValue, fix.Unit, fix.Unit, fix.ID); err != nil {
+			return fmt.Errorf("backfill bill item unit_value %d: %w", fix.ID, err)
+		}
+	}
+	return tx.Commit()
 }

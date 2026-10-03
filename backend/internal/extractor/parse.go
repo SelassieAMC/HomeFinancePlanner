@@ -31,6 +31,7 @@ type rawItem struct {
 	GenericName  string   `json:"generic_name"`
 	Brand        string   `json:"brand"`
 	Unit         string   `json:"unit"`
+	UnitValue    *float64 `json:"unit_value"`
 	Category     string   `json:"category"`
 	Quantity     *float64 `json:"quantity"`
 	UnitPrice    *float64 `json:"unit_price"`
@@ -181,6 +182,7 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 			StandardName:   standardName,
 			GenericName:    genericName,
 			Unit:           strings.ToLower(strings.TrimSpace(it.Unit)),
+			UnitValue:      unitValueFromWire(it.UnitValue),
 			CategoryName:   strings.ToLower(strings.TrimSpace(it.Category)),
 			Quantity:       qty,
 			UnitPriceCents: toCents(unit),
@@ -317,6 +319,16 @@ func ParseOffersJSON(raw string) (domain.OfferResult, error) {
 		res.Products = append(res.Products, out)
 	}
 	return res, nil
+}
+
+// unitValueFromWire keeps a real, positive size magnitude ("500" for
+// "500ml") and rejects anything a model may emit in its place: absent, 0,
+// negative, NaN/Inf — those mean "not printed" and stay nil.
+func unitValueFromWire(v *float64) *float64 {
+	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v <= 0 {
+		return nil
+	}
+	return v
 }
 
 // isDepositReturn reports whether an article line is a bottle/crate deposit

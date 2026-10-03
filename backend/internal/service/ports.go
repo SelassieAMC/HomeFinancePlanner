@@ -147,6 +147,11 @@ type ProductMappingStore interface {
 	FindByRawName(ctx context.Context, raw string) (domain.ProductNameMapping, error)
 	Create(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error)
 	Upsert(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error)
+	// LinkProduct points the mapping for a raw text at the product it resolves
+	// to. Idempotent and opportunistic: the link is convenience data — all
+	// mapping lookups stay NOCASE-name based — so a failure only loses the
+	// link, never the decision.
+	LinkProduct(ctx context.Context, rawName string, productID int64) error
 	// UnmappedProductNames lists products whose raw name has no mapping yet —
 	// the input of the "analyze existing products" backfill job.
 	UnmappedProductNames(ctx context.Context, limit int) ([]domain.Product, error)

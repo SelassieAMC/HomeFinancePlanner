@@ -165,6 +165,7 @@ type TransactionItemInput struct {
 	Name           string
 	Brand          string
 	Unit           string
+	UnitValue      *float64 // printed size magnitude ("500" for "500ml"); nil = unknown
 	CategoryID     *int64
 	Quantity       float64
 	UnitPriceCents int64
@@ -324,6 +325,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 			Name:           name,
 			Brand:          strings.TrimSpace(it.Brand),
 			Unit:           strings.ToLower(strings.TrimSpace(it.Unit)),
+			UnitValue:      sanitizeUnitValue(it.UnitValue),
 			CategoryID:     categoryID,
 			Quantity:       it.Quantity,
 			UnitPriceCents: it.UnitPriceCents,
@@ -356,6 +358,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 				RawName:      items[i].Name,
 				StandardName: items[i].Name,
 				CategoryID:   items[i].CategoryID,
+				ProductID:    items[i].ProductID,
 				Source:       domain.MappingSourceManual,
 			}); err != nil && !errors.Is(err, domain.ErrConflict) {
 				s.log.Warn("record manual product mapping", "raw", items[i].Name, "error", err)
@@ -423,6 +426,7 @@ func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it d
 			Name:       name,
 			Brand:      it.Brand,
 			Unit:       it.Unit,
+			UnitValue:  it.UnitValue,
 			CategoryID: it.CategoryID,
 		})
 		if errors.Is(err, domain.ErrConflict) {
@@ -436,7 +440,12 @@ func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it d
 	case err != nil:
 		s.log.Warn("find product for transaction item", "name", name, "error", err)
 		return nil
+	default:
+		// Existing product: fill its missing size magnitude from the line,
+		// never overwriting a decided value (same rule as the bill flow).
+		learnProductUnitValue(ctx, s.products, s.log, &product, it.UnitValue)
 	}
+	linkProductMapping(ctx, s.mappings, s.log, name, product.ID)
 	id := product.ID
 	return &id
 }

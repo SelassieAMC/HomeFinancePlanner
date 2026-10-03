@@ -12,8 +12,15 @@ import (
 )
 
 // NewRouter builds the full HTTP handler: middleware chain + route table.
-func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services) http.Handler {
+// ui, when non-nil, is an additional http.Handler mounted outside the /api
+// space (the River job-queue web UI at /riverui).
+func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui http.Handler) http.Handler {
 	mux := http.NewServeMux()
+
+	if ui != nil {
+		mux.Handle("GET /riverui", ui)
+		mux.Handle("/riverui/", ui)
+	}
 
 	healthH := handlers.NewHealthHandler(cfg)
 	accountH := &handlers.AccountHandler{Svc: svc.Accounts}

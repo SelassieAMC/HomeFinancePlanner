@@ -337,3 +337,70 @@ func TestTransactionProductRaceResolvesThroughReRead(t *testing.T) {
 		t.Fatalf("milk product link = nil; want the raced product resolved")
 	}
 }
+
+// TestTransactionCreateUnitValue covers the printed size magnitude on manual
+// purchases: lines carry it (sanitized), new products are seeded with it, an
+// existing product's decided value is never overwritten and a NULL one is
+// learned — the same rules as the bill flow.
+func TestTransactionCreateUnitValue(t *testing.T) {
+	ctx := context.Background()
+	svc, _, products, _ := newTestTransactionService(t)
+
+	// A decided magnitude (0.5) and a NULL one on the catalogue.
+	half := 0.5
+	products.insert(domain.Product{Name: "Water 500ml", Unit: "ml", UnitValue: &half})
+	products.insert(domain.Product{Name: "Bread", Unit: "pcs"})
+
+	in := validTransactionInput()
+	in.Items = []TransactionItemInput{
+		{Name: "Water 500ml", Unit: "ml", UnitValue: floatPtr(500), Quantity: 1, UnitPriceCents: 45},    // decided stays
+		{Name: "Bread", Unit: "pcs", UnitValue: nil, Quantity: 1, UnitPriceCents: 150},                  // NULL → learned
+		{Name: "Cola Zero 1.5L", Unit: "l", UnitValue: floatPtr(1.5), Quantity: 1, UnitPriceCents: 210}, // new: seeded
+	}
+	created, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.Items[0].UnitValue == nil || *created.Items[0].UnitValue != 500 {
+		t.Fatalf("water line unit_value = %v; want 500", created.Items[0].UnitValue)
+	}
+	water, err := products.FindByName(ctx, "water 500ml")
+	if err != nil {
+		t.Fatalf("water product: %v", err)
+	}
+	if water.UnitValue == nil || *water.UnitValue != 0.5 {
+		t.Errorf("decided magnitude overwritten: %v; want 0.5", water.UnitValue)
+	}
+	bread, err := products.FindByName(ctx, "bread")
+	if err != nil {
+		t.Fatalf("bread product: %v", err)
+	}
+	if bread.UnitValue != nil {
+		t.Errorf("NULL magnitude must stay NULL when the line has none: %v", bread.UnitValue)
+	}
+	cola, err := products.FindByName(ctx, "cola zero 1.5l")
+	if err != nil {
+		t.Fatalf("cola product: %v", err)
+	}
+	if cola.UnitValue == nil || *cola.UnitValue != 1.5 {
+		t.Errorf("new product not seeded with magnitude: %v; want 1.5", cola.UnitValue)
+	}
+
+	// A 0 magnitude on a line is sanitized to "unknown" on the line too —
+	// it must never reach storage as a real value.
+	in.Items = []TransactionItemInput{
+		{Name: "Cola Zero 1.5L", Unit: "l", UnitValue: floatPtr(0), Quantity: 1, UnitPriceCents: 210},
+	}
+	in.Description = "retry"
+	retried, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("retry create: %v", err)
+	}
+	if retried.Items[0].UnitValue != nil {
+		t.Errorf("0 magnitude not sanitized: %v; want NULL", retried.Items[0].UnitValue)
+	}
+	bread2, _ := products.FindByName(ctx, "bread")
+	if bread2.UnitValue != nil {
+		t.Errorf("magnitude leaked onto bread through the 0 line: %v", bread2.UnitValue)
+	}
+}

@@ -25,13 +25,14 @@ type transactionRequest struct {
 
 // transactionItemRequest is one item line of a manually entered transaction.
 type transactionItemRequest struct {
-	Name           string  `json:"name"`
-	Brand          string  `json:"brand,omitempty"`
-	Unit           string  `json:"unit,omitempty"`
-	CategoryID     *int64  `json:"category_id"`
-	Quantity       float64 `json:"quantity"`
-	UnitPriceCents int64   `json:"unit_price_cents"`
-	DiscountCents  int64   `json:"discount_cents"`
+	Name           string   `json:"name"`
+	Brand          string   `json:"brand,omitempty"`
+	Unit           string   `json:"unit,omitempty"`
+	UnitValue      *float64 `json:"unit_value,omitempty"` // printed size magnitude ("500" for "500ml")
+	CategoryID     *int64   `json:"category_id"`
+	Quantity       float64  `json:"quantity"`
+	UnitPriceCents int64    `json:"unit_price_cents"`
+	DiscountCents  int64    `json:"discount_cents"`
 }
 
 // transactionItemInputs maps the wire lines into the service payload.
@@ -45,6 +46,7 @@ func transactionItemInputs(reqs []transactionItemRequest) []service.TransactionI
 			Name:           it.Name,
 			Brand:          it.Brand,
 			Unit:           it.Unit,
+			UnitValue:      it.UnitValue,
 			CategoryID:     it.CategoryID,
 			Quantity:       it.Quantity,
 			UnitPriceCents: it.UnitPriceCents,

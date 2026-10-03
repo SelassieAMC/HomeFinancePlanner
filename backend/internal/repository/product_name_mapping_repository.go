@@ -12,7 +12,7 @@ import (
 
 // productNameMappingColumns reads one mapping row with its category join.
 const productNameMappingColumns = `
-	m.id, m.raw_name, m.standard_name, m.generic_name, m.category_id, COALESCE(c.name, ''), m.source,
+	m.id, m.raw_name, m.standard_name, m.generic_name, m.category_id, COALESCE(c.name, ''), m.product_id, m.source,
 	m.created_at, m.updated_at`
 
 const productNameMappingFrom = `
@@ -51,9 +51,9 @@ func (r *ProductNameMappingRepository) FindByRawName(ctx context.Context, raw st
 func (r *ProductNameMappingRepository) Create(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, category_id, source, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		m.RawName, m.StandardName, m.GenericName, m.CategoryID, string(m.Source), now, now)
+		INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, category_id, product_id, source, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.RawName, m.StandardName, m.GenericName, m.CategoryID, m.ProductID, string(m.Source), now, now)
 	if err != nil {
 		return domain.ProductNameMapping{}, mapWriteError("create product mapping", err)
 	}
@@ -65,22 +65,39 @@ func (r *ProductNameMappingRepository) Create(ctx context.Context, m domain.Prod
 }
 
 // Upsert overwrites the decision for a raw text (explicit user overrides
-// only) and returns the stored row.
+// only) and returns the stored row. A caller that does not know the product
+// id (nil ProductID) never wipes an existing link — COALESCE keeps it.
 func (r *ProductNameMappingRepository) Upsert(ctx context.Context, m domain.ProductNameMapping) (domain.ProductNameMapping, error) {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, category_id, source, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, category_id, product_id, source, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(raw_name) DO UPDATE SET
 			standard_name = excluded.standard_name,
 			generic_name   = excluded.generic_name,
 			category_id    = excluded.category_id,
+			product_id     = COALESCE(excluded.product_id, product_name_mappings.product_id),
 			source         = excluded.source,
 			updated_at     = excluded.updated_at`,
-		m.RawName, m.StandardName, m.GenericName, m.CategoryID, string(m.Source), time.Now().Unix(), time.Now().Unix())
+		m.RawName, m.StandardName, m.GenericName, m.CategoryID, m.ProductID, string(m.Source), time.Now().Unix(), time.Now().Unix())
 	if err != nil {
 		return domain.ProductNameMapping{}, mapWriteError("upsert product mapping", err)
 	}
 	return r.FindByRawName(ctx, m.RawName)
+}
+
+// LinkProduct points the mapping for a raw text at the product that raw text
+// resolves to. Idempotent and opportunistic: product_id is convenience data
+// (all mapping lookups stay NOCASE-name based), so a failure only loses the
+// link, never the decision. Merged-away products clear it via the FK.
+func (r *ProductNameMappingRepository) LinkProduct(ctx context.Context, rawName string, productID int64) error {
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE product_name_mappings
+		SET product_id = ?, updated_at = ?
+		WHERE raw_name = ? COLLATE NOCASE AND (product_id IS NULL OR product_id != ?)`,
+		productID, time.Now().Unix(), rawName, productID); err != nil {
+		return mapWriteError("link product mapping", err)
+	}
+	return nil
 }
 
 // GetByID returns one mapping, or domain.ErrNotFound for unknown ids.
@@ -187,7 +204,7 @@ func scanProductNameMapping(row interface{ Scan(...any) error }) (domain.Product
 		createdAt int64
 		updatedAt int64
 	)
-	if err := row.Scan(&m.ID, &m.RawName, &m.StandardName, &m.GenericName, &m.CategoryID, &m.CategoryName,
+	if err := row.Scan(&m.ID, &m.RawName, &m.StandardName, &m.GenericName, &m.CategoryID, &m.CategoryName, &m.ProductID,
 		&source, &createdAt, &updatedAt); err != nil {
 		return domain.ProductNameMapping{}, err
 	}

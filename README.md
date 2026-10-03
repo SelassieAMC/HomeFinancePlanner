@@ -163,3 +163,6 @@ layout, and command reference.
 ## KILL APP
 sudo lsof -i :5002
 kill -9 <PID>
+
+## Generate db schema file
+sqlite3 backend/data/finance.db ".schema" > backend/data/finance.sql

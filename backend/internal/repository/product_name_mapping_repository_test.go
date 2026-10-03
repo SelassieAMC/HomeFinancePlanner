@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 
 	"home-finance-planner/backend/internal/domain"
+	"home-finance-planner/backend/migrations"
 )
 
 // seedMappingCategory inserts one category and returns its id, so mapping
@@ -334,5 +337,193 @@ func TestProductNameMappingRepository_Job(t *testing.T) {
 	if done.Status != domain.ProductNormalizationDone || done.Error != "" ||
 		done.ProcessedNames != 12 || done.MappedNames != 11 {
 		t.Fatalf("done job = %+v; want final counters and no error", done)
+	}
+}
+
+// TestProductNameMappingRepository_LinkProduct covers the opportunistic
+// convenience link: nil → filled, stale → re-pointed, matching → left alone
+// (no error, no touch), unmapped raw names ignored, and an Upsert without a
+// product (nil payload link) never erases a stored one (COALESCE).
+func TestProductNameMappingRepository_LinkProduct(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := NewProductNameMappingRepository(db)
+	prods := NewProductRepository(db)
+
+	created, err := repo.Create(ctx, domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Whole Milk 1L", Source: domain.MappingSourceAI,
+	})
+	if err != nil {
+		t.Fatalf("create mapping: %v", err)
+	}
+	if created.ProductID != nil {
+		t.Fatalf("fresh mapping carries product_id %v; want nil", created.ProductID)
+	}
+	product, err := prods.Create(ctx, domain.Product{Name: "Whole Milk 1L"})
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	// Fill (nil → id).
+	if err := repo.LinkProduct(ctx, "whl mlk 1l", product.ID); err != nil {
+		t.Fatalf("link product: %v", err)
+	}
+	linked, err := repo.FindByRawName(ctx, "WHL MLK 1L")
+	if err != nil {
+		t.Fatalf("re-read mapping: %v", err)
+	}
+	if linked.ProductID == nil || *linked.ProductID != product.ID {
+		t.Fatalf("linked product_id = %v; want %d", linked.ProductID, product.ID)
+	}
+
+	// Idempotent: linking the same id again must be a silent no-op.
+	if err := repo.LinkProduct(ctx, "WHL MLK 1L", product.ID); err != nil {
+		t.Fatalf("re-link same id: %v", err)
+	}
+
+	// Re-point (stale link → the new product).
+	other, err := prods.Create(ctx, domain.Product{Name: "Whole Milk 1L Carton"})
+	if err != nil {
+		t.Fatalf("create second product: %v", err)
+	}
+	if err := repo.LinkProduct(ctx, "whl mlk 1l", other.ID); err != nil {
+		t.Fatalf("re-link to new product: %v", err)
+	}
+	relinked, _ := repo.FindByRawName(ctx, "whl mlk 1l")
+	if relinked.ProductID == nil || *relinked.ProductID != other.ID {
+		t.Fatalf("re-linked product_id = %v; want %d", relinked.ProductID, other.ID)
+	}
+
+	// An Upsert without a product (nil) keeps the stored link; one with a
+	// non-nil payload link rewrites it (explicit decisions win).
+	upserted, err := repo.Upsert(ctx, domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Whole Milk 1L Carton", Source: domain.MappingSourceUser,
+	})
+	if err != nil {
+		t.Fatalf("upsert without product link: %v", err)
+	}
+	if upserted.ProductID == nil || *upserted.ProductID != other.ID {
+		t.Fatalf("upsert nil payload link wiped the stored one: got %v; want %d", upserted.ProductID, other.ID)
+	}
+	if err := repo.LinkProduct(ctx, "WHL MLK 1L", product.ID); err != nil {
+		t.Fatalf("re-point back: %v", err)
+	}
+	_, err = repo.Upsert(ctx, domain.ProductNameMapping{
+		RawName: "WHL MLK 1L", StandardName: "Whole Milk 1L", Source: domain.MappingSourceUser,
+		ProductID: &product.ID,
+	})
+	if err != nil {
+		t.Fatalf("upsert with product link: %v", err)
+	}
+	final, _ := repo.FindByRawName(ctx, "WHL MLK 1L")
+	if final.ProductID == nil || *final.ProductID != product.ID {
+		t.Fatalf("upsert payload link ignored: got %v; want %d", final.ProductID, product.ID)
+	}
+
+	// Unmapped raw names are silently ignored (best-effort link).
+	if err := repo.LinkProduct(ctx, "NO SUCH MAPPING", product.ID); err != nil {
+		t.Fatalf("link on unmapped raw name = %v; want nil", err)
+	}
+}
+
+// TestProductNameMappingRepository_MigrationBackfillProductLinks runs the
+// 0027 backfill UPDATE against a 0026-schema database: mappings whose raw
+// text (NOCASE) is exactly a product's name gain the product link; renamed
+// or unmatched mappings stay NULL. Also proves the new unit_value columns
+// exist after 0027.
+func TestProductNameMappingRepository_MigrationBackfillProductLinks(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/backfill.db")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.Ping(); err != nil {
+		t.Fatalf("ping sqlite: %v", err)
+	}
+
+	apply := func(afterName, lastName string) {
+		t.Helper()
+		entries, err := migrations.FS.ReadDir(".")
+		if err != nil {
+			t.Fatalf("read embedded migrations: %v", err)
+		}
+		var names []string
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".sql") {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+		started := afterName == ""
+		for _, name := range names {
+			if !started {
+				if name == afterName {
+					started = true
+				}
+				continue
+			}
+			sqlBytes, err := migrations.FS.ReadFile(name)
+			if err != nil {
+				t.Fatalf("read migration %s: %v", name, err)
+			}
+			if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
+				t.Fatalf("apply migration %s: %v", name, err)
+			}
+			if name == lastName {
+				return
+			}
+		}
+	}
+
+	// Up to 0026: the pre-0027 schema. Seed products and mappings as an
+	// upgrade would leave them, then run 0027.
+	apply("", "0026_global_discount_total.sql")
+	seed := func(query string, args ...any) int64 {
+		t.Helper()
+		res, err := db.ExecContext(ctx, query, args...)
+		if err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	milk := seed(`INSERT INTO products (name, created_at, updated_at) VALUES ('Milk', 100, 100)`)
+	seed(`INSERT INTO products (name, created_at, updated_at) VALUES ('Milk 1L', 100, 100)`) // renamed away
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, source, created_at, updated_at)
+	      VALUES ('MILK', 'Milk', 'ai', 100, 100)`) // exact NOCASE match → linked
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, source, created_at, updated_at)
+	      VALUES ('Milk 500G', 'Milk 500g', 'ai', 100, 100)`) // no product matches → NULL
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, source, created_at, updated_at)
+	      VALUES ('Milk 1L', 'Milk 1L', 'ai', 100, 100)`) // mapping is older than the products' name; raw text matches a real product → linked
+	apply("0026_global_discount_total.sql", "0027_unit_value_and_mapping_links.sql")
+
+	repo := NewProductNameMappingRepository(db)
+	linked, err := repo.FindByRawName(ctx, "MILK")
+	if err != nil {
+		t.Fatalf("find backfilled mapping: %v", err)
+	}
+	if linked.ProductID == nil || *linked.ProductID != milk {
+		t.Fatalf("backfilled link = %v; want product %d", linked.ProductID, milk)
+	}
+	unmatched, err := repo.FindByRawName(ctx, "Milk 500G")
+	if err != nil {
+		t.Fatalf("find unmatched mapping: %v", err)
+	}
+	if unmatched.ProductID != nil {
+		t.Fatalf("unmatched link = %v; want NULL", unmatched.ProductID)
+	}
+	renamed, err := repo.FindByRawName(ctx, "Milk 1L")
+	if err != nil {
+		t.Fatalf("find renamed mapping: %v", err)
+	}
+	if renamed.ProductID == nil || *renamed.ProductID != milk+1 {
+		t.Fatalf("renamed-mapping link = %v; want product %d", renamed.ProductID, milk+1)
+	}
+
+	// unit_value columns exist and round-trip as SQL NULL before any write.
+	var uv any
+	if err := db.QueryRow(`SELECT unit_value FROM products WHERE id = ?`, milk).Scan(&uv); err != nil || uv != nil {
+		t.Fatalf("migrated products.unit_value = %v (err %v); want NULL", uv, err)
 	}
 }

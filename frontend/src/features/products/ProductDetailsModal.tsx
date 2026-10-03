@@ -19,6 +19,25 @@ export function ProductDetailsModal({
   const prices = useAsync(() => productsApi.storePrices(product.id), [product.id]);
   const currency = product.price_currency ?? '';
 
+  // Price per unit of measure from the average pack price ÷ printed size;
+  // g/ml are scaled up to their per-kg/per-l figure (like the analytics rule).
+  function pricePerUnit(p: Product): string | null {
+    const unit = p.unit?.toLowerCase();
+    if (
+      !unit ||
+      !p.unit_value ||
+      p.unit_value <= 0 ||
+      p.avg_price_cents === undefined ||
+      !p.price_currency
+    ) {
+      return null;
+    }
+    const scaled = unit === 'g' || unit === 'ml';
+    const per = (p.avg_price_cents / p.unit_value) * (scaled ? 1000 : 1);
+    return `${formatCents(Math.round(per), p.price_currency)} / ${scaled ? (unit === 'g' ? 'kg' : 'l') : unit}`;
+  }
+  const perUnit = pricePerUnit(product);
+
   return (
     <Dialog title={product.name}>
       {product.has_image && (
@@ -30,7 +49,7 @@ export function ProductDetailsModal({
       <div className="item-field-grid">
         <div className="item-field">
           <span>Measure</span>
-          <span>{product.unit || '—'}</span>
+          <span>{product.unit ? (product.unit_value ? `${product.unit_value} ${product.unit}` : product.unit) : '—'}</span>
         </div>
         <div className="item-field">
           <span>Best price</span>
@@ -40,6 +59,12 @@ export function ProductDetailsModal({
               : '—'}
           </strong>
         </div>
+        {perUnit && (
+          <div className="item-field">
+            <span>Price per unit</span>
+            <strong>{perUnit}</strong>
+          </div>
+        )}
         <div className="item-field">
           <span>Last purchased</span>
           <span>{product.last_purchase_date || '—'}</span>

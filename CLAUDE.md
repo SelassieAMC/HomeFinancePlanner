@@ -284,8 +284,58 @@ products are never modified,
 names the AI skips are asked once per run, a failed batch no longer kills the
 run (the job drains the rest and ends failed with its progress kept — re-run
 retries the failed batch's names), and a job interrupted by a restart
-is marked failed at boot and can simply be run again.
-When adding
+is marked failed at boot and can simply be run again. **Unit prices** compute
+per canonical unit from the printed size magnitude `unit_value` (REAL,
+nullable — "500" for a "500ml" bottle, the number without its unit text,
+migration 0027; older rows keep NULL and there is no backfill): the
+`bill_extraction` schema asks the AI for it alongside `unit`, confirms seed
+it onto new products and learn it into existing ones whose magnitude is
+still unknown (a decided value is never overwritten; lines under 0/blank are
+"unknown"), manual transaction lines carry it through the same learn flow,
+and product edits are three-state (omitted = untouched, ≤ 0 = cleared,
+> 0 = set) so untouched saves never erase learned magnitudes. The per-item
+analytics price (g/ml ×1000 → kg/l) prefers `unit_price_cents / unit_value`
+when the magnitude is known and falls back to the raw printed-unit formula
+otherwise, the details modal shows "price per unit" from the average price ÷
+magnitude, and `product_name_mappings` gained an opportunistic `product_id`
+convenience link (FK `ON DELETE SET NULL`, backfilled where the raw text
+NOCASE-matches a product name; all mapping lookups stay name-based).
+**Background jobs** run through the River job queue
+(`riverqueue.com/river` v0.48 with the `riversqlite` driver over the same
+SQLite file): `internal/jobs/manager.go` owns a dedicated
+single-connection pool (`_txlock=immediate` in the DSN) plus the queue's own
+`rivermigrate` schema, `river.NewClient` with a 2-worker default queue and a
+**LLM-aware retry policy** — the first retry waits 2× `LLM_TIMEOUT` (floor
+30s, doubling per attempt, capped 24h) so a retry never lands while a slow
+local model is still generating the abandoned call, the lesson the
+normalization job's instant-retry timeouts taught. Boot wiring lives in
+`cmd/server/main.go` (`startJobs`): a failing queue only logs and boots
+without jobs; shutdown drains with `Stop` then hard-cancels with
+`StopAndCancel`. The **one-time unit-value backfill job**
+(`internal/jobs/unit_value.go`, kind `unit_value_backfill`) fills migration
+0027's `unit_value` columns: boot enqueues it (unless the
+`unit_value_backfill_done` settings marker exists) and the worker parses the
+printed size out of every stored raw name in passes (product names first,
+bill/transaction lines copy their linked product's magnitude or parse their
+own name last), then asks the `default_for_bills` connector — via the
+`unit_value_backfill` prompt key (migration 0028 + `prompt_defaults.go`
+fallback) — for the rows neither parser could resolve, in batches of 20
+under a per-call `LLM_TIMEOUT` with an asked-set so unresolvable names never
+spin the pass. Deposit/Leergut rows (allows_negative category or name) are
+excluded in SQL, every write is guarded by `unit_value IS NULL` (retried runs
+only work on the remainder, magnitudes never overwrite decided ones), a unit
+is adopted only into an empty one (same dimension only), decimal commas and
+German thousands dots ("1.000 g" → 1000, volumes stay decimal) are parsed
+right-to-left with cl/dl scaled into ml, and success always writes the
+completion marker even when rows stay unknown (an unreachable name is not an
+error; a failing AI call is — River retries with the backoff). The
+normalization-gap job (gpt above) stays on its in-process hand-rolled runner
+for now and will be migrated onto River later. The queue is manageable through
+the **River web UI embedded at `/riverui`** (OSS `riverqueue.com/riverui`
+compiled into the backend binary — no extra process, no auth, the same
+LAN-host posture as the API; retry/cancel/delete and job details live there):
+reachable directly on the backend port and proxied through nginx in
+`frontend/nginx.conf`. When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.

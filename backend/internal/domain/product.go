@@ -12,17 +12,18 @@ import "time"
 // returns an image. The purchase stats are display-only, computed from linked
 // accepted bill lines and manual transaction item lines.
 type Product struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	StandardName string `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
-	GenericName  string `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = no broader family known)
-	Brand        string `json:"brand,omitempty"`
-	Unit         string `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
-	CategoryID   *int64 `json:"category_id"`
-	CategoryName string `json:"category_name,omitempty"` // display-only, joined from categories
-	Description  string `json:"description,omitempty"`
-	ImagePath    string `json:"-"`
-	HasImage     bool   `json:"has_image"`
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	StandardName string   `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
+	GenericName  string   `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = no broader family known)
+	Brand        string   `json:"brand,omitempty"`
+	Unit         string   `json:"unit,omitempty"`       // measure: kg, g, l, ml, pcs, …
+	UnitValue    *float64 `json:"unit_value,omitempty"` // printed size magnitude ("500" for "500ml"); nil = unknown
+	CategoryID   *int64   `json:"category_id"`
+	CategoryName string   `json:"category_name,omitempty"` // display-only, joined from categories
+	Description  string   `json:"description,omitempty"`
+	ImagePath    string   `json:"-"`
+	HasImage     bool     `json:"has_image"`
 
 	// Display-only purchase stats, computed from linked accepted bill lines
 	// and manual transaction item lines.
@@ -66,12 +67,15 @@ const (
 // only link to the standardized form through this table. GenericName is the
 // product family ("POTATO MINIONS 450G" → "Frozen Shaped Potatoes"); empty
 // means "no broader family known" (it never falls back to the raw name).
+// ProductID is the convenience link to the product the raw text currently
+// resolves to — maintained opportunistically; lookups stay name-based.
 type ProductNameMapping struct {
 	ID           int64         `json:"id"`
 	RawName      string        `json:"raw_name"`
 	StandardName string        `json:"standard_name"`
 	GenericName  string        `json:"generic_name"`
 	CategoryID   *int64        `json:"category_id,omitempty"`
+	ProductID    *int64        `json:"product_id,omitempty"`
 	CategoryName string        `json:"category_name,omitempty"` // display-only, joined from categories
 	Source       MappingSource `json:"source"`
 	CreatedAt    time.Time     `json:"created_at"`

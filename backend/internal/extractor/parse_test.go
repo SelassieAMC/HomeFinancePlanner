@@ -433,3 +433,35 @@ func TestNormalizeDate(t *testing.T) {
 		}
 	}
 }
+
+func TestParseBillJSON_UnitValue(t *testing.T) {
+	// unit_value is the printed size magnitude: present → carried, absent /
+	// blank / zero / negative → unknown (nil). The unit text must never ride
+	// inside it, so garbage like "500ml" (a JSON string) cannot yield a value.
+	raw := `{"market_name":"REWE","date":"2026-05-03","payment_method":"card",
+		"items":[
+			{"name":"COLA ZERO 1.5L","unit":"l","unit_value":1.5,"quantity":1,"unit_price":2.10,"line_total":2.10},
+			{"name":"WATER 500ML","unit":"ml","unit_value":500,"quantity":1,"unit_price":0.45,"line_total":0.45},
+			{"name":"BANANAS","unit":"kg","unit_value":0,"quantity":1,"unit_price":1.99,"line_total":1.99},
+			{"name":"BREAD","unit":"pcs","unit_value":-3,"quantity":1,"unit_price":1.50,"line_total":1.50},
+			{"name":"EGGS","quantity":1,"unit_price":2.50,"line_total":2.50}
+		]}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Items) != 5 {
+		t.Fatalf("items: %d (want 5)", len(draft.Items))
+	}
+	if got := draft.Items[0].UnitValue; got == nil || *got != 1.5 {
+		t.Errorf("item 1 unit_value: %v (want 1.5)", got)
+	}
+	if got := draft.Items[1].UnitValue; got == nil || *got != 500 {
+		t.Errorf("item 2 unit_value: %v (want 500)", got)
+	}
+	for i, it := range draft.Items[2:] {
+		if it.UnitValue != nil {
+			t.Errorf("item %d (%q): unit_value %v (want nil)", i+3, it.Name, *it.UnitValue)
+		}
+	}
+}

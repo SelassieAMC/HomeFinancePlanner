@@ -317,6 +317,15 @@ func TestAIPromptMigrationSeedMatchesDefaults(t *testing.T) {
 	if normalization.Content != defaultPrompt(domain.PromptKeyProductNormalization) {
 		t.Errorf("seeded product_normalization drifted from the built-in default")
 	}
+	// Migration 0028 seeds the one-time unit-value backfill prompt the same
+	// way (new row; there is no prior seed to refresh).
+	backfill, err := repo.GetByKey(ctx, domain.PromptKeyUnitValueBackfill)
+	if err != nil {
+		t.Fatalf("get seeded unit-value backfill prompt: %v", err)
+	}
+	if backfill.Content != defaultPrompt(domain.PromptKeyUnitValueBackfill) {
+		t.Errorf("seeded unit_value_backfill drifted from the built-in default")
+	}
 }
 
 // openRawSQLite opens a plain SQLite database without applying migrations
@@ -412,7 +421,7 @@ func TestMigration0023RefreshesOnlyUnmodifiedBillExtractionSeed(t *testing.T) {
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got == oldContent {
 		t.Fatal("0023 did not rewrite the 0022-seeded default")
 	}
-	applyEmbeddedMigrations(t, db, "0023_product_name_mappings.sql", "0026_global_discount_total.sql")
+	applyEmbeddedMigrations(t, db, "0023_product_name_mappings.sql", "0027_unit_value_and_mapping_links.sql")
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != defaultBillExtractionPrompt {
 		t.Fatalf("old default not refreshed: got %q, want the new default byte-for-byte", got[:min(len(got), 120)])
 	}
@@ -451,7 +460,7 @@ func TestMigration0024RefreshesOnlyUnmodifiedSeeds(t *testing.T) {
 	if got := promptContent(t, db, domain.PromptKeyProductNormalization); got == defaultPrompt(domain.PromptKeyProductNormalization) {
 		t.Fatal("0023 seed already equals the new normalization default; the guarded UPDATE under test would be a no-op")
 	}
-	applyEmbeddedMigrations(t, db, "0023_product_name_mappings.sql", "0026_global_discount_total.sql")
+	applyEmbeddedMigrations(t, db, "0023_product_name_mappings.sql", "0027_unit_value_and_mapping_links.sql")
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != defaultBillExtractionPrompt {
 		t.Fatalf("old bill default not refreshed: got %q, want the new default byte-for-byte", got[:min(len(got), 120)])
 	}
@@ -472,7 +481,7 @@ func TestMigration0024RefreshesOnlyUnmodifiedSeeds(t *testing.T) {
 	if _, err := db.Exec(`UPDATE ai_prompts SET content = ? WHERE key = 'product_normalization'`, customNorm); err != nil {
 		t.Fatalf("customize product_normalization: %v", err)
 	}
-	applyEmbeddedMigrations(t, db, "0023_product_name_mappings.sql", "0026_global_discount_total.sql")
+	applyEmbeddedMigrations(t, db, "0023_product_name_mappings.sql", "0027_unit_value_and_mapping_links.sql")
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != customBill {
 		t.Fatalf("custom bill prompt must survive the guarded refresh: got %q, want %q", got, customBill)
 	}
@@ -495,7 +504,7 @@ func TestMigration0025RefreshesOnlyUnmodifiedBillExtractionSeed(t *testing.T) {
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got == defaultBillExtractionPrompt {
 		t.Fatal("0024 seed already equals the new bill default; the guarded UPDATE under test would be a no-op")
 	}
-	applyEmbeddedMigrations(t, db, "0024_generic_product_names.sql", "0026_global_discount_total.sql")
+	applyEmbeddedMigrations(t, db, "0024_generic_product_names.sql", "0027_unit_value_and_mapping_links.sql")
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != defaultBillExtractionPrompt {
 		t.Fatalf("old bill default not refreshed: got %q, want the new default byte-for-byte", got[:min(len(got), 120)])
 	}
@@ -507,7 +516,7 @@ func TestMigration0025RefreshesOnlyUnmodifiedBillExtractionSeed(t *testing.T) {
 	if _, err := db.Exec(`UPDATE ai_prompts SET content = ? WHERE key = 'bill_extraction'`, custom); err != nil {
 		t.Fatalf("customize bill_extraction: %v", err)
 	}
-	applyEmbeddedMigrations(t, db, "0024_generic_product_names.sql", "0026_global_discount_total.sql")
+	applyEmbeddedMigrations(t, db, "0024_generic_product_names.sql", "0027_unit_value_and_mapping_links.sql")
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != custom {
 		t.Fatalf("custom prompt must survive the guarded refresh: got %q, want %q", got, custom)
 	}
@@ -530,9 +539,17 @@ func TestMigration0026RefreshesOnlyUnmodifiedBillExtractionSeed(t *testing.T) {
 	if oldContent == defaultBillExtractionPrompt {
 		t.Fatal("0025 seed already equals the new default; the guarded UPDATE under test would be a no-op")
 	}
+	// The guarded refresh must actually rewrite the 0025-era seed; the
+	// final-state equality check runs through the latest refresh (0027), so
+	// it compares against the CURRENT built-in const.
 	applyEmbeddedMigrations(t, db, "0025_bill_receipt_parts.sql", "0026_global_discount_total.sql")
+	rewritten := promptContent(t, db, domain.PromptKeyBillExtraction)
+	if rewritten == oldContent {
+		t.Fatal("0026 did not rewrite the 0025-seeded default")
+	}
+	applyEmbeddedMigrations(t, db, "0026_global_discount_total.sql", "0027_unit_value_and_mapping_links.sql")
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != defaultBillExtractionPrompt {
-		t.Fatalf("old default not refreshed: got %q, want the new default byte-for-byte", got[:min(len(got), 120)])
+		t.Fatalf("old default not refreshed to the current one: got %q, want byte-for-byte", got[:min(len(got), 120)])
 	}
 
 	// (ii) A customized prompt survives the guarded refresh byte-for-byte.
@@ -542,7 +559,41 @@ func TestMigration0026RefreshesOnlyUnmodifiedBillExtractionSeed(t *testing.T) {
 	if _, err := db.Exec(`UPDATE ai_prompts SET content = ? WHERE key = 'bill_extraction'`, custom); err != nil {
 		t.Fatalf("customize bill_extraction: %v", err)
 	}
-	applyEmbeddedMigrations(t, db, "0025_bill_receipt_parts.sql", "0026_global_discount_total.sql")
+	applyEmbeddedMigrations(t, db, "0025_bill_receipt_parts.sql", "0027_unit_value_and_mapping_links.sql")
+	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != custom {
+		t.Fatalf("custom prompt must survive the guarded refresh: got %q, want %q", got, custom)
+	}
+}
+
+// TestMigration0027RefreshesOnlyUnmodifiedBillExtractionSeed executes
+// migration 0027's guarded UPDATE against SQLite databases in the two states
+// it can meet: (i) a row still carrying the 0026-era default → rewritten to
+// the unit_value default (the schema and rule list gain the printed size
+// magnitude), (ii) a user-customized row → left untouched.
+func TestMigration0027RefreshesOnlyUnmodifiedBillExtractionSeed(t *testing.T) {
+	// (i) The 0026-seeded default is refreshed to the unit_value default.
+	db := openRawSQLite(t)
+	applyEmbeddedMigrations(t, db, "", "0026_global_discount_total.sql")
+	oldContent := promptContent(t, db, domain.PromptKeyBillExtraction)
+	if oldContent == "" {
+		t.Fatal("0026 did not seed bill_extraction")
+	}
+	if oldContent == defaultBillExtractionPrompt {
+		t.Fatal("0026 seed already equals the new default; the guarded UPDATE under test would be a no-op")
+	}
+	applyEmbeddedMigrations(t, db, "0026_global_discount_total.sql", "0027_unit_value_and_mapping_links.sql")
+	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != defaultBillExtractionPrompt {
+		t.Fatalf("old default not refreshed: got %q, want the new default byte-for-byte", got[:min(len(got), 120)])
+	}
+
+	// (ii) A customized prompt survives the guarded refresh byte-for-byte.
+	db = openRawSQLite(t)
+	applyEmbeddedMigrations(t, db, "", "0026_global_discount_total.sql")
+	const custom = "my own receipt prompt"
+	if _, err := db.Exec(`UPDATE ai_prompts SET content = ? WHERE key = 'bill_extraction'`, custom); err != nil {
+		t.Fatalf("customize bill_extraction: %v", err)
+	}
+	applyEmbeddedMigrations(t, db, "0026_global_discount_total.sql", "0027_unit_value_and_mapping_links.sql")
 	if got := promptContent(t, db, domain.PromptKeyBillExtraction); got != custom {
 		t.Fatalf("custom prompt must survive the guarded refresh: got %q, want %q", got, custom)
 	}

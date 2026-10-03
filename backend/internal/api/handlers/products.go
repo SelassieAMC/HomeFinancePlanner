@@ -16,11 +16,14 @@ type ProductHandler struct {
 }
 
 type productRequest struct {
-	Name        string `json:"name"`
-	Brand       string `json:"brand"`
-	Unit        string `json:"unit"`
-	CategoryID  *int64 `json:"category_id"`
-	Description string `json:"description"`
+	Name  string `json:"name"`
+	Brand string `json:"brand"`
+	Unit  string `json:"unit"`
+	// UnitValue is the printed size magnitude ("500" for "500ml"): nil keeps
+	// the stored value, ≤ 0 clears it, > 0 sets it.
+	UnitValue   *float64 `json:"unit_value"`
+	CategoryID  *int64   `json:"category_id"`
+	Description string   `json:"description"`
 	// StandardName and GenericName are the optional normalization-mapping
 	// decisions for the product's raw name (nil = the client didn't touch
 	// the field).
@@ -133,6 +136,7 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Name:         req.Name,
 		Brand:        req.Brand,
 		Unit:         req.Unit,
+		UnitValue:    req.UnitValue,
 		CategoryID:   req.CategoryID,
 		Description:  req.Description,
 		StandardName: req.StandardName,
@@ -202,6 +206,7 @@ func (h *ProductHandler) Merge(w http.ResponseWriter, r *http.Request) {
 			Name:        req.Product.Name,
 			Brand:       req.Product.Brand,
 			Unit:        req.Product.Unit,
+			UnitValue:   req.Product.UnitValue,
 			CategoryID:  req.Product.CategoryID,
 			Description: req.Product.Description,
 		}

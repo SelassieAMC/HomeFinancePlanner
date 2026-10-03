@@ -62,6 +62,7 @@ export interface TransactionItem {
   generic_name?: string; // display-only join: raw text → generic product family
   brand?: string;
   unit?: string;
+  unit_value?: number | null; // printed size magnitude ("500" for "500ml"); null = unknown
   category_id?: number | null;
   quantity: number;
   unit_price_cents: number;
@@ -73,6 +74,7 @@ export interface TransactionItemInput {
   name: string;
   brand?: string;
   unit?: string;
+  unit_value?: number | null; // printed size magnitude (null = unknown)
   category_id?: number | null;
   quantity: number;
   unit_price_cents: number;
@@ -162,6 +164,7 @@ export interface Product {
   generic_name?: string; // display-only join: raw text → generic product family
   brand?: string;
   unit?: string; // measure: kg, g, l, ml, pcs, …
+  unit_value?: number | null; // printed size magnitude ("500" for "500ml"); null = unknown
   category_id?: number | null;
   category_name?: string;
   description?: string;
@@ -210,6 +213,8 @@ export interface ProductInput {
   name: string;
   brand?: string;
   unit?: string;
+  /** Printed size magnitude: omitted = untouched, ≤ 0 = cleared. */
+  unit_value?: number;
   category_id?: number | null;
   description?: string;
   /** Normalization-mapping decision for the raw name; omitted = untouched. */
@@ -308,6 +313,7 @@ export interface BillItem {
   generic_name?: string; // display-only join: raw text → generic product family
   brand?: string; // optional, editable in the draft
   unit?: string; // measure: kg, g, l, ml, pcs, …
+  unit_value?: number | null; // printed size magnitude; null = unknown
   category_id?: number | null;
   category_name?: string;
   quantity: number;
@@ -419,6 +425,7 @@ export interface BillDraftItem {
   generic_name?: string; // AI/memory family suggestion, editable (learned at confirm)
   brand?: string;
   unit?: string; // measure: kg, g, l, ml, pcs, …
+  unit_value?: number | null; // AI-suggested (or user-corrected) size magnitude; null = unknown
   category_name?: string;
   category_id?: number | null;
   quantity: number;
@@ -534,6 +541,7 @@ export interface BillConfirmInput {
     generic_name?: string; // per-line family override (empty = no family)
     brand?: string;
     unit?: string;
+    unit_value?: number | null; // printed size magnitude (null = unknown)
     category_id?: number | null;
     quantity: number;
     unit_price_cents: number;

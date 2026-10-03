@@ -509,3 +509,107 @@ func TestProductRepositoryListGrouped(t *testing.T) {
 			page.Items[0].Items[0].ID, page.Items[0].Items[1].ID, milkID, oatID)
 	}
 }
+
+// TestProductRepositoryUnitValue covers the printed-size magnitude end to end
+// on the products table: Create stores it, Update is three-state (nil keeps
+// the stored value, ≤ 0 clears it, > 0 sets it) so untouched saves never
+// erase learned magnitudes, and both listings read it back.
+func TestProductRepositoryUnitValue(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := NewProductRepository(db)
+
+	half := 0.5
+	created, err := repo.Create(ctx, domain.Product{
+		Name: "Cola Zero 1.5L", Unit: "l", UnitValue: &half,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.UnitValue == nil || *created.UnitValue != 0.5 {
+		t.Fatalf("created unit_value = %v; want 0.5", created.UnitValue)
+	}
+
+	read, err := repo.FindByName(ctx, "colA zero 1.5l")
+	if err != nil {
+		t.Fatalf("find by name: %v", err)
+	}
+	if read.UnitValue == nil || *read.UnitValue != 0.5 {
+		t.Fatalf("read unit_value = %v; want 0.5", read.UnitValue)
+	}
+
+	// nil = untouched: an edit without the magnitude keeps the learned one.
+	kept, err := repo.Update(ctx, domain.Product{ID: read.ID, Name: read.Name, Unit: "l"})
+	if err != nil {
+		t.Fatalf("update without unit_value: %v", err)
+	}
+	if kept.UnitValue == nil || *kept.UnitValue != 0.5 {
+		t.Fatalf("unit_value after nil update = %v; want kept 0.5", kept.UnitValue)
+	}
+
+	// > 0 = set.
+	newVal := 1.5
+	changed, err := repo.Update(ctx, domain.Product{ID: read.ID, Name: read.Name, Unit: "l", UnitValue: &newVal})
+	if err != nil {
+		t.Fatalf("update with unit_value: %v", err)
+	}
+	if changed.UnitValue == nil || *changed.UnitValue != 1.5 {
+		t.Fatalf("unit_value after set update = %v; want 1.5", changed.UnitValue)
+	}
+
+	// ≤ 0 = clear (the explicit-clear path of the edit form).
+	zero := 0.0
+	cleared, err := repo.Update(ctx, domain.Product{ID: read.ID, Name: read.Name, Unit: "l", UnitValue: &zero})
+	if err != nil {
+		t.Fatalf("clear unit_value: %v", err)
+	}
+	if cleared.UnitValue != nil {
+		t.Fatalf("unit_value after clear = %v; want nil", cleared.UnitValue)
+	}
+	// And another nil update keeps the cleared state (does not resurrect).
+	kept2, err := repo.Update(ctx, domain.Product{ID: read.ID, Name: read.Name, Unit: "l"})
+	if err != nil {
+		t.Fatalf("update after clear: %v", err)
+	}
+	if kept2.UnitValue != nil {
+		t.Fatalf("unit_value after nil update on cleared = %v; want still nil", kept2.UnitValue)
+	}
+
+	// Lists read the magnitude back for the UI (flat and grouped alike).
+	one := 1.0
+	if _, err := repo.Create(ctx, domain.Product{Name: "Milk", Unit: "ml", UnitValue: &one}); err != nil {
+		t.Fatalf("create second product: %v", err)
+	}
+	page, err := repo.List(ctx, domain.ProductFilters{})
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("list: %v items %d (want 2)", err, len(page.Items))
+	}
+	found := map[string]*float64{}
+	for _, p := range page.Items {
+		found[p.Name] = p.UnitValue
+	}
+	if found["Cola Zero 1.5L"] != nil {
+		t.Errorf("flat list unit_value for cleared product = %v; want nil", found["Cola Zero 1.5L"])
+	}
+	if got := found["Milk"]; got == nil || *got != 1.0 {
+		t.Errorf("flat list unit_value for Milk = %v; want 1", got)
+	}
+	page2, err := repo.ListGrouped(ctx, domain.ProductFilters{})
+	if err != nil || len(page2.Items) == 0 {
+		t.Fatalf("list grouped: %v groups %d", err, len(page2.Items))
+	}
+	seen := 0
+	for _, g := range page2.Items {
+		for _, p := range g.Items {
+			if p.Name == "Milk" {
+				seen++
+				if p.UnitValue == nil || *p.UnitValue != 1.0 {
+					t.Errorf("grouped list unit_value for Milk = %v; want 1", p.UnitValue)
+				}
+			}
+		}
+	}
+	if seen != 1 {
+		t.Errorf("Milk appeared %d times in the grouped list; want exactly once", seen)
+	}
+}

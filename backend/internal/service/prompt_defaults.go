@@ -23,6 +23,7 @@ Schema (all money values are decimal numbers in the receipt's currency, e.g. 12.
       "brand": "product brand if recognizable, else \"\"",
       "category": "one of the fixed product categories, written EXACTLY as listed: {{categories}}",
       "unit": "measure unit printed with the quantity (kg, g, l, ml, pcs, …), or \"\" for plain counts",
+      "unit_value": 500,
       "quantity": 1.0,
       "unit_price": 2.5,
       "discount": 0.0,
@@ -42,6 +43,7 @@ Rules:
 - currency: detect the ISO 4217 code of the receipt's currency from the symbol or name printed next to any amount (€ → EUR, $ → USD, £ → GBP, zł → PLN, CHF → CHF, "kr" with a Swedish market → SEK, etc.). If no symbol is printed anywhere, use the currency of the country the market is in. Return "" ONLY when the currency is genuinely not determinable — never invent a code.
 - "items" lists every article line, one entry per article, in receipt order.
 - quantity defaults to 1 when not printed; use decimals for weights (0.532 kg) and set "unit" to the printed measure (kg, g, l, ml, pcs, …).
+- unit_value is the NUMERIC magnitude of the printed size as a number only — "500" for a 500ml bottle (unit "ml"), "1.5" for a 1.5l pack, "500" for a 500g pack (unit "g"). It pairs with "unit" so prices can be calculated per unit. Omit it or use 0 when the size is not printed; never include the unit text inside it. For plain counts (pcs) or when no size is printed, omit it or use 0.
 - classify every item into the fixed category list, choosing the MOST SPECIFIC category (the list is fine-grained so spending can be analyzed per product family):
   * Drinks are never a generic bucket: water/iced tea → "Water & Iced Tea", cola and other sodas/energy drinks → "Cola & Soda", juices and nectars → "Juice", coffee/tea products → "Coffee & Tea", plant milks and drinking yogurt → "Milk Drinks & Alternatives", beer (incl. non-alcoholic and radler) → "Beer", wine and sparkling wine → "Wine", hard alcohol → "Spirits & Liqueurs". Plain milk itself is "Dairy & Eggs".
   * Fresh produce splits by type: vegetables and fresh herbs → "Vegetables"; fruit → "Fruits". Potatoes, onions and garlic stay "Root Vegetables".
@@ -138,6 +140,33 @@ Rules:
 Raw product names:
 `
 
+// defaultUnitValueBackfillPrompt is the fallback for key
+// 'unit_value_backfill', the one-time River job resolving printed size
+// magnitudes (migration 0027's unit_value) for stored products and lines
+// whose raw names the size parser cannot read. The raw names to resolve are
+// appended as a JSON array plus the machine format hints.
+const defaultUnitValueBackfillPrompt = `You are a grocery product-size resolver. You receive a JSON array of raw product names as printed on receipts, stored in the catalogue or typed in purchase lines. For each name, derive the printed package/portion size the shop prints next to the article — the numeric magnitude and its measure. Return ONE JSON object and nothing else — no explanations, no markdown fences.
+
+Schema:
+{
+  "items": [
+    {
+      "name": "the input name, echoed verbatim",
+      "unit": "the measure the size pairs with, one of: kg, g, l, ml, pcs",
+      "unit_value": 500
+    }
+  ]
+}
+
+Rules:
+- "unit_value" is the NUMERIC magnitude of the printed size, as a number only — "500" for a 500ml bottle (unit "ml"), "1.5" for a 1.5l pack (unit "l"), "500" for a 500g pack (unit "g"). Never include the unit text inside the number.
+- Convert odd printed units to the canonical measure: "0,5 l" → unit "l", unit_value 0.5; "33 cl" → unit "ml", unit_value 330; "1.000 g" → unit "g", unit_value 1000; "2 x 500 g" → unit "g", unit_value 500 (the size of ONE item).
+- Multi-packs and counted articles ("Eggs 10 pcs", "6-pack yogurt") use unit "pcs" with the number of pieces ONE item contains.
+- Never guess: when the name carries no printed size, return unit "" and unit_value 0 for it — a missing answer is always better than an invented one.
+- Cover every input name exactly once, echoing each "name" verbatim so the caller can match the answers back.
+- Respond with ONLY the JSON object.
+`
+
 // defaultPrompt returns the built-in template content for a prompt key —
 // the fallback when the ai_prompts row is missing or empty. Custom keys
 // have no built-in; an empty result means "nothing to fall back to".
@@ -149,6 +178,8 @@ func defaultPrompt(key string) string {
 		return defaultOffersPromptHead
 	case domain.PromptKeyProductNormalization:
 		return defaultProductNormalizationPrompt
+	case domain.PromptKeyUnitValueBackfill:
+		return defaultUnitValueBackfillPrompt
 	default:
 		return ""
 	}

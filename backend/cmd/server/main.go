@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,14 +16,23 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
+
 	"home-finance-planner/backend/internal/api"
 	"home-finance-planner/backend/internal/config"
 	"home-finance-planner/backend/internal/crypto"
+	"home-finance-planner/backend/internal/domain"
 	"home-finance-planner/backend/internal/extractor"
 	"home-finance-planner/backend/internal/fx"
+	"home-finance-planner/backend/internal/jobs"
 	"home-finance-planner/backend/internal/repository"
 	"home-finance-planner/backend/internal/service"
+
+	"riverqueue.com/riverui"
 )
+
+// riverUIPrefix is where the embedded River web UI is mounted on the server.
+const riverUIPrefix = "/riverui"
 
 func main() {
 	if err := run(); err != nil {
@@ -88,9 +99,27 @@ func run() error {
 
 	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, productMappings, transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc, promptSvc)
 
+	// Background jobs (River over SQLite): start the queue and — once, until
+	// its completion marker exists — the unit-value backfill. A queue that
+	// cannot start must never block the API: its failure is logged and boot
+	// continues, and the backfill simply re-attempts on the next start.
+	jobsMgr, err := startJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, log)
+	if err != nil {
+		log.Error("background jobs disabled for this run", "error", err)
+	}
+
+	// River's web UI, embedded (no extra process): mounted at /riverui on the
+	// same server unauthenticated — the same posture as the API on a
+	// local-network host. Its background services stop with the boot context,
+	// which the signal handler cancels at shutdown.
+	var uiHandler http.Handler
+	if jobsMgr != nil {
+		uiHandler = startRiverUI(ctx, jobsMgr, log) // nil on failure: run without it
+	}
+
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      api.NewRouter(cfg, log, svc),
+		Handler:      api.NewRouter(cfg, log, svc, uiHandler),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 	}
@@ -121,10 +150,138 @@ func run() error {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
-		// Stop the scan workers before the DB pool closes (never waits for a
-		// running extraction — those scans resume on the next start).
+		// Stop the scan workers and the job queue before the DB pool closes
+		// (scans never wait for a running extraction — those resume on the
+		// next start; the queue drains its jobs, cancelling if it cannot).
 		billSvc.Close()
 		cartSearchSvc.Close()
+		if jobsMgr != nil {
+			jobsStopCtx, jobsStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+			if err := jobsMgr.Stop(jobsStopCtx); err != nil {
+				log.Warn("river graceful stop interrupted; cancelling queued work", "error", err)
+			}
+			jobsStopCancel()
+			cancelCtx, cancelCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := jobsMgr.StopAndCancel(cancelCtx); err != nil {
+				log.Warn("river cancel stop failed", "error", err)
+			}
+			cancelCancel()
+		}
+	}
+	return nil
+}
+
+// startJobs wires the River job queue (its own single-connection pool over
+// the same SQLite file) and enqueues the one-time unit-value backfill when its
+// completion marker is absent and rows still lack a magnitude. The returned
+// manager is nil when the queue could not be built — boot continues without
+// it.
+func startJobs(
+	ctx context.Context,
+	cfg config.Config,
+	db *sql.DB,
+	settingsRepo *repository.SettingsRepository,
+	settingsSvc *service.SettingsService,
+	promptSvc *service.AIPromptService,
+	extractor *extractor.Extractor,
+	log *slog.Logger,
+) (*jobs.Manager, error) {
+	workers := river.NewWorkers()
+	river.AddWorker(workers, jobs.NewUnitValueBackfillWorker(
+		repository.NewProductRepository(db),
+		repository.NewBillRepository(db),
+		repository.NewTransactionRepository(db),
+		settingsRepo,
+		settingsSvc,
+		promptSvc,
+		extractor,
+		cfg.LLMTimeout,
+		log,
+	))
+	mgr, err := jobs.NewManager(ctx, cfg.DBPath, cfg.LLMTimeout, workers, log)
+	if err != nil {
+		return nil, err
+	}
+	if err := mgr.Start(ctx); err != nil {
+		mgr.Close()
+		return nil, fmt.Errorf("start river client: %w", err)
+	}
+
+	if err := enqueueUnitValueBackfill(ctx, db, settingsRepo, mgr, log); err != nil {
+		log.Warn("unit-value backfill not enqueued", "error", err)
+	}
+	return mgr, nil
+}
+
+// startRiverUI embeds River's web UI (riverqueue.com/riverui) at /riverui as
+// an http.Handler serving on the same server. It runs no extra process and adds
+// no auth — on a LAN host the API is equally unauthenticated. A nil handler is
+// returned when the UI cannot be built, so boot continues without it; the
+// handler's background services stop when ctx (the boot signal context) is
+// canceled at shutdown.
+func startRiverUI(ctx context.Context, mgr *jobs.Manager, log *slog.Logger) http.Handler {
+	endpoints := riverui.NewEndpoints(mgr.Client(), nil)
+	ui, err := riverui.NewHandler(&riverui.HandlerOpts{
+		Endpoints: endpoints,
+		Logger:    log,
+		Prefix:    riverUIPrefix,
+	})
+	if err != nil {
+		log.Error("river ui disabled for this run", "error", err)
+		return nil
+	}
+	if err := ui.Start(ctx); err != nil {
+		log.Error("river ui failed to start", "error", err)
+		return nil
+	}
+	log.Info("river ui available", "path", riverUIPrefix)
+	return ui
+}
+
+// enqueueUnitValueBackfill inserts the one-time unit-value job (unique by
+// kind, so concurrent boots race harmlessly) unless the completion marker
+// exists or nothing is left to fill; a database with nothing to do gets its
+// marker directly, without queue churn.
+func enqueueUnitValueBackfill(
+	ctx context.Context,
+	db *sql.DB,
+	settingsRepo *repository.SettingsRepository,
+	mgr *jobs.Manager,
+	log *slog.Logger,
+) error {
+	if _, err := settingsRepo.Get(ctx, jobs.UnitValueCompletionKey); err == nil {
+		return nil // already finished in a previous run
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf("read completion marker: %w", err)
+	}
+
+	products := repository.NewProductRepository(db)
+	bills := repository.NewBillRepository(db)
+	transactions := repository.NewTransactionRepository(db)
+	for _, list := range []func(context.Context, int) ([]domain.UnitValueRow, error){
+		products.ProductsMissingUnitValue,
+		bills.BillItemsMissingUnitValue,
+		transactions.TransactionItemsMissingUnitValue,
+	} {
+		rows, err := list(ctx, 1)
+		if err != nil {
+			return fmt.Errorf("count backfill candidates: %w", err)
+		}
+		if len(rows) > 0 {
+			// Unique per kind (the kind always rides in the unique key unless
+			// ExcludeKind is set): concurrent boots race harmlessly, and the
+			// default ByState keeps completed/duplicate protection while
+			// discarded jobs can be re-enqueued on the next boot.
+			return mgr.Insert(ctx, jobs.UnitValueBackfillArgs{}, &river.InsertOpts{
+				UniqueOpts: river.UniqueOpts{ByQueue: true},
+			})
+		}
+	}
+
+	// Nothing left to resolve (everything filled elsewhere, or a fresh
+	// database): mark done so boot stops checking.
+	if err := settingsRepo.Put(ctx, jobs.UnitValueCompletionKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("write completion marker (nothing to fill): %w", err)
 	}
 	return nil
 }

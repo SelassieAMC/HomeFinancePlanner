@@ -9,6 +9,7 @@ const (
 	PromptKeyBillExtraction       = "bill_extraction"
 	PromptKeyOfferSearch          = "offer_search"
 	PromptKeyProductNormalization = "product_normalization"
+	PromptKeyUnitValueBackfill    = "unit_value_backfill"
 )
 
 // AIPrompt is a managed instruction text sent to an AI connector. Key is the

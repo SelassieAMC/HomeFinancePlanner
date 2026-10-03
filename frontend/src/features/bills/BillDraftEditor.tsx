@@ -108,6 +108,7 @@ export function buildConfirmInput(
       generic_name: it.generic_name,
       brand: it.brand,
       unit: it.unit,
+      unit_value: it.unit_value ?? undefined,
       category_id: it.category_id ?? undefined,
       quantity: it.quantity,
       unit_price_cents: it.unit_price_cents,
@@ -373,6 +374,7 @@ export function BillDraftEditor({
       // Keep the line's existing value when the product has none.
       brand: p.brand || it.brand,
       unit: p.unit || it.unit,
+      unit_value: p.unit_value ?? it.unit_value,
       category_id: p.category_id ?? it.category_id,
     });
   }
@@ -837,11 +839,26 @@ export function BillDraftEditor({
                   </div>
                   <div className="item-field">
                     <span>Measure</span>
-                    <UnitSelect
-                      value={it.unit}
-                      ariaLabel={`Measure for ${it.name}`}
-                      onChange={(unit) => updateItem(it.id, { unit })}
-                    />
+                    <div className="unit-value-row">
+                      <UnitSelect
+                        value={it.unit}
+                        ariaLabel={`Measure for ${it.name}`}
+                        onChange={(unit) => updateItem(it.id, { unit })}
+                      />
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        defaultValue={it.unit_value ?? ''}
+                        placeholder="500"
+                        aria-label={`Size value for ${it.name}`}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value.trim().replace(',', '.'));
+                          updateItem(it.id, {
+                            unit_value: Number.isFinite(v) && v > 0 ? v : undefined,
+                          });
+                        }}
+                      />
+                    </div>
                   </div>
                   <div className="item-field">
                     <span>Qty</span>

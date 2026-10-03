@@ -1614,6 +1614,21 @@ select:focus,
   gap: 0.6rem;
 }
 
+/* Measure + size-value pair inside one item-field (the numeric magnitude the
+   AI reads — "500" for a 500ml line). */
+.unit-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(56px, 0.8fr);
+  gap: 0.3rem;
+  width: 100%;
+}
+
+.unit-value-row input {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.95rem;
+  min-width: 0;
+}
+
 .item-detail input,
 .item-detail select,
 .item-detail .category-select-trigger {
@@ -2273,6 +2288,14 @@ select:focus,
 .transaction-line .category-select {
   flex: 0 1 auto;
   min-width: 72px;
+}
+
+/* Unit + size-value pair inside a manual item line: keep it inline with the
+   other fields (the shared .unit-value-row is width:100% for the editor grid). */
+.transaction-line .unit-value-row {
+  flex: 0 1 150px;
+  width: auto;
+  min-width: 130px;
 }
 
 .transaction-line .btn {

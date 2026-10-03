@@ -208,3 +208,66 @@ func TestTransactionRepositoryBillIDRoundTrip(t *testing.T) {
 		t.Fatalf("bill id after update = %v; want preserved", updated.BillID)
 	}
 }
+
+// TestTransactionRepositoryUnitValueRoundTrip covers the printed size
+// magnitude on manual item lines: stored with the line, read back through
+// GetByID and UpdateWithItems; NULL for lines without a magnitude.
+func TestTransactionRepositoryUnitValueRoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	accountID := seedTransactionBase(t, db)
+
+	half := 0.5
+	items := []domain.TransactionItem{
+		{Name: "Cola Bottle", Unit: "l", UnitValue: &half, Quantity: 1, UnitPriceCents: 210, LineTotalCents: 210},
+		{Name: "Bananas", Unit: "kg", Quantity: 1, UnitPriceCents: 199, LineTotalCents: 199},
+	}
+	created, err := repo.CreateWithItems(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 409,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+	}, items)
+	if err != nil {
+		t.Fatalf("create with items: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Items[0].UnitValue == nil || *got.Items[0].UnitValue != 0.5 {
+		t.Errorf("line 1 unit_value = %v; want 0.5", got.Items[0].UnitValue)
+	}
+	if got.Items[1].UnitValue != nil {
+		t.Errorf("line 2 unit_value = %v; want NULL", got.Items[1].UnitValue)
+	}
+
+	// Replacing the lines carries the new magnitudes.
+	replaced := floatPtr2(1.5)
+	items = []domain.TransactionItem{
+		{Name: "Cola Bottle", Unit: "l", UnitValue: replaced, Quantity: 1, UnitPriceCents: 210, LineTotalCents: 210},
+	}
+	updated, err := repo.UpdateWithItems(ctx, domain.Transaction{
+		ID:          created.ID,
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 210,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+	}, items)
+	if err != nil {
+		t.Fatalf("update with items: %v", err)
+	}
+	if updated.Items[0].UnitValue == nil || *updated.Items[0].UnitValue != 1.5 {
+		t.Errorf("replaced line unit_value = %v; want 1.5", updated.Items[0].UnitValue)
+	}
+}
+
+// floatPtr2 avoids colliding with per-file float helpers in other test files
+// of the same package.
+func floatPtr2(v float64) *float64 { return &v }

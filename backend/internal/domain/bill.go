@@ -84,22 +84,23 @@ type Bill struct {
 
 // BillItem is one article line printed on a bill.
 type BillItem struct {
-	ID             int64   `json:"id"`
-	BillID         int64   `json:"bill_id"`
-	Name           string  `json:"name"`
-	StandardName   string  `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
-	GenericName    string  `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = none known)
-	Brand          string  `json:"brand,omitempty"`         // optional, editable in the draft
-	Unit           string  `json:"unit,omitempty"`          // measure: kg, g, l, ml, pcs, …
-	CategoryID     *int64  `json:"category_id"`             // nullable; resolved from the AI category name
-	CategoryName   string  `json:"category_name"`           // display-only, joined from categories
-	Quantity       float64 `json:"quantity"`
-	UnitPriceCents int64   `json:"unit_price_cents"` // may be negative for deposit returns
-	DiscountCents  int64   `json:"discount_cents"`
-	LineTotalCents int64   `json:"line_total_cents"` // may be negative for deposit returns
-	IsReturn       bool    `json:"is_return"`        // deposit/bottle return (e.g. "Leergut")
-	BudgetID       *int64  `json:"budget_id"`        // per-line budget override (nil = bill's budget)
-	ProductID      *int64  `json:"product_id"`       // catalogue product resolved from the name (nil for returns)
+	ID             int64    `json:"id"`
+	BillID         int64    `json:"bill_id"`
+	Name           string   `json:"name"`
+	StandardName   string   `json:"standard_name,omitempty"` // display-only, joined from product_name_mappings (raw name stays authoritative)
+	GenericName    string   `json:"generic_name,omitempty"`  // display-only, joined from product_name_mappings (product family; empty = none known)
+	Brand          string   `json:"brand,omitempty"`         // optional, editable in the draft
+	Unit           string   `json:"unit,omitempty"`          // measure: kg, g, l, ml, pcs, …
+	UnitValue      *float64 `json:"unit_value,omitempty"`    // printed size magnitude ("500" for "500ml"); nil = unknown
+	CategoryID     *int64   `json:"category_id"`             // nullable; resolved from the AI category name
+	CategoryName   string   `json:"category_name"`           // display-only, joined from categories
+	Quantity       float64  `json:"quantity"`
+	UnitPriceCents int64    `json:"unit_price_cents"` // may be negative for deposit returns
+	DiscountCents  int64    `json:"discount_cents"`
+	LineTotalCents int64    `json:"line_total_cents"` // may be negative for deposit returns
+	IsReturn       bool     `json:"is_return"`        // deposit/bottle return (e.g. "Leergut")
+	BudgetID       *int64   `json:"budget_id"`        // per-line budget override (nil = bill's budget)
+	ProductID      *int64   `json:"product_id"`       // catalogue product resolved from the name (nil for returns)
 }
 
 // BillItemDraft is one extracted line before persistence. ID is a session-local
@@ -107,20 +108,21 @@ type BillItem struct {
 // AI suggestion; CategoryID is filled in by the service after resolving (or
 // creating) the category.
 type BillItemDraft struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	StandardName   string  `json:"standard_name,omitempty"` // AI-suggested (or user-corrected) standardized name; empty on pre-feature drafts
-	GenericName    string  `json:"generic_name,omitempty"`  // AI-suggested (or user-corrected) product-family name; empty = no broader family known
-	Brand          string  `json:"brand,omitempty"`
-	Unit           string  `json:"unit,omitempty"` // measure: kg, g, l, ml, pcs, …
-	CategoryName   string  `json:"category_name,omitempty"`
-	CategoryID     *int64  `json:"category_id,omitempty"` // nil when no category applies
-	Quantity       float64 `json:"quantity"`
-	UnitPriceCents int64   `json:"unit_price_cents"` // may be negative for deposit returns
-	DiscountCents  int64   `json:"discount_cents"`
-	LineTotalCents int64   `json:"line_total_cents"` // may be negative for deposit returns
-	IsReturn       bool    `json:"is_return,omitempty"`
-	BudgetID       *int64  `json:"budget_id,omitempty"` // per-line budget override (nil = bill's budget)
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	StandardName   string   `json:"standard_name,omitempty"` // AI-suggested (or user-corrected) standardized name; empty on pre-feature drafts
+	GenericName    string   `json:"generic_name,omitempty"`  // AI-suggested (or user-corrected) product-family name; empty = no broader family known
+	Brand          string   `json:"brand,omitempty"`
+	Unit           string   `json:"unit,omitempty"`       // measure: kg, g, l, ml, pcs, …
+	UnitValue      *float64 `json:"unit_value,omitempty"` // AI-suggested (or user-corrected) size magnitude; nil = unknown
+	CategoryName   string   `json:"category_name,omitempty"`
+	CategoryID     *int64   `json:"category_id,omitempty"` // nil when no category applies
+	Quantity       float64  `json:"quantity"`
+	UnitPriceCents int64    `json:"unit_price_cents"` // may be negative for deposit returns
+	DiscountCents  int64    `json:"discount_cents"`
+	LineTotalCents int64    `json:"line_total_cents"` // may be negative for deposit returns
+	IsReturn       bool     `json:"is_return,omitempty"`
+	BudgetID       *int64   `json:"budget_id,omitempty"` // per-line budget override (nil = bill's budget)
 }
 
 // BillDraft is the normalized extraction result, held in memory until the user

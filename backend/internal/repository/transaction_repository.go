@@ -27,7 +27,7 @@ const transactionFrom = `
 
 const transactionItemColumns = `
 	ti.id, ti.transaction_id, ti.product_id, p.name AS product_name, ti.name,
-	COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), ti.brand, ti.unit, ti.category_id,
+	COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), ti.brand, ti.unit, ti.unit_value, ti.category_id,
 	ti.quantity, ti.unit_price_cents, ti.discount_cents, ti.line_total_cents, ti.created_at, ti.updated_at`
 
 const transactionItemFrom = `
@@ -263,10 +263,10 @@ func insertTransactionItems(ctx context.Context, tx *sql.Tx, transactionID int64
 	for _, it := range items {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO transaction_items
-				(transaction_id, product_id, name, brand, unit, category_id,
+				(transaction_id, product_id, name, brand, unit, unit_value, category_id,
 				 quantity, unit_price_cents, discount_cents, line_total_cents, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			transactionID, nullableID(it.ProductID), it.Name, it.Brand, it.Unit, nullableID(it.CategoryID),
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			transactionID, nullableID(it.ProductID), it.Name, it.Brand, it.Unit, nullableFloat(it.UnitValue), nullableID(it.CategoryID),
 			it.Quantity, it.UnitPriceCents, it.DiscountCents, it.LineTotalCents, now, now); err != nil {
 			return mapWriteError("insert transaction item", err)
 		}
@@ -280,6 +280,14 @@ func nullableID(id *int64) any {
 		return nil
 	}
 	return *id
+}
+
+// nullableFloat converts a *float64 into a driver value (nil for SQL NULL).
+func nullableFloat(v *float64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 // scanTransaction scans one row from either *sql.Rows or *sql.Row.
@@ -325,12 +333,13 @@ func scanTransactionItem(row interface{ Scan(dest ...any) error }) (domain.Trans
 		it        domain.TransactionItem
 		productID sql.NullInt64
 		prodName  sql.NullString
+		unitValue sql.NullFloat64
 		category  sql.NullInt64
 		createdAt int64
 		updatedAt int64
 	)
 	if err := row.Scan(&it.ID, &it.TransactionID, &productID, &prodName, &it.Name, &it.StandardName, &it.GenericName,
-		&it.Brand, &it.Unit, &category, &it.Quantity, &it.UnitPriceCents,
+		&it.Brand, &it.Unit, &unitValue, &category, &it.Quantity, &it.UnitPriceCents,
 		&it.DiscountCents, &it.LineTotalCents, &createdAt, &updatedAt); err != nil {
 		return domain.TransactionItem{}, err
 	}
@@ -339,6 +348,10 @@ func scanTransactionItem(row interface{ Scan(dest ...any) error }) (domain.Trans
 		it.ProductID = &v
 	}
 	it.ProductName = prodName.String
+	if unitValue.Valid {
+		v := unitValue.Float64
+		it.UnitValue = &v
+	}
 	if category.Valid {
 		v := category.Int64
 		it.CategoryID = &v
@@ -346,4 +359,73 @@ func scanTransactionItem(row interface{ Scan(dest ...any) error }) (domain.Trans
 	it.CreatedAt = time.Unix(createdAt, 0).UTC()
 	it.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return it, nil
+}
+
+// TransactionItemsMissingUnitValue lists manual purchase lines the one-time
+// backfill still has to resolve, joined with the magnitude their linked
+// product carries (when any). Deposit/return lines (negative-allowed category
+// or a Leergut name) are never given a size.
+func (r *TransactionRepository) TransactionItemsMissingUnitValue(ctx context.Context, limit int) ([]domain.UnitValueRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT ti.id, ti.name, ti.unit, p.unit_value, p.unit
+		FROM transaction_items ti
+		LEFT JOIN categories c ON c.id = ti.category_id
+		LEFT JOIN products p ON p.id = ti.product_id
+		WHERE ti.unit_value IS NULL
+		  AND (c.allows_negative IS NULL OR c.allows_negative = 0)
+		  AND lower(ti.name) NOT LIKE '%leergut%'
+		ORDER BY ti.id
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list transaction items missing unit_value: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.UnitValueRow{}
+	for rows.Next() {
+		var (
+			row         domain.UnitValueRow
+			value       sql.NullFloat64
+			productUnit sql.NullString
+		)
+		if err := rows.Scan(&row.ID, &row.Name, &row.Unit, &value, &productUnit); err != nil {
+			return nil, fmt.Errorf("scan transaction item missing unit_value: %w", err)
+		}
+		if value.Valid {
+			v := value.Float64
+			row.ProductUnitValue = &v
+		}
+		row.ProductUnit = productUnit.String
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// BackfillTransactionItemUnitValues writes parsed/copied magnitudes in one
+// transaction; the unit is rewritten only for rows whose fix carries one (the
+// worker derives that from the line's empty unit), and the IS NULL guard makes
+// concurrent writes idempotent.
+func (r *TransactionRepository) BackfillTransactionItemUnitValues(ctx context.Context, fixes []domain.UnitValueFix) error {
+	if len(fixes) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin backfill transaction items: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().Unix()
+	for _, fix := range fixes {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE transaction_items SET
+			    unit_value = ?,
+			    unit = CASE WHEN ? IS NOT NULL AND (unit IS NULL OR unit = '') THEN ? ELSE unit END,
+			    updated_at = ?
+			WHERE id = ? AND unit_value IS NULL`,
+			fix.UnitValue, fix.Unit, fix.Unit, now, fix.ID); err != nil {
+			return fmt.Errorf("backfill transaction item unit_value %d: %w", fix.ID, err)
+		}
+	}
+	return tx.Commit()
 }

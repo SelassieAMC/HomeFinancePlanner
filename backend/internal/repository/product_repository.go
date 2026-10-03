@@ -84,7 +84,7 @@ const (
 // productColumns + productFrom read a product together with its derived
 // purchase stats (see productStatsCTE). The column order matches scanProduct.
 const productColumns = `
-	p.id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), p.brand, p.unit, p.category_id, c.name, p.description, p.image_path,
+	p.id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), p.brand, p.unit, p.unit_value, p.category_id, c.name, p.description, p.image_path,
 	p.created_at, p.updated_at,
 	COALESCE(s.times_bought, 0) AS times_bought,
 	s.last_purchase_date, s.latest_price_cents, s.price_currency,
@@ -232,7 +232,7 @@ stats AS (
 	FROM ranked r JOIN latest l ON l.product_id = r.product_id
 	GROUP BY r.product_id
 )
-SELECT p.id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), p.brand, p.unit, p.category_id, c.name, p.description, p.image_path,
+SELECT p.id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), p.brand, p.unit, p.unit_value, p.category_id, c.name, p.description, p.image_path,
        p.created_at, p.updated_at,
        COALESCE(s.times_bought, 0) AS times_bought,
        s.last_purchase_date, s.latest_price_cents, s.price_currency,
@@ -385,6 +385,7 @@ func scanGroupedProduct(row interface{ Scan(dest ...any) error }) (domain.Produc
 		updatedAt     int64
 		categoryID    sql.NullInt64
 		categoryName  sql.NullString
+		unitValue     sql.NullFloat64
 		lastPurchase  sql.NullString
 		latestPrice   sql.NullInt64
 		avgPrice      sql.NullInt64
@@ -392,7 +393,7 @@ func scanGroupedProduct(row interface{ Scan(dest ...any) error }) (domain.Produc
 		priceCurrency sql.NullString
 		lastStore     sql.NullString
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.StandardName, &p.GenericName, &p.Brand, &p.Unit,
+	if err := row.Scan(&p.ID, &p.Name, &p.StandardName, &p.GenericName, &p.Brand, &p.Unit, &unitValue,
 		&categoryID, &categoryName, &p.Description, &imagePath,
 		&createdAt, &updatedAt, &p.TimesBought, &lastPurchase,
 		&latestPrice, &priceCurrency, &avgPrice, &bestPrice, &lastStore, &groupKey); err != nil {
@@ -404,6 +405,10 @@ func scanGroupedProduct(row interface{ Scan(dest ...any) error }) (domain.Produc
 	}
 	p.CategoryName = categoryName.String
 	p.HasImage = imagePath != ""
+	if unitValue.Valid {
+		v := unitValue.Float64
+		p.UnitValue = &v
+	}
 	if lastPurchase.Valid {
 		p.LastPurchaseDate = lastPurchase.String
 	}
@@ -710,9 +715,12 @@ func (r *ProductRepository) Merge(ctx context.Context, keepID, dropID int64, fin
 	}
 
 	res, err = tx.ExecContext(ctx, `
-		UPDATE products SET name = ?, brand = ?, unit = ?, category_id = ?, description = ?, updated_at = ?
+		UPDATE products SET name = ?, brand = ?, unit = ?,
+		       unit_value = CASE WHEN ? IS NULL THEN unit_value WHEN ? <= 0 THEN NULL ELSE ? END,
+		       category_id = ?, description = ?, updated_at = ?
 		WHERE id = ?`,
-		final.Name, final.Brand, final.Unit, final.CategoryID, final.Description, time.Now().Unix(), keepID)
+		final.Name, final.Brand, final.Unit,
+		final.UnitValue, final.UnitValue, final.UnitValue, final.CategoryID, final.Description, time.Now().Unix(), keepID)
 	if err != nil {
 		tx.Rollback()
 		return domain.Product{}, mapWriteError("update merged product", err)
@@ -734,9 +742,9 @@ func (r *ProductRepository) Merge(ctx context.Context, keepID, dropID int64, fin
 func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (domain.Product, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO products (name, brand, unit, category_id, description, image_path, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, '', ?, ?)`,
-		p.Name, p.Brand, p.Unit, p.CategoryID, p.Description, now, now)
+		INSERT INTO products (name, brand, unit, unit_value, category_id, description, image_path, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)`,
+		p.Name, p.Brand, p.Unit, nullableFloat(p.UnitValue), p.CategoryID, p.Description, now, now)
 	if err != nil {
 		return domain.Product{}, mapWriteError("create product", err)
 	}
@@ -750,13 +758,18 @@ func (r *ProductRepository) Create(ctx context.Context, p domain.Product) (domai
 // Update rewrites the user-editable fields on the products row only. Linked
 // bill items and transaction items are snapshots: they keep the name/unit/
 // category they were created with (unlike the merge flow, which rewrites the
-// items it redirects). It deliberately never touches image_path — photo
-// files are owned by SetPhoto only.
+// items it redirects). unit_value is three-state: nil keeps the stored
+// magnitude untouched, a pointer to ≤ 0 clears it, > 0 sets it — so form
+// payloads that omit the field never erase learned data. It deliberately
+// never touches image_path — photo files are owned by SetPhoto only.
 func (r *ProductRepository) Update(ctx context.Context, p domain.Product) (domain.Product, error) {
 	res, err := r.db.ExecContext(ctx, `
-		UPDATE products SET name = ?, brand = ?, unit = ?, category_id = ?, description = ?, updated_at = ?
+		UPDATE products SET name = ?, brand = ?, unit = ?,
+		       unit_value = CASE WHEN ? IS NULL THEN unit_value WHEN ? <= 0 THEN NULL ELSE ? END,
+		       category_id = ?, description = ?, updated_at = ?
 		WHERE id = ?`,
-		p.Name, p.Brand, p.Unit, p.CategoryID, p.Description, time.Now().Unix(), p.ID)
+		p.Name, p.Brand, p.Unit,
+		p.UnitValue, p.UnitValue, p.UnitValue, p.CategoryID, p.Description, time.Now().Unix(), p.ID)
 	if err != nil {
 		return domain.Product{}, mapWriteError("update product", err)
 	}
@@ -787,19 +800,24 @@ func scanProduct(row interface{ Scan(dest ...any) error }) (domain.Product, erro
 		createdAt     int64
 		updatedAt     int64
 		categoryName  sql.NullString
+		unitValue     sql.NullFloat64
 		lastPurchase  sql.NullString
 		latestPrice   sql.NullInt64
 		avgPrice      sql.NullInt64
 		bestPrice     sql.NullInt64
 		priceCurrency sql.NullString
 	)
-	if err := row.Scan(&p.ID, &p.Name, &p.StandardName, &p.GenericName, &p.Brand, &p.Unit, &p.CategoryID, &categoryName, &p.Description, &imagePath,
+	if err := row.Scan(&p.ID, &p.Name, &p.StandardName, &p.GenericName, &p.Brand, &p.Unit, &unitValue, &p.CategoryID, &categoryName, &p.Description, &imagePath,
 		&createdAt, &updatedAt, &p.TimesBought, &lastPurchase, &latestPrice, &priceCurrency, &avgPrice, &bestPrice); err != nil {
 		return domain.Product{}, err
 	}
 	p.CategoryName = categoryName.String
 	p.ImagePath = imagePath
 	p.HasImage = imagePath != ""
+	if unitValue.Valid {
+		v := unitValue.Float64
+		p.UnitValue = &v
+	}
 	if lastPurchase.Valid {
 		p.LastPurchaseDate = lastPurchase.String
 	}
@@ -819,4 +837,62 @@ func scanProduct(row interface{ Scan(dest ...any) error }) (domain.Product, erro
 	p.CreatedAt = time.Unix(createdAt, 0).UTC()
 	p.UpdatedAt = time.Unix(updatedAt, 0).UTC()
 	return p, nil
+}
+
+// ProductsMissingUnitValue lists catalogue rows the one-time backfill still
+// has to resolve: no unit_value yet, and neither a deposit/return category
+// (sizes never apply to Pfand) nor a Leergut name.
+func (r *ProductRepository) ProductsMissingUnitValue(ctx context.Context, limit int) ([]domain.UnitValueRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT p.id, p.name, p.unit
+		FROM products p
+		LEFT JOIN categories c ON c.id = p.category_id
+		WHERE p.unit_value IS NULL
+		  AND (c.allows_negative IS NULL OR c.allows_negative = 0)
+		  AND lower(p.name) NOT LIKE '%leergut%'
+		ORDER BY p.id
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list products missing unit_value: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.UnitValueRow{}
+	for rows.Next() {
+		var row domain.UnitValueRow
+		if err := rows.Scan(&row.ID, &row.Name, &row.Unit); err != nil {
+			return nil, fmt.Errorf("scan product missing unit_value: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// BackfillProductUnitValues writes parsed magnitudes in one transaction. The
+// unit is rewritten only for rows whose fix carries one (the worker derives
+// that from the row's own empty unit), and the IS NULL guard makes concurrent
+// writes idempotent — a decided magnitude is never overwritten.
+func (r *ProductRepository) BackfillProductUnitValues(ctx context.Context, fixes []domain.UnitValueFix) error {
+	if len(fixes) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin backfill products transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().Unix()
+	for _, fix := range fixes {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE products SET
+			    unit_value = ?,
+			    unit = CASE WHEN ? IS NOT NULL AND (unit IS NULL OR unit = '') THEN ? ELSE unit END,
+			    updated_at = ?
+			WHERE id = ? AND unit_value IS NULL`,
+			fix.UnitValue, fix.Unit, fix.Unit, now, fix.ID); err != nil {
+			return fmt.Errorf("backfill product unit_value %d: %w", fix.ID, err)
+		}
+	}
+	return tx.Commit()
 }

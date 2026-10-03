@@ -880,6 +880,7 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 			Name:           name,
 			Brand:          strings.TrimSpace(it.Brand),
 			Unit:           strings.ToLower(strings.TrimSpace(it.Unit)),
+			UnitValue:      sanitizeUnitValue(it.UnitValue),
 			CategoryID:     it.CategoryID,
 			Quantity:       it.Quantity,
 			UnitPriceCents: it.UnitPriceCents,
@@ -1049,10 +1050,13 @@ func (s *BillService) resolveProduct(ctx context.Context, it domain.BillItem) *i
 	product, err := s.products.FindByName(ctx, name)
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
+		// New product: seed it with the line's descriptor fields, magnitude
+		// included — the line is the only evidence for it right now.
 		product, err = s.products.Create(ctx, domain.Product{
 			Name:       name,
 			Brand:      it.Brand,
 			Unit:       it.Unit,
+			UnitValue:  it.UnitValue,
 			CategoryID: it.CategoryID,
 		})
 		if errors.Is(err, domain.ErrConflict) {
@@ -1066,9 +1070,55 @@ func (s *BillService) resolveProduct(ctx context.Context, it domain.BillItem) *i
 	case err != nil:
 		s.log.Warn("find product for bill item", "name", name, "error", err)
 		return nil
+	default:
+		// Existing product: learn the line's size magnitude only when the
+		// catalogue knows none yet — a value someone (or an earlier scan)
+		// decided on is never overwritten, mirroring how mapping memory
+		// preserves reviewed standard names.
+		learnProductUnitValue(ctx, s.products, s.log, &product, it.UnitValue)
 	}
+	linkProductMapping(ctx, s.mappings, s.log, name, product.ID)
 	id := product.ID
 	return &id
+}
+
+// sanitizeUnitValue keeps a real, positive size magnitude and collapses
+// anything else (nil, 0, negative, NaN/Inf) to unknown. Lenient on purpose:
+// a draft echoing 0 or garbage must never fail a confirm.
+func sanitizeUnitValue(v *float64) *float64 {
+	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v <= 0 {
+		return nil
+	}
+	return v
+}
+
+// learnProductUnitValue fills an existing product's missing size magnitude
+// from a confirmed purchase line (bill or manual); a magnitude the user, an
+// earlier scan or a manual entry decided on is never overwritten. Non-fatal:
+// a failed write only loses the magnitude; the next purchase retries.
+func learnProductUnitValue(ctx context.Context, store ProductStore, log *slog.Logger, p *domain.Product, v *float64) {
+	v = sanitizeUnitValue(v)
+	if v == nil || p.UnitValue != nil {
+		return
+	}
+	prev := *p
+	p.UnitValue = v
+	if _, err := store.Update(ctx, *p); err != nil {
+		log.Warn("learn product unit value", "product", p.ID, "error", err)
+		*p = prev
+	}
+}
+
+// linkProductMapping points the normalization memory's row for a raw text at
+// the product that text resolves to (opportunistic, non-fatal — lookups stay
+// name-based; a missing link only removes a display shortcut).
+func linkProductMapping(ctx context.Context, mappings ProductMappingStore, log *slog.Logger, raw string, productID int64) {
+	if mappings == nil {
+		return
+	}
+	if err := mappings.LinkProduct(ctx, raw, productID); err != nil {
+		log.Warn("link product mapping", "raw", raw, "error", err)
+	}
 }
 
 // extractDraft resolves the managed extraction prompt (built-in default when

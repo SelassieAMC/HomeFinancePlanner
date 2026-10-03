@@ -22,20 +22,28 @@ func NewAnalyticsRepository(db *sql.DB) *AnalyticsRepository { return &Analytics
 const itemPriceLimit = 20000
 
 // ItemPrices returns one row per accepted, non-return, positively priced bill
-// line in the range, with its unit price normalized to a base unit
-// (g→kg and ml→l multiply the per-unit price by 1000; pcs stays per piece).
-// Lines with a free-text or missing unit are excluded rather than compared
-// across incompatible units. Serves the store price index and the personal
-// price index.
+// line in the range, with its unit price normalized to a base unit. When the
+// line carries a size magnitude (unit_value, e.g. 500 for "500ml") the
+// per-printed-unit price is rescaled to cents per whole unit of the unit
+// itself, then g→kg and ml→l multiply by 1000 like before ("2.39 per l"
+// on a 1l line → 2.39; on a 0.5l line → 4.78); pcs stays per piece. Lines
+// without a magnitude keep the legacy math (the printed unit price IS the
+// per-unit price). Lines with a free-text or missing unit are excluded rather
+// than compared across incompatible units. Serves the store price index and
+// the personal price index.
 func (r *AnalyticsRepository) ItemPrices(ctx context.Context, from, to string) ([]domain.ItemPriceRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT COALESCE(b.store_id, 0), b.date,
 		       lower(trim(bi.name)),
 		       CASE bi.unit WHEN 'g' THEN 'kg' WHEN 'ml' THEN 'l' ELSE bi.unit END,
 		       b.currency,
-		       CASE bi.unit WHEN 'g' THEN bi.unit_price_cents * 1000.0
-		                    WHEN 'ml' THEN bi.unit_price_cents * 1000.0
-		                    ELSE bi.unit_price_cents * 1.0 END,
+		       CASE WHEN COALESCE(bi.unit_value, 0) > 0 THEN
+		                bi.unit_price_cents / bi.unit_value
+		                * CASE bi.unit WHEN 'g' THEN 1000.0 WHEN 'ml' THEN 1000.0 ELSE 1.0 END
+		            ELSE CASE bi.unit WHEN 'g' THEN bi.unit_price_cents * 1000.0
+		                             WHEN 'ml' THEN bi.unit_price_cents * 1000.0
+		                             ELSE bi.unit_price_cents * 1.0 END
+		       END,
 		       COALESCE(bi.category_id, 0), COALESCE(c.name, ''), COALESCE(c.section, '')
 		FROM bill_items bi
 		JOIN bills b ON b.id = bi.bill_id
