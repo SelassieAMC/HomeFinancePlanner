@@ -451,14 +451,16 @@ export interface BillDraft {
   budget_id?: number | null; // budget the whole bill counts toward
 }
 
-/** Pipeline state of one uploaded receipt (analysis runs in the background). */
-export type BillScanStatus = 'analyzing' | 'done' | 'failed';
+/** Pipeline state of one uploaded receipt (analysis runs in the background).
+ *  "cancelled" = the user aborted an in-progress analysis (its photos are kept
+ *  until the request is deleted or swept). */
+export type BillScanStatus = 'analyzing' | 'done' | 'failed' | 'cancelled';
 
 export interface BillScan {
   scan_token: string;
   status: BillScanStatus;
   provider_id?: string;
-  draft?: BillDraft; // absent while analyzing or failed
+  draft?: BillDraft; // absent while analyzing, failed or cancelled
   error?: string; // set when failed
   file_count?: number; // receipt parts in this upload (omitted for single-file scans)
   created_at?: string;

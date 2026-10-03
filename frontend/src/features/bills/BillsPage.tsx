@@ -65,6 +65,22 @@ export function BillsPage() {
     }
   }
 
+  // Aborts an in-progress analysis (the AI read is stopped server-side); the
+  // row turns "cancelled" — still deletable or re-readable from here.
+  async function cancelScan(token: string) {
+    setScanBusyToken(token);
+    setScanError(null);
+    try {
+      await billsApi.cancelScan(token);
+      scans.reload();
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : 'Failed to cancel the analysis.');
+      scans.reload();
+    } finally {
+      setScanBusyToken(null);
+    }
+  }
+
   const filters: { month?: string } = {};
   if (month) filters.month = month;
 
@@ -273,7 +289,7 @@ export function BillsPage() {
                     className={`badge ${
                       scan.status === 'analyzing'
                         ? 'badge-analyzing'
-                        : scan.status === 'failed'
+                        : scan.status === 'failed' || scan.status === 'cancelled'
                           ? 'badge-failed'
                           : 'badge-draft'
                     }`}
@@ -282,7 +298,9 @@ export function BillsPage() {
                       ? 'Analyzing…'
                       : scan.status === 'failed'
                         ? 'Failed'
-                        : 'Ready to review'}
+                        : scan.status === 'cancelled'
+                          ? 'Cancelled'
+                          : 'Ready to review'}
                   </span>
                 </summary>
                 <div className="item-detail">
@@ -294,11 +312,25 @@ export function BillsPage() {
                         minutes — you can leave this page and check back later;
                         the draft appears here once it's ready.
                       </p>
+                      <div className="camera-row">
+                        <Button
+                          variant="danger"
+                          disabled={scanBusyToken !== null}
+                          onClick={() => cancelScan(scan.scan_token)}
+                        >
+                          ✕ Cancel analysis
+                        </Button>
+                      </div>
                     </>
                   )}
-                  {scan.status === 'failed' && (
+                  {(scan.status === 'failed' || scan.status === 'cancelled') && (
                     <>
-                      <ErrorMessage message={scan.error || 'Analysis failed.'} />
+                      {scan.status === 'failed' && (
+                        <ErrorMessage message={scan.error || 'Analysis failed.'} />
+                      )}
+                      {scan.status === 'cancelled' && (
+                        <p className="hint-text">Analysis was cancelled — the photos are kept until the request is deleted.</p>
+                      )}
                       <div className="camera-row">
                         <Button
                           variant="secondary"
@@ -308,11 +340,11 @@ export function BillsPage() {
                           🔁 Try again
                         </Button>
                         <Button
-                          variant="secondary"
+                          variant="danger"
                           disabled={scanBusyToken !== null}
                           onClick={() => discardScan(scan.scan_token)}
                         >
-                          Discard
+                          🗑️ Delete request
                         </Button>
                       </div>
                     </>
@@ -325,6 +357,13 @@ export function BillsPage() {
                       >
                         Review draft
                       </Link>
+                      <Button
+                        variant="danger"
+                        disabled={scanBusyToken !== null}
+                        onClick={() => discardScan(scan.scan_token)}
+                      >
+                        🗑️ Delete request
+                      </Button>
                     </div>
                   )}
                 </div>

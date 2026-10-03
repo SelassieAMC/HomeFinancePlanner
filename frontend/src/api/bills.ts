@@ -51,11 +51,16 @@ export const billsApi = {
     const qs = statuses?.length ? `?status=${statuses.join(',')}` : '';
     return apiClient.get<BillScan[]>(`${BASE}/bills/scans${qs}`);
   },
-  /** Re-run extraction on a finished/failed scan (returns to "analyzing"). */
+  /** Re-run extraction on a finished/failed/cancelled scan (returns to
+   *  "analyzing"). */
   reextract: (token: string, providerId?: string) =>
     apiClient.post<BillScan>(`${BASE}/bills/scan/${token}/extract`, {
       provider_id: providerId || undefined,
     }),
+  /** Abort an in-progress analysis: the row is marked cancelled and the
+   *  running AI extraction is signalled to stop. Returns the updated scan. */
+  cancelScan: (token: string) =>
+    apiClient.post<BillScan>(`${BASE}/bills/scan/${token}/cancel`, undefined),
   /** Persist the confirmed draft as an accepted bill (+ optional expense). */
   confirm: (token: string, input: BillConfirmInput) =>
     apiClient.post<Bill>(`${BASE}/bills/scan/${token}/confirm`, input),

@@ -153,11 +153,12 @@ const (
 	BillScanAnalyzing BillScanStatus = "analyzing"
 	BillScanDone      BillScanStatus = "done"
 	BillScanFailed    BillScanStatus = "failed"
+	BillScanCancelled BillScanStatus = "cancelled" // user aborted an in-progress analysis
 )
 
 func (s BillScanStatus) Valid() bool {
 	switch s {
-	case BillScanAnalyzing, BillScanDone, BillScanFailed:
+	case BillScanAnalyzing, BillScanDone, BillScanFailed, BillScanCancelled:
 		return true
 	}
 	return false

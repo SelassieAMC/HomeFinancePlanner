@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,5 +178,85 @@ func TestBillScanRepository_DeleteStaleLegacyRow(t *testing.T) {
 	}
 	if len(paths) != 1 || paths[0] != "/data/bills/legacy.jpg" {
 		t.Fatalf("legacy sweeper paths = %q, want the single legacy path", paths)
+	}
+}
+
+// CancelScan's repository side: an analyzing scan moves to 'cancelled', the
+// write never fires for a scan in any other state (the worker's result must
+// not resurrect it either way), a receipt whose read was cancelled stays
+// re-uploadable, and a re-extraction can claim the cancelled row back.
+func TestBillScanRepository_CancelledScans(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := NewBillScanRepository(db)
+
+	// Migration 0029 rebuilt the table: the CHECK must carry the new status and
+	// the pre-rebuild columns (0011's file_hash) must have survived the copy.
+	var checkSQL string
+	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bill_scans'`).Scan(&checkSQL); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(checkSQL, "cancelled") {
+		t.Fatalf("bill_scans CHECK does not allow 'cancelled': %s", checkSQL)
+	}
+
+	if _, err := repo.Create(ctx, domain.BillScan{
+		ScanToken: "tok-cancel", ImagePath: "/data/bills/c.jpg", FileHash: "hash-c",
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Guarded write: the first cancel wins.
+	marked, err := repo.MarkCancelled(ctx, "tok-cancel")
+	if err != nil || !marked {
+		t.Fatalf("MarkCancelled = %v, %v; want true, nil", marked, err)
+	}
+	got, err := repo.GetByToken(ctx, "tok-cancel")
+	if err != nil || got.Status != domain.BillScanCancelled {
+		t.Fatalf("status = %v, %v; want cancelled", got.Status, err)
+	}
+
+	// Second cancel is a benign no-op (not analyzing anymore).
+	marked, err = repo.MarkCancelled(ctx, "tok-cancel")
+	if err != nil || marked {
+		t.Fatalf("repeat MarkCancelled = %v, %v; want false, nil", marked, err)
+	}
+
+	// Result writes are guarded on analyzing — a cancelled scan stays so.
+	if err := repo.MarkFailed(ctx, "tok-cancel", "late worker failure"); err == nil {
+		t.Error("MarkFailed on a cancelled scan must not succeed")
+	}
+	if err := repo.MarkDone(ctx, "tok-cancel", &domain.BillDraft{MarketName: "M"}); err == nil {
+		t.Error("MarkDone on a cancelled scan must not succeed")
+	}
+
+	// A cancelled receipt is re-uploadable (dedup skips cancelled, like failed).
+	if got, _ := repo.GetByFileHash(ctx, "hash-c"); got.ScanToken == "tok-cancel" {
+		t.Error("cancelled scan still matches GetByFileHash — the re-upload would stay blocked")
+	}
+
+	// A cancelled scan can be claimed for a re-extraction.
+	claimed, err := repo.ClaimRetry(ctx, "tok-cancel", "p2")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimRetry = %v, %v; want true, nil", claimed, err)
+	}
+	if got, _ := repo.GetByToken(ctx, "tok-cancel"); got.Status != domain.BillScanAnalyzing || got.ProviderID != "p2" {
+		t.Fatalf("claimed scan = %v/%s, want analyzing/p2", got.Status, got.ProviderID)
+	}
+
+	// A cancelled scan is swept with the session TTL (ClaimRetry above put it
+	// back to analyzing, so cancel it again first).
+	if marked, err := repo.MarkCancelled(ctx, "tok-cancel"); err != nil || !marked {
+		t.Fatalf("re-MarkCancelled = %v, %v; want true, nil", marked, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE bill_scans SET updated_at = 1 WHERE token = ?`, "tok-cancel"); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := repo.DeleteStale(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("DeleteStale: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "/data/bills/c.jpg" {
+		t.Fatalf("sweeper paths = %q, want the cancelled scan's file", paths)
 	}
 }

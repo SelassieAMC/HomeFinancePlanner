@@ -88,8 +88,9 @@ type extractRequest struct {
 	ProviderID string `json:"provider_id,omitempty"`
 }
 
-// GetScan returns one scan's pipeline state (analyzing | done | failed with
-// the draft); polled by the client while a scan is analyzing.
+// GetScan returns one scan's pipeline state (analyzing | done | failed |
+// cancelled, with the draft on done); polled by the client while a scan is
+// analyzing.
 func (h *BillHandler) GetScan(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	scan, err := h.Svc.GetScan(r.Context(), token)
@@ -145,6 +146,19 @@ func (h *BillHandler) Confirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, r, http.StatusCreated, bill)
+}
+
+// CancelScan aborts an in-progress analysis: the scan is marked cancelled and
+// the running AI extraction is signalled to stop, returning the resulting
+// scan state.
+func (h *BillHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	scan, err := h.Svc.CancelScan(r.Context(), token)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, scan)
 }
 
 // DiscardScan drops an unconfirmed scan and its receipt file.

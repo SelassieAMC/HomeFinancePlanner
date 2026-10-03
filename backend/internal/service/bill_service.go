@@ -55,6 +55,7 @@ type BillScanStore interface {
 	List(ctx context.Context, statuses []domain.BillScanStatus, limit int) ([]domain.BillScan, error)
 	MarkDone(ctx context.Context, token string, draft *domain.BillDraft) error
 	MarkFailed(ctx context.Context, token, msg string) error
+	MarkCancelled(ctx context.Context, token string) (bool, error)
 	ClaimRetry(ctx context.Context, token, providerID string) (bool, error)
 	Delete(ctx context.Context, token string) (domain.BillScan, error)
 	DeleteStale(ctx context.Context, olderThan time.Time) ([]string, error)
@@ -119,6 +120,9 @@ type BillService struct {
 	cancel    context.CancelFunc
 	mu        sync.Mutex // guards lastSweep only
 	lastSweep time.Time
+
+	cancelMu   sync.Mutex                    // guards cancellers
+	cancellers map[string]context.CancelFunc // aborts an in-flight extraction by scan token
 }
 
 // NewBillService wires the bill workflow and starts the background scan
@@ -169,6 +173,7 @@ func NewBillService(
 		queue:          make(chan string, scanQueueCapacity),
 		ctx:            ctx,
 		cancel:         cancel,
+		cancellers:     make(map[string]context.CancelFunc),
 	}
 	s.recoverScans(ctx)
 	for i := 1; i <= billScanWorkers; i++ {
@@ -576,6 +581,72 @@ func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill 
 		return fmt.Errorf("sync bill transaction: %w", err)
 	}
 	return nil
+}
+
+// CancelScan aborts an in-progress analysis: the scan moves from analyzing to
+// the cancelled state and the running AI extraction is signalled to stop. The
+// receipt files are kept — the request can be deleted (DiscardScan), re-run
+// (Reextract claims the cancelled scan too) or simply swept with the session
+// TTL. A scan that already finished (or was never analyzing) is not an error
+// the caller can act on, but an unknown token is not found.
+func (s *BillService) CancelScan(ctx context.Context, token string) (domain.BillScan, error) {
+	scan, err := s.scans.GetByToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.BillScan{}, fmt.Errorf("scan %s not found or expired — scan the receipt again: %w", token, domain.ErrNotFound)
+		}
+		return domain.BillScan{}, err
+	}
+
+	// Mark first: once the row is cancelled, a worker result write (which only
+	// fires from 'analyzing') can no longer resurrect it, whatever the abort
+	// signal's timing.
+	marked, err := s.scans.MarkCancelled(ctx, token)
+	if err != nil {
+		return domain.BillScan{}, err
+	}
+	if marked {
+		// The worker is mid-extraction: cancel its context so the model call
+		// stops instead of being left generating for an abandoned scan. When no
+		// cancel func is registered the scan is still queued — the worker skips
+		// non-analyzing rows on pickup, so nothing else is needed.
+		if cancel := s.lookupCanceller(token); cancel != nil {
+			cancel()
+		}
+		s.log.Info("scan cancelled by user", "token", token)
+	}
+
+	// Re-read so the caller sees the resulting state (including a scan that
+	// finished the moment before the cancel landed).
+	fresh, err := s.scans.GetByToken(ctx, token)
+	if err != nil {
+		return scan, nil // swept/confirmed in between — the earlier state stands
+	}
+	return fresh, nil
+}
+
+// registerCanceller records the context cancel func able to abort the
+// extraction currently running for a scan token.
+func (s *BillService) registerCanceller(token string, cancel context.CancelFunc) {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	s.cancellers[token] = cancel
+}
+
+// removeCanceller drops the entry when the extraction is over (called with
+// defer — the entry must leave the map even on a panic path).
+func (s *BillService) removeCanceller(token string) {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	delete(s.cancellers, token)
+}
+
+// lookupCanceller returns the registered cancel func for a token (nil = the
+// extraction has not started or is already over).
+func (s *BillService) lookupCanceller(token string) context.CancelFunc {
+	s.cancelMu.Lock()
+	defer s.cancelMu.Unlock()
+	return s.cancellers[token]
 }
 
 // DiscardScan drops an unconfirmed scan and deletes its receipt files (every

@@ -92,17 +92,18 @@ func (r *BillScanRepository) GetByToken(ctx context.Context, token string) (doma
 
 // GetByFileHash returns the (single) scan row carrying this receipt-part hash,
 // or domain.ErrNotFound. Used to reject re-uploads of a receipt that is
-// already in the pipeline — any part matching is a conflict. Failed scans
-// are dead ends the user can only abandon, so they do NOT match: a photo
-// whose read failed must be re-uploadable (with a retake, a rotation or a
-// different connector). Done scans still match — their receipt is awaiting
-// review and may or may not become a bill (the bill dedup covers the saved
-// ones separately).
+// already in the pipeline — any part matching is a conflict. Failed and
+// cancelled scans are dead ends the user can only abandon or re-scan, so they
+// do NOT match: a photo whose read failed or was aborted must be re-uploadable
+// (with a retake, a rotation or a different connector). Done scans still
+// match — their receipt is awaiting review and may or may not become a bill
+// (the bill dedup covers the saved ones separately).
 func (r *BillScanRepository) GetByFileHash(ctx context.Context, hash string) (domain.BillScan, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+billScanColumns+`
 		 FROM bill_scans s JOIN bill_scan_files f ON f.scan_id = s.id
-		 WHERE f.file_hash = ? AND s.status != ? LIMIT 1`, hash, domain.BillScanFailed)
+		 WHERE f.file_hash = ? AND s.status NOT IN (?, ?) LIMIT 1`,
+		hash, domain.BillScanFailed, domain.BillScanCancelled)
 	s, err := scanBillScan(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.BillScan{}, domain.ErrNotFound
@@ -187,16 +188,35 @@ func (r *BillScanRepository) MarkFailed(ctx context.Context, token, msg string) 
 	return nil
 }
 
-// ClaimRetry atomically moves a finished (done or failed) scan back to
-// analyzing for a re-extraction. It returns false when the row is missing or
-// still analyzing, which makes double-enqueues impossible.
+// MarkCancelled moves an analyzing scan to the cancelled state (user aborted
+// the analysis). The write is guarded on status='analyzing' exactly like
+// MarkDone/MarkFailed: a worker whose result write lands after the cancel
+// matches 0 rows, so a cancelled scan is never resurrected. The returned bool
+// reports whether the scan was still analyzing; false is a benign race (the
+// scan was confirmed/discarded/already finished), not an error.
+func (r *BillScanRepository) MarkCancelled(ctx context.Context, token string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE bill_scans
+		SET status = ?, draft_json = '', error = '', updated_at = ?
+		WHERE token = ? AND status = ?`,
+		string(domain.BillScanCancelled), time.Now().Unix(), token, string(domain.BillScanAnalyzing))
+	if err != nil {
+		return false, mapWriteError("mark scan cancelled", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ClaimRetry atomically moves a finished (done, failed or cancelled) scan back
+// to analyzing for a re-extraction. It returns false when the row is missing
+// or still analyzing, which makes double-enqueues impossible.
 func (r *BillScanRepository) ClaimRetry(ctx context.Context, token, providerID string) (bool, error) {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE bill_scans
 		SET status = ?, provider_id = ?, draft_json = '', error = '', updated_at = ?
-		WHERE token = ? AND status IN (?, ?)`,
+		WHERE token = ? AND status IN (?, ?, ?)`,
 		string(domain.BillScanAnalyzing), providerID, time.Now().Unix(), token,
-		string(domain.BillScanDone), string(domain.BillScanFailed))
+		string(domain.BillScanDone), string(domain.BillScanFailed), string(domain.BillScanCancelled))
 	if err != nil {
 		return false, mapWriteError("claim scan retry", err)
 	}
@@ -221,15 +241,15 @@ func (r *BillScanRepository) Delete(ctx context.Context, token string) (domain.B
 	return s, nil
 }
 
-// DeleteStale removes done/failed scans older than the cutoff (their drafts
-// were never confirmed) and returns the file paths whose receipt parts should
-// be removed from disk — every stored part, not just part 1's mirror.
+// DeleteStale removes done/failed/cancelled scans older than the cutoff (their
+// drafts were never confirmed) and returns the file paths whose receipt parts
+// should be removed from disk — every stored part, not just part 1's mirror.
 func (r *BillScanRepository) DeleteStale(ctx context.Context, olderThan time.Time) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT s.id, s.image_path, f.file_path FROM bill_scans s
 		LEFT JOIN bill_scan_files f ON f.scan_id = s.id
-		WHERE s.status IN (?, ?) AND s.updated_at < ?`,
-		string(domain.BillScanDone), string(domain.BillScanFailed), olderThan.Unix())
+		WHERE s.status IN (?, ?, ?) AND s.updated_at < ?`,
+		string(domain.BillScanDone), string(domain.BillScanFailed), string(domain.BillScanCancelled), olderThan.Unix())
 	if err != nil {
 		return nil, fmt.Errorf("find stale bill scans: %w", err)
 	}

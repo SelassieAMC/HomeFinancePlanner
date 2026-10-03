@@ -56,6 +56,15 @@ func ensureDir(dir string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
+// fkOffMarker is honored in a migration's comment block: a migration carrying
+// it opts out of the pool's foreign_keys enforcement for its own run only.
+// Needed by migrations that rebuild a PARENT table (SQLite cannot alter a
+// CHECK constraint); with foreign keys on, the rebuild's DROP TABLE of the old
+// parent is rejected by the child rows it still holds. The pragma is a no-op
+// inside a transaction, so it has to be set on the connection before the
+// migration's BEGIN — the runner does that around the migration text.
+const fkOffMarker = "pragma: foreign_keys=off"
+
 // migrate applies pending *.sql migrations in filename order, recording each
 // applied version in schema_migrations. Each migration runs in one transaction.
 func migrate(ctx context.Context, db *sql.DB) error {
@@ -94,25 +103,65 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 
+		// The pragma must land on the connection BEFORE the migration's BEGIN
+		// (it is a no-op inside a transaction) and this pool has exactly one
+		// connection, so it is set outside and restored after the run.
+		appliedOff, err := setForeignKeys(ctx, db, strings.Contains(strings.ToLower(string(sqlBytes)), fkOffMarker))
+		if err != nil {
+			return fmt.Errorf("toggle foreign keys for migration %s: %w", name, err)
+		}
+
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
+			_ = restoreForeignKeys(ctx, db, appliedOff)
 			return fmt.Errorf("begin migration %d: %w", version, err)
 		}
 		if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
 			tx.Rollback()
+			_ = restoreForeignKeys(ctx, db, appliedOff)
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO schema_migrations (version, name, applied_at)
 			 VALUES (?, ?, strftime('%s','now'))`, version, name); err != nil {
 			tx.Rollback()
+			_ = restoreForeignKeys(ctx, db, appliedOff)
 			return fmt.Errorf("record migration %s: %w", name, err)
 		}
 		if err := tx.Commit(); err != nil {
+			_ = restoreForeignKeys(ctx, db, appliedOff)
 			return fmt.Errorf("commit migration %s: %w", name, err)
 		}
+		_ = restoreForeignKeys(ctx, db, appliedOff)
 	}
 	return nil
+}
+
+// setForeignKeys turns the connection's foreign-keys enforcement off only when
+// the caller asked for it, returning whether it did. Only a migration whose
+// text carries fkOffMarker runs with it off (see that constant) — every other
+// migration keeps the DSN's enforcement.
+func setForeignKeys(ctx context.Context, db *sql.DB, off bool) (bool, error) {
+	if !off {
+		return false, nil
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// restoreForeignKeys re-enables the connection's foreign-keys enforcement the
+// DSN asked for. The pool holds a single connection (SetMaxOpenConns(1)), so
+// this lands on the same connection the pragma was turned off on. Best-effort:
+// the caller's migration result must not be masked, and this exact pragma on
+// an open connection cannot fail in practice.
+func restoreForeignKeys(ctx context.Context, db *sql.DB, enforce bool) error {
+	if !enforce {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+	return err
 }
 
 func ensureMigrationsTable(ctx context.Context, db *sql.DB) error {

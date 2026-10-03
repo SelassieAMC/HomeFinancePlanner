@@ -86,17 +86,25 @@ func (s *BillService) markPanicked(token string, r any, log *slog.Logger) {
 // caller is a background goroutine. A row still analyzing after a lost write
 // is recovered by the sweeper.
 func (s *BillService) processScan(token string, log *slog.Logger) {
-	// Detached from any HTTP request: the upload may be long gone.
+	// The run context is the user's Abort button: CancelScan marks the row
+	// cancelled and cancels this context, which stops the extraction the worker
+	// is inside right now. Registered before the row read so a cancel that
+	// lands between the read and the extraction still finds the func; removed
+	// with defer so even a panic path leaves nothing behind.
 	parent := context.Background()
+	runCtx, runCancel := context.WithCancel(parent)
+	defer runCancel()
+	s.registerCanceller(token, runCancel)
+	defer s.removeCanceller(token)
 
 	scan, err := s.scans.GetByToken(parent, token)
 	if err != nil || scan.Status != domain.BillScanAnalyzing {
-		// Confirmed, discarded, or swept meanwhile — nothing to do.
+		// Confirmed, discarded, cancelled, or swept meanwhile — nothing to do.
 		log.Debug("skip vanished scan", "token", token)
 		return
 	}
 
-	extractCtx, cancel := context.WithTimeout(parent, s.extractTimeout)
+	extractCtx, cancel := context.WithTimeout(runCtx, s.extractTimeout)
 	defer cancel()
 
 	provider, providerErr := s.providers.GetProvider(extractCtx, scan.ProviderID)
@@ -105,7 +113,14 @@ func (s *BillService) processScan(token string, log *slog.Logger) {
 	var draft *domain.BillDraft
 	var extractErr error
 	if fileErr == nil && providerErr == nil {
-		draft, extractErr = s.extractWithTimeoutRetries(parent, token, files, provider, log)
+		draft, extractErr = s.extractWithTimeoutRetries(runCtx, token, files, provider, log)
+	}
+
+	// The user cancelled this scan mid-run: the row already says 'cancelled'
+	// and must not get a failed/done write — report and stop.
+	if errors.Is(extractErr, context.Canceled) {
+		log.Debug("scan cancelled by user — result not persisted", "token", token)
+		return
 	}
 
 	// The result write uses a fresh background context so a finished result
@@ -193,7 +208,9 @@ func describeExtractError(err error, timeout time.Duration) string {
 }
 
 // persistResult writes done/failed to the scan row, logging (not propagating)
-// a failure — the row stays analyzing and is re-enqueued by the sweeper.
+// a failure — the row stays analyzing and is re-enqueued by the sweeper. A
+// guarded write that matched 0 rows is a benign race (the user confirmed,
+// discarded or cancelled the scan mid-run), not a persistence failure.
 func (s *BillService) persistResult(ctx context.Context, token string, log *slog.Logger, draft *domain.BillDraft, failure string) {
 	var err error
 	if draft != nil {
@@ -202,6 +219,10 @@ func (s *BillService) persistResult(ctx context.Context, token string, log *slog
 		err = s.scans.MarkFailed(ctx, token, failure)
 	}
 	if err != nil {
-		log.Error("persist scan result", "token", token, "error", err)
+		if errors.Is(err, domain.ErrNotFound) {
+			log.Warn("scan result superseded (confirmed, discarded or cancelled mid-run)", "token", token)
+		} else {
+			log.Error("persist scan result", "token", token, "error", err)
+		}
 	}
 }

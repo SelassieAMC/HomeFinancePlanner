@@ -62,6 +62,11 @@ func (f *fakeBillScanStore) GetByFileHash(_ context.Context, hash string) (domai
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, s := range f.items {
+		// Failed/cancelled scans don't match, mirroring the repository's
+		// dedup query — those receipts are re-uploadable.
+		if s.Status == domain.BillScanFailed || s.Status == domain.BillScanCancelled {
+			continue
+		}
 		if s.FileHash == hash {
 			return s, nil
 		}
@@ -127,11 +132,26 @@ func (f *fakeBillScanStore) MarkFailed(_ context.Context, token, msg string) err
 	return nil
 }
 
+func (f *fakeBillScanStore) MarkCancelled(_ context.Context, token string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.items[token]
+	if !ok || s.Status != domain.BillScanAnalyzing {
+		return false, nil
+	}
+	s.Status = domain.BillScanCancelled
+	s.Draft = nil
+	s.Error = ""
+	s.UpdatedAt = time.Now().UTC()
+	f.items[token] = s
+	return true, nil
+}
+
 func (f *fakeBillScanStore) ClaimRetry(_ context.Context, token, providerID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s, ok := f.items[token]
-	if !ok || (s.Status != domain.BillScanDone && s.Status != domain.BillScanFailed) {
+	if !ok || (s.Status != domain.BillScanDone && s.Status != domain.BillScanFailed && s.Status != domain.BillScanCancelled) {
 		return false, nil
 	}
 	s.Status = domain.BillScanAnalyzing
@@ -159,7 +179,7 @@ func (f *fakeBillScanStore) DeleteStale(_ context.Context, olderThan time.Time) 
 	defer f.mu.Unlock()
 	var paths []string
 	for token, s := range f.items {
-		if (s.Status == domain.BillScanDone || s.Status == domain.BillScanFailed) &&
+		if (s.Status == domain.BillScanDone || s.Status == domain.BillScanFailed || s.Status == domain.BillScanCancelled) &&
 			s.UpdatedAt.Before(olderThan) {
 			if len(s.Files) > 0 {
 				for _, part := range s.Files {
@@ -794,6 +814,106 @@ func TestDiscardScanRemovesRow(t *testing.T) {
 	}
 	if _, err := scanStore.GetByToken(ctx, res.ScanToken); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected row deleted, got %v", err)
+	}
+}
+
+// Cancelling an in-progress analysis stops the model call (the extraction
+// context is cancelled), the row lands as cancelled, the worker never writes
+// its aborted result over the cancellation, and the receipt can be read again
+// afterwards (Reextract claims the cancelled scan).
+func TestCancelScanAbortsExtraction(t *testing.T) {
+	draft := domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "USD"}
+	var calls atomic.Int64
+	svc, scanStore, _, _, _ := newTestBillService(t, func(ctx context.Context, _ []domain.ReceiptFile, _ domain.AIProvider, _ string) (domain.BillDraft, error) {
+		if calls.Add(1) == 1 {
+			// First attempt: model call in flight — it returns only when the
+			// user's cancel reaches this context.
+			<-ctx.Done()
+			return domain.BillDraft{}, ctx.Err()
+		}
+		return draft, nil
+	})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	// Wait until the extractor is inside the model call → its canceller is
+	// registered, so CancelScan deterministically aborts the run.
+	waitFor(t, 2*time.Second, func() bool { return calls.Load() == 1 })
+
+	cancelled, err := svc.CancelScan(ctx, res.ScanToken)
+	if err != nil {
+		t.Fatalf("CancelScan: %v", err)
+	}
+	if cancelled.Status != domain.BillScanCancelled {
+		t.Fatalf("cancelled status = %s, want cancelled", cancelled.Status)
+	}
+	row, err := scanStore.GetByToken(ctx, res.ScanToken)
+	if err != nil || row.Status != domain.BillScanCancelled {
+		t.Fatalf("row = %v, %v; want cancelled", row.Status, err)
+	}
+
+	// The aborted worker must not resurrect the scan (failed/done writes are
+	// guarded on analyzing): give it time to notice, then assert it stayed.
+	waitFor(t, 500*time.Millisecond, func() bool { return svc.lookupCanceller(res.ScanToken) == nil })
+	if row, _ := scanStore.GetByToken(ctx, res.ScanToken); row.Status != domain.BillScanCancelled {
+		t.Fatalf("status after worker unwind = %s, want still cancelled", row.Status)
+	}
+
+	// Re-extraction claims the cancelled scan and completes it.
+	again, err := svc.Reextract(ctx, res.ScanToken, "")
+	if err != nil {
+		t.Fatalf("Reextract after cancel: %v", err)
+	}
+	if again.Status != domain.BillScanAnalyzing {
+		t.Fatalf("claimed scan status = %s, want analyzing", again.Status)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	if calls.Load() != 2 {
+		t.Fatalf("extractor ran %d times, want 2", calls.Load())
+	}
+}
+
+// Cancelling a scan that already finished (or an unknown token): a done scan
+// comes back untouched, a consumed/expired token is not found.
+func TestCancelScanNotAnalyzing(t *testing.T) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "USD"}, nil
+	})
+	ctx := context.Background()
+
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+
+	done, err := svc.CancelScan(ctx, res.ScanToken)
+	if err != nil {
+		t.Fatalf("CancelScan on a done scan: %v", err)
+	}
+	if done.Status != domain.BillScanDone {
+		t.Fatalf("status = %s, want done (cancel must not harm finished scans)", done.Status)
+	}
+
+	if _, err := svc.CancelScan(ctx, "deadbeef"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unknown token: err = %v, want ErrNotFound", err)
+	}
+
+	// A discarded scan is gone too — cancel after discard is not found.
+	if err := svc.DiscardScan(ctx, res.ScanToken); err != nil {
+		t.Fatalf("DiscardScan: %v", err)
+	}
+	if _, err := svc.CancelScan(ctx, res.ScanToken); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cancelled-after-discard: err = %v, want ErrNotFound", err)
 	}
 }
 

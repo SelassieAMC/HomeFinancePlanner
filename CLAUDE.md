@@ -178,7 +178,16 @@ are deduplicated by
 content: each part's sha256 lives in the child tables (backfilled from the
 legacy columns), and re-uploading any part of an existing receipt is a 409
 conflict naming the offending part — the same photo twice within one upload
-is a 400. Negative item prices are allowed
+is a 400. An in-progress analysis can be **cancelled**
+(`POST /bills/scan/{token}/cancel`, fourth scan status `cancelled` from
+migration 0029): the row leaves `analyzing` before the worker's result write
+(all result writes are guarded on `status = 'analyzing'`, so a cancelled scan
+is never resurrected) and the extraction is truly aborted — the worker
+registers a per-scan `context.CancelFunc` the cancel signals, so the model
+call stops; the kept photos are re-uploadable (dedup ignores failed AND
+cancelled), the request stays deletable (`DELETE /bills/scan/{token}`)
+or re-readable (`POST /extract` claims `cancelled` too), and cancelled rows
+sweep with the session TTL. Negative item prices are allowed
 only for "Leergut" lines or items under a category with `allows_negative` (the
 seeded "Deposit & Returns" product category covers Pfand/Leergut) — the same
 rule applies to manual transaction item lines, whose money-back lines also stay

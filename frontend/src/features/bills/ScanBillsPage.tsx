@@ -342,7 +342,8 @@ export function ScanBillsPage() {
     setBusy('extract');
     setError(null);
     try {
-      await billsApi.reextract(scan.scan_token, firstProvider?.id);
+      const next = await billsApi.reextract(scan.scan_token, firstProvider?.id);
+      setScan(next); // back to analyzing — switches the view off failed/cancelled
       // Analysis continues in the background — confirm via dialog, then the
       // user goes where the result will be (or stays to upload more).
       setRereadSent(true);
@@ -363,6 +364,22 @@ export function ScanBillsPage() {
       navigate('/bills');
     } else {
       reset(); // back to capture — the user may want to upload more receipts
+    }
+  }
+
+  // Aborts an in-progress analysis: the scan is marked cancelled and the
+  // running AI read is stopped server-side. The poll picks up the cancelled
+  // state, which offers re-running the read or deleting the request.
+  async function handleCancelScan() {
+    if (!scan) return;
+    setBusy('cancel');
+    setError(null);
+    try {
+      setScan(await billsApi.cancelScan(scan.scan_token));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel the analysis.');
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -577,14 +594,44 @@ export function ScanBillsPage() {
                 </Button>
               </div>
             </>
+          ) : scan?.status === 'cancelled' ? (
+            <>
+              <div className="hint-banner">
+                Analysis cancelled. The photos are kept with the request until
+                it is deleted — you can read the receipt again or remove the
+                request entirely.
+              </div>
+              <div className="camera-row">
+                <Button onClick={handleRetry} disabled={busy !== null}>
+                  🔁 Try again
+                </Button>
+                <Button variant="danger" onClick={handleDiscard} disabled={busy !== null}>
+                  🗑️ Delete request
+                </Button>
+              </div>
+            </>
           ) : scanPoll.timedOut ? (
-            <div className="hint-banner">
-              Still analyzing — large receipts can take a while. You can leave
-              this page; the scan keeps running and appears under{' '}
-              <Link to="/bills">Bills &amp; analysis</Link> once it finishes.
-            </div>
+            <>
+              <div className="hint-banner">
+                Still analyzing — large receipts can take a while. You can leave
+                this page; the scan keeps running and appears under{' '}
+                <Link to="/bills">Bills &amp; analysis</Link> once it finishes.
+              </div>
+              <div className="camera-row">
+                <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
+                  ✕ Cancel analysis
+                </Button>
+              </div>
+            </>
           ) : (
-            <Spinner label="Reading the receipt — you can leave this page; the scan is kept in the Bills view." />
+            <>
+              <Spinner label="Reading the receipt — you can leave this page; the scan is kept in the Bills view." />
+              <div className="camera-row">
+                <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
+                  ✕ Cancel analysis
+                </Button>
+              </div>
+            </>
           )}
           {error && <ErrorMessage message={error} />}
         </Card>

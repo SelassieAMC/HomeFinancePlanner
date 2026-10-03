@@ -20,7 +20,7 @@ import {
 // one collapsible panel per article, and a computed total that recalculates
 // on every price edit (with a warning when it no longer matches the receipt).
 
-export type BillBusyAction = 'extract' | 'confirm' | 'discard' | null;
+export type BillBusyAction = 'extract' | 'confirm' | 'discard' | 'cancel' | null;
 
 /**
  * 'draft' = review of a fresh scan (account picker + confirm/re-read/discard);

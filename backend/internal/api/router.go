@@ -80,6 +80,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("GET /api/v1/bills/scan/{token}", billH.GetScan)
 	mux.HandleFunc("POST /api/v1/bills/scan/{token}/extract", billH.Reextract)
 	mux.HandleFunc("POST /api/v1/bills/scan/{token}/confirm", billH.Confirm)
+	mux.HandleFunc("POST /api/v1/bills/scan/{token}/cancel", billH.CancelScan)
 	mux.HandleFunc("DELETE /api/v1/bills/scan/{token}", billH.DiscardScan)
 	mux.HandleFunc("GET /api/v1/bills", billH.List)
 	mux.HandleFunc("GET /api/v1/bills/{id}", billH.Get)
