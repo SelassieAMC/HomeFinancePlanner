@@ -127,6 +127,7 @@ All configuration is env-driven (`internal/config`):
 | `LLM_TIMEOUT` | `5m` | per-extraction timeout for AI bill scanning (large local vision models need minutes) |
 | `LLM_NUM_CTX` | `0` | Ollama context-window override (`options.num_ctx`) for bill reads; `0` = model default — raise it when a local vision model's default window truncates big receipts mid-JSON |
 | `FX_TIMEOUT` | `10s` | outbound timeout for the exchange-rates API (Frankfurter/ECB), cached 24h |
+| `INSIGHT_THRESHOLD_PCT` | `10` | percent PPU change a product insight must clear; below this is never alerted |
 
 ## Current State
 
@@ -377,6 +378,36 @@ SPA router), and `backend/internal/api/middleware/riverui_banner.go` injects
 a "← Back to planner" pill into River's SPA-shell `text/html` response
 (buffered only for browser-navigations whose Accept asks for text/html;
 Content-Length is deleted before WriteHeader or the longer body truncates).
+**Product insights** are **deferred intelligence on price-per-unit** (migration
+0031): when a purchase is saved (`BillService.Confirm`/`Update`, or a manual
+transaction create/update with linked product lines), the service enqueues one
+River payload (`bill_ppu_analysis` / `transaction_ppu_analysis`, main.go's
+`riverPurchaseAnalyzer` adapter — fire-and-forget: a disabled queue only drops
+the enqueue, never the save, which the UI acknowledges with the scan page's
+"analyzing in the background" hint). The worker (`internal/jobs/insight.go`,
+shared `insightEngine` for both kinds) re-derives per canonical unit the PPU of
+the just-saved line (unit_price_cents / unit_value, g→per-kg, ml→per-l — the
+analytics read's folding; deposit artifacts, sizeless lines and unknown units
+are skipped) and evaluates three deterministic triggers: **shrinkflation**
+(unit_value dropped ≥5% while the unit price stayed within ±2% — suppresses
+the redundant creep story for the same line), **price creep** (PPU rose in
+each of the last 3 transitions with a cumulative rise ≥
+`INSIGHT_THRESHOLD_PCT`), and **bulk buy** (one `generic_name` family read via
+the normalization mappings: the usual smaller size — most purchases in the
+family — clears `INSIGHT_THRESHOLD_PCT` above the average PPU of a distinct
+size ≥1.2× larger, and the current purchase is that usual small one; scalable
+kg/l sizes only; history rows in other currencies never mix in). Findings are
+persisted into `product_insights` always — `source='auto'` with the
+deterministic wording (facts snapshot in `data_json`), upgraded in place to
+`source='ai'` when a phrasing call through the `default_for_bills` connector
+and the `product_insights` prompt key answers. A kind+product pair nudged in
+the last 14 days is suppressed by the cooldown check. The queue builds in
+main.go BEFORE the services (hooks wrap it) and starts right after; River's
+LLM-aware retry backoff covers transient failures. The API exposes
+`GET /api/v1/insights` (?unseen=true, ?limit=) and
+`POST /api/v1/insights/{id}/dismiss`; the dashboard's "Purchase insights" card
+(frontend `InsightsCard`) lists the unread rows with kind badges and a dismiss
+button, hidden entirely when none are unread.
 When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend

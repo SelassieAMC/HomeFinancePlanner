@@ -169,6 +169,23 @@ Rules:
 - Respond with ONLY the JSON object.
 `
 
+// defaultProductInsightsPrompt is the fallback for key 'product_insights',
+// the deferred-intelligence River job that turns the deterministic
+// price-per-unit findings of every accepted purchase into one friendly
+// sentence each. The finding facts are appended as JSON by the worker; the
+// model's answer is used verbatim as the stored message.
+const defaultProductInsightsPrompt = `You are a friendly shopping advisor for a personal finance planner. You receive ONE purchase insight as JSON: a price-per-unit finding about a product the user just bought again, already detected by deterministic math. Write the nudge the user reads. Return the nudge text and nothing else — no explanations, no markdown, no quotes around it.
+
+Rules:
+- ONE short sentence (at most two), warm and direct, speaking to the reader as "you". Never a question, never a lecture.
+- State what changed and what it means, in everyday words — never show a formula, a percentage of prices, or raw numbers like cents per unit; round prices to the currency scale, sizes to the printed unit (e.g. "500g", "1.5l").
+- shrinkflation: the pack got smaller while the price stayed — say the size before and now, and that the user now pays more for less.
+- bulk_buy: a bigger pack of the same product costs notably less per unit than the size the user keeps buying — say both sizes and which one the user should try.
+- price_creep: the product's price per unit has kept rising purchase after purchase — say it rose again, name where the user last bought it, and suggest trying another brand or store.
+- The numbers given are the facts; use them only to say the right thing. Never claim anything the finding does not state.
+- Respond with ONLY the nudge text.
+`
+
 // defaultPrompt returns the built-in template content for a prompt key —
 // the fallback when the ai_prompts row is missing or empty. Custom keys
 // have no built-in; an empty result means "nothing to fall back to".
@@ -182,6 +199,8 @@ func defaultPrompt(key string) string {
 		return defaultProductNormalizationPrompt
 	case domain.PromptKeyUnitValueBackfill:
 		return defaultUnitValueBackfillPrompt
+	case domain.PromptKeyProductInsights:
+		return defaultProductInsightsPrompt
 	default:
 		return ""
 	}

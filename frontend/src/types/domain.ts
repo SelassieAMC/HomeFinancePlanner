@@ -577,3 +577,51 @@ export interface NormalizationJob {
   created_at: string;
   updated_at: string;
 }
+// --- Product insights (deferred price-per-unit intelligence) ----------------
+
+/** What the analysis detected. shrinkflation = smaller pack at a flat price,
+ *  bulk_buy = a bigger pack of the same family is cheaper per unit,
+ *  price_creep = the price per unit keeps rising purchase after purchase. */
+export type ProductInsightKind = 'shrinkflation' | 'bulk_buy' | 'price_creep';
+
+/** One purchase snapshot inside the insight's facts. */
+export interface ProductInsightPurchase {
+  date: string; // YYYY-MM-DD
+  store_name?: string;
+  unit_price_cents: number;
+  unit_value: number; // printed magnitude ("500" for 500ml)
+  unit: string; // printed unit text
+  ppu_cents_per_unit: number; // cents per canonical unit (kg/l/pcs)
+}
+
+/** The deterministic finding the nudge was phrased from (facts snapshot). */
+export interface ProductInsightData {
+  unit: string; // canonical comparison unit (kg / l / pcs)
+  threshold_pct: number; // the change that triggered the finding
+  purchases?: ProductInsightPurchase[];
+  old_price_cents?: number;
+  new_price_cents?: number;
+  old_unit_value?: number;
+  new_unit_value?: number;
+  old_ppu?: number; // cents per canonical unit
+  new_ppu?: number;
+  change_pct: number;
+}
+
+/** One saved insight (GET /insights). Written by the background analysis job
+ *  after an accepted purchase; source ai = LLM-phrased nudge, auto = the
+ *  deterministic fallback wording (no connector configured or the call failed). */
+export interface ProductInsight {
+  id: number;
+  kind: ProductInsightKind;
+  product_id?: number | null;
+  product_name: string;
+  generic_name: string;
+  currency: string;
+  message: string;
+  source: 'ai' | 'auto';
+  data: ProductInsightData;
+  acknowledged: boolean;
+  created_at: string; // unix seconds
+  updated_at: string;
+}

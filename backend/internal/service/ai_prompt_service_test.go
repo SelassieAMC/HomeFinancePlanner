@@ -326,6 +326,15 @@ func TestAIPromptMigrationSeedMatchesDefaults(t *testing.T) {
 	if backfill.Content != defaultPrompt(domain.PromptKeyUnitValueBackfill) {
 		t.Errorf("seeded unit_value_backfill drifted from the built-in default")
 	}
+	// Migration 0031 seeds the product-insights prompt the same way (new row;
+	// there is no prior seed to refresh).
+	insights, err := repo.GetByKey(ctx, domain.PromptKeyProductInsights)
+	if err != nil {
+		t.Fatalf("get seeded product-insights prompt: %v", err)
+	}
+	if insights.Content != defaultPrompt(domain.PromptKeyProductInsights) {
+		t.Errorf("seeded product_insights drifted from the built-in default")
+	}
 }
 
 // openRawSQLite opens a plain SQLite database without applying migrations

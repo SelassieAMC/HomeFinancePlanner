@@ -38,6 +38,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	analyticsH := &handlers.AnalyticsHandler{Svc: svc.Analytics}
 	cartSearchH := &handlers.OfferSearchHandler{Svc: svc.OfferSearches}
 	promptH := &handlers.PromptHandler{Svc: svc.Prompts}
+	insightH := &handlers.InsightHandler{Svc: svc.Insights}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -136,6 +137,11 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("GET    /api/v1/cart-searches/{token}", cartSearchH.Get)
 	mux.HandleFunc("POST   /api/v1/cart-searches/{token}/retry", cartSearchH.Retry)
 	mux.HandleFunc("DELETE /api/v1/cart-searches/{token}", cartSearchH.Delete)
+
+	// Insights: the saved price-per-unit nudges of the deferred-intelligence
+	// job. Self-contained family — no wildcard interactions.
+	mux.HandleFunc("GET  /api/v1/insights", insightH.List)
+	mux.HandleFunc("POST /api/v1/insights/{id}/dismiss", insightH.Dismiss)
 
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)

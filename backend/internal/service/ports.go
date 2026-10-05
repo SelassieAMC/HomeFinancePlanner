@@ -163,6 +163,23 @@ type ProductMappingStore interface {
 	UpdateJob(ctx context.Context, j domain.ProductNormalizationJob) error
 }
 
+// PurchaseAnalyzer enqueues the deferred price-per-unit analysis of an
+// accepted purchase (implemented in main by the River job manager). It is
+// fire-and-forget: a nil analyzer — or an enqueue error — must never fail the
+// purchase save.
+type PurchaseAnalyzer interface {
+	AnalyzeBill(ctx context.Context, billID int64) error
+	AnalyzeTransaction(ctx context.Context, transactionID int64) error
+}
+
+// InsightStore is the persistence contract for saved price-per-unit insights
+// the insight analysis job wrote. Dismiss is a guarded acknowledge (an
+// already-dismissed or missing row reports ErrNotFound).
+type InsightStore interface {
+	List(ctx context.Context, f domain.InsightFilters) ([]domain.ProductInsight, error)
+	Dismiss(ctx context.Context, id int64) error
+}
+
 // TextNormalizer runs the product-name normalization prompt against an AI
 // connector and returns the parsed raw→standard pairs (implemented by the
 // extractor: a prompt-only text completion plus JSON parsing — no image, no
@@ -185,6 +202,7 @@ type Services struct {
 	OfferSearches *OfferSearchService
 	Analytics     *AnalyticsService
 	Prompts       *AIPromptService
+	Insights      *InsightService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -208,6 +226,7 @@ func New(
 	fx *FXService,
 	analytics *AnalyticsService,
 	prompts *AIPromptService,
+	insights *InsightService,
 ) *Services {
 	return &Services{
 		Accounts:      &AccountService{accounts: accounts},
@@ -222,5 +241,6 @@ func New(
 		OfferSearches: offerSearches,
 		Analytics:     analytics,
 		Prompts:       prompts,
+		Insights:      insights,
 	}
 }

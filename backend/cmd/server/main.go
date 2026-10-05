@@ -75,6 +75,7 @@ func run() error {
 	billScans := repository.NewBillScanRepository(db)
 	settingsRepo := repository.NewSettingsRepository(db)
 	productMappings := repository.NewProductNameMappingRepository(db)
+	insights := repository.NewInsightRepository(db)
 
 	box, err := newEncryptionBox(cfg, log)
 	if err != nil {
@@ -89,23 +90,39 @@ func run() error {
 	storeSvc := service.NewStoreService(stores, cfg.StoresPath)
 	productSvc := service.NewProductService(products, categories, cfg.ProductsPath,
 		productMappings, billExtractor, settingsSvc, promptSvc, cfg.LLMTimeout, log)
+	// Background jobs (River over SQLite): the queue builds BEFORE the services
+	// — the bill/transaction save hooks enqueue the deferred PPU analysis
+	// through it — and starts right after they are wired. A queue that cannot
+	// start must never block the API: its failure is logged and boot continues
+	// (the enqueue adapter degrades to a no-op), and the one-time unit-value
+	// backfill simply re-attempts on the next start.
+	jobsMgr, err := buildJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, insights, log)
+	if err != nil {
+		log.Error("background jobs disabled for this run", "error", err)
+	}
+	billAnalyzer := riverPurchaseAnalyzer{manager: jobsMgr}
+
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
-		promptSvc, accounts, categories, stores, products, productMappings, budgets, transactions, fxSvc, cfg.BillsPath, cfg.LLMTimeout, log)
+		promptSvc, accounts, categories, stores, products, productMappings, budgets, transactions, fxSvc,
+		cfg.BillsPath, billAnalyzer, cfg.LLMTimeout, log)
 	offerSearches := repository.NewOfferSearchRepository(db)
 	cartSearchSvc := service.NewOfferSearchService(offerSearches, products, stores, settingsSvc,
 		promptSvc, billExtractor, cfg.LLMTimeout, log)
 	analyticsRepo := repository.NewAnalyticsRepository(db)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
-	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, productMappings, transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc, promptSvc)
+	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, productMappings,
+		transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc,
+		promptSvc, service.NewInsightService(insights))
 
-	// Background jobs (River over SQLite): start the queue and — once, until
-	// its completion marker exists — the unit-value backfill. A queue that
-	// cannot start must never block the API: its failure is logged and boot
-	// continues, and the backfill simply re-attempts on the next start.
-	jobsMgr, err := startJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, log)
-	if err != nil {
-		log.Error("background jobs disabled for this run", "error", err)
+	if jobsMgr != nil {
+		if err := jobsMgr.Start(ctx); err != nil {
+			jobsMgr.Close()
+			jobsMgr = nil
+			log.Error("background jobs disabled for this run", "error", err)
+		} else if err := enqueueUnitValueBackfill(ctx, db, settingsRepo, jobsMgr, log); err != nil {
+			log.Warn("unit-value backfill not enqueued", "error", err)
+		}
 	}
 
 	// River's web UI, embedded (no extra process): mounted at /riverui on the
@@ -171,12 +188,33 @@ func run() error {
 	return nil
 }
 
-// startJobs wires the River job queue (its own single-connection pool over
-// the same SQLite file) and enqueues the one-time unit-value backfill when its
-// completion marker is absent and rows still lack a magnitude. The returned
+// riverPurchaseAnalyzer implements service.PurchaseAnalyzer over the River
+// job manager: the deferred PPU analysis of an accepted purchase is one
+// enqueued payload. A nil manager (the queue failed to build) degrades the
+// enqueue to a silent no-op — the insight is lost for that purchase only.
+type riverPurchaseAnalyzer struct{ manager *jobs.Manager }
+
+func (a riverPurchaseAnalyzer) AnalyzeBill(ctx context.Context, billID int64) error {
+	return a.insert(ctx, jobs.BillPPUAnalysisArgs{BillID: billID})
+}
+
+func (a riverPurchaseAnalyzer) AnalyzeTransaction(ctx context.Context, transactionID int64) error {
+	return a.insert(ctx, jobs.TransactionPPUAnalysisArgs{TransactionID: transactionID})
+}
+
+func (a riverPurchaseAnalyzer) insert(ctx context.Context, args river.JobArgs) error {
+	if a.manager == nil {
+		return nil
+	}
+	return a.manager.Insert(ctx, args, nil)
+}
+
+// buildJobs wires the River job queue (its own single-connection pool over
+// the same SQLite file) with its workers but does not start it — the caller
+// starts it once the services that enqueue into it exist. The returned
 // manager is nil when the queue could not be built — boot continues without
 // it.
-func startJobs(
+func buildJobs(
 	ctx context.Context,
 	cfg config.Config,
 	db *sql.DB,
@@ -184,6 +222,7 @@ func startJobs(
 	settingsSvc *service.SettingsService,
 	promptSvc *service.AIPromptService,
 	extractor *extractor.Extractor,
+	insights *repository.InsightRepository,
 	log *slog.Logger,
 ) (*jobs.Manager, error) {
 	workers := river.NewWorkers()
@@ -198,19 +237,31 @@ func startJobs(
 		cfg.LLMTimeout,
 		log,
 	))
-	mgr, err := jobs.NewManager(ctx, cfg.DBPath, cfg.LLMTimeout, workers, log)
-	if err != nil {
-		return nil, err
-	}
-	if err := mgr.Start(ctx); err != nil {
-		mgr.Close()
-		return nil, fmt.Errorf("start river client: %w", err)
-	}
-
-	if err := enqueueUnitValueBackfill(ctx, db, settingsRepo, mgr, log); err != nil {
-		log.Warn("unit-value backfill not enqueued", "error", err)
-	}
-	return mgr, nil
+	river.AddWorker(workers, jobs.NewBillPPUAnalysisWorker(
+		insights,
+		insights,
+		insights,
+		repository.NewProductRepository(db),
+		settingsSvc,
+		promptSvc,
+		extractor,
+		cfg.InsightThresholdPct,
+		cfg.LLMTimeout,
+		log,
+	))
+	river.AddWorker(workers, jobs.NewTransactionPPUAnalysisWorker(
+		insights,
+		insights,
+		insights,
+		repository.NewProductRepository(db),
+		settingsSvc,
+		promptSvc,
+		extractor,
+		cfg.InsightThresholdPct,
+		cfg.LLMTimeout,
+		log,
+	))
+	return jobs.NewManager(ctx, cfg.DBPath, cfg.LLMTimeout, workers, log)
 }
 
 // startRiverUI embeds River's web UI (riverqueue.com/riverui) at /riverui as

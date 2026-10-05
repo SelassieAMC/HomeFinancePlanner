@@ -12,6 +12,7 @@ import { StorePriceIndexChart } from './charts/StorePriceIndexChart';
 import { PersonalPriceIndexChart } from './charts/PersonalPriceIndexChart';
 import { SpendSunburst } from './charts/SpendSunburst';
 import { SpendHeatmapChart } from './charts/SpendHeatmap';
+import { InsightsCard } from './InsightsCard';
 
 export function DashboardPage() {
   const [type, setType] = useState<PeriodType>('month');
@@ -86,6 +87,10 @@ export function DashboardPage() {
       />
 
       {conversionWarning && <div className="bill-warning">{conversionWarning}</div>}
+
+      {/* Deferred intelligence: unread price-per-unit nudges the analysis job
+          wrote after recent purchases. Hidden entirely when none are unread. */}
+      <InsightsCard />
 
       <div className="stat-grid">
         <Card className="stat-tile">

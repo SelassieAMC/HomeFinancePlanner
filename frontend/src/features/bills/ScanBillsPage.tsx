@@ -669,6 +669,10 @@ export function ScanBillsPage() {
             {formatCents(accepted.total_cents, accepted.currency)}) accepted and
             stored for analysis.
           </p>
+          <div className="hint-banner">
+            I'm analyzing your spending patterns in the background — new
+            purchase insights will appear on the dashboard.
+          </div>
           <div className="camera-row">
             <Button onClick={reset}>Scan another bill</Button>
             <Link className="btn btn-secondary" to="/bills">

@@ -136,6 +136,9 @@ type TransactionService struct {
 	// name records an identity mapping so the next entry normalizes without
 	// asking. nil disables the layer (tests).
 	mappings ProductMappingStore
+	// insights enqueues the deferred price-per-unit analysis of a saved
+	// purchase. nil disables the layer (tests).
+	insights PurchaseAnalyzer
 	log      *slog.Logger
 }
 
@@ -191,7 +194,11 @@ func (s *TransactionService) Create(ctx context.Context, in TransactionInput) (d
 		return domain.Transaction{}, err
 	}
 	if len(t.Items) > 0 {
-		return s.transactions.CreateWithItems(ctx, t, t.Items)
+		created, err := s.transactions.CreateWithItems(ctx, t, t.Items)
+		if err == nil {
+			s.enqueueInsight(ctx, created.ID)
+		}
+		return created, err
 	}
 	return s.transactions.Create(ctx, t)
 }
@@ -208,9 +215,27 @@ func (s *TransactionService) Update(ctx context.Context, id int64, in Transactio
 	}
 	t.ID = id
 	if len(t.Items) > 0 {
-		return s.transactions.UpdateWithItems(ctx, t, t.Items)
+		updated, err := s.transactions.UpdateWithItems(ctx, t, t.Items)
+		if err == nil {
+			s.enqueueInsight(ctx, id)
+		}
+		return updated, err
 	}
 	return s.transactions.Update(ctx, t)
+}
+
+// enqueueInsight fires the deferred price-per-unit analysis of the saved
+// purchase (only the WithItems paths carry linked product lines). The save
+// never waits for it: a nil analyzer or an enqueue error is logged and
+// dropped — the analysis is a nudge in the background, not part of the
+// transaction.
+func (s *TransactionService) enqueueInsight(ctx context.Context, id int64) {
+	if s.insights == nil {
+		return
+	}
+	if err := s.insights.AnalyzeTransaction(ctx, id); err != nil {
+		s.log.Warn("enqueue purchase analysis", "transaction_id", id, "error", err)
+	}
 }
 
 func (s *TransactionService) Delete(ctx context.Context, id int64) error {

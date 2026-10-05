@@ -644,6 +644,71 @@ select:focus,
   background: color-mix(in srgb, var(--negative) 10%, var(--surface));
 }
 
+/* Insight-kind badges (dashboard): green = opportunity worth acting on,
+   red = watch list (shrunk pack, creeping price). */
+.badge-insight-opportunity {
+  border-color: color-mix(in srgb, var(--positive) 45%, transparent);
+  color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 10%, var(--surface));
+}
+
+.badge-insight-watch {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+  color: var(--negative);
+  background: color-mix(in srgb, var(--negative) 10%, var(--surface));
+}
+
+/* --- Dashboard insights card ------------------------------------------------ */
+.insights-card {
+  margin: 0.5rem 0;
+}
+
+.insight-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.insight-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.insight-row:last-child {
+  border-bottom: none;
+}
+
+.insight-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.insight-message {
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.insight-age {
+  white-space: nowrap;
+  padding-top: 0.1rem;
+}
+
+@media (max-width: 640px) {
+  .insight-row {
+    flex-wrap: wrap;
+  }
+
+  .insight-body {
+    flex-basis: 100%;
+    order: 3;
+  }
+}
+
 /* --- Horizontal scroll for wide tables ------------------------------------- */
 .table-scroll {
   overflow-x: auto;

@@ -97,20 +97,23 @@ type billScanSource struct {
 
 // BillService orchestrates the scan-bills workflow.
 type BillService struct {
-	bills          BillStore
-	scans          BillScanStore
-	extractor      BillExtractor
-	providers      *SettingsService
-	prompts        PromptResolver
-	accounts       AccountStore
-	categories     CategoryStore
-	stores         StoreStore
-	products       ProductStore
-	mappings       ProductMappingStore
-	budgets        BudgetStore
-	txStore        TransactionStore
-	rates          RateSource
-	billsDir       string
+	bills      BillStore
+	scans      BillScanStore
+	extractor  BillExtractor
+	providers  *SettingsService
+	prompts    PromptResolver
+	accounts   AccountStore
+	categories CategoryStore
+	stores     StoreStore
+	products   ProductStore
+	mappings   ProductMappingStore
+	budgets    BudgetStore
+	txStore    TransactionStore
+	rates      RateSource
+	billsDir   string
+	// insights enqueues the deferred price-per-unit analysis after a bill is
+	// confirmed or edited. nil disables the layer (tests).
+	insights       PurchaseAnalyzer
 	extractTimeout time.Duration
 	log            *slog.Logger
 
@@ -143,6 +146,7 @@ func NewBillService(
 	txStore TransactionStore,
 	rates RateSource,
 	billsDir string,
+	insights PurchaseAnalyzer,
 	extractTimeout time.Duration,
 	log *slog.Logger,
 ) *BillService {
@@ -168,6 +172,7 @@ func NewBillService(
 		txStore:        txStore,
 		rates:          rates,
 		billsDir:       billsDir,
+		insights:       insights,
 		extractTimeout: extractTimeout,
 		log:            log,
 		queue:          make(chan string, scanQueueCapacity),
@@ -428,6 +433,7 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 	// Learn the user's standardized-name corrections from the reviewed lines
 	// (non-fatal — the bill is already saved).
 	s.learnMappingOverrides(ctx, in.Items, priorStandardFromDraft(scan.Draft.Items))
+	s.enqueueInsight(ctx, created.ID)
 
 	// The bill exists — consume the scan row. (Deleting after Create keeps a
 	// crash between the two a redoable confirm.)
@@ -486,10 +492,23 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 	// Learn the user's standardized-name corrections from the edited lines
 	// (non-fatal — the bill is already saved).
 	s.learnMappingOverrides(ctx, in.Items, priorStandardFromItems(existing.Items))
+	s.enqueueInsight(ctx, id)
 
 	// Re-read so the response reflects the (possibly re-pointed or newly
 	// linked) transaction's account.
 	return s.bills.GetByID(ctx, id)
+}
+
+// enqueueInsight fires the deferred price-per-unit analysis of the saved
+// bill (fire-and-forget: a nil analyzer or an enqueue error is logged and
+// dropped — the analysis happens in a River job, away from the request path).
+func (s *BillService) enqueueInsight(ctx context.Context, billID int64) {
+	if s.insights == nil {
+		return
+	}
+	if err := s.insights.AnalyzeBill(ctx, billID); err != nil {
+		s.log.Warn("enqueue bill analysis", "bill_id", billID, "error", err)
+	}
 }
 
 // resolveBillAccount picks the expense target for a bill: the requested

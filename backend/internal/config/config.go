@@ -14,22 +14,23 @@ import (
 // variables with sane development defaults so `go run ./cmd/server` works
 // with no setup.
 type Config struct {
-	Env                string     // development | production
-	Port               int        // listen port
-	DBPath             string     // SQLite file path
-	BillsPath          string     // directory for uploaded receipt images
-	StoresPath         string     // directory for uploaded store logos
-	ProductsPath       string     // directory for uploaded product photos
-	CORSAllowedOrigins []string   // allowed CORS origins (empty = same-origin only)
-	LogLevel           slog.Level // debug | info | warn | error
-	LogFile            string     // append target for logs; "none" = stdout only
-	AIEncryptionKey    string     // passphrase for encrypting AI API keys at rest
-	LLMTimeout         time.Duration
-	LLMNumCtx          int           // Ollama context-window override (0 = model default)
-	FXTimeout          time.Duration // outbound timeout for the exchange-rates API
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	ShutdownTimeout    time.Duration
+	Env                 string     // development | production
+	Port                int        // listen port
+	DBPath              string     // SQLite file path
+	BillsPath           string     // directory for uploaded receipt images
+	StoresPath          string     // directory for uploaded store logos
+	ProductsPath        string     // directory for uploaded product photos
+	CORSAllowedOrigins  []string   // allowed CORS origins (empty = same-origin only)
+	LogLevel            slog.Level // debug | info | warn | error
+	LogFile             string     // append target for logs; "none" = stdout only
+	AIEncryptionKey     string     // passphrase for encrypting AI API keys at rest
+	LLMTimeout          time.Duration
+	LLMNumCtx           int           // Ollama context-window override (0 = model default)
+	FXTimeout           time.Duration // outbound timeout for the exchange-rates API
+	InsightThresholdPct float64       // PPU change (percent) a product insight must clear
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	ShutdownTimeout     time.Duration
 }
 
 // Load reads configuration from the process environment.
@@ -66,23 +67,31 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("FX_TIMEOUT: %w", err)
 	}
 
+	// The sensitivity ceiling of the price-per-unit insight job: changes below
+	// this percent are everyday price wiggle, never an alert.
+	insightThreshold, err := envFloat("INSIGHT_THRESHOLD_PCT", 10)
+	if err != nil {
+		return Config{}, fmt.Errorf("INSIGHT_THRESHOLD_PCT: %w", err)
+	}
+
 	return Config{
-		Env:                envString("APP_ENV", "development"),
-		Port:               port,
-		DBPath:             envString("DB_PATH", "./data/finance.db"),
-		BillsPath:          envString("BILLS_PATH", "./data/bills"),
-		StoresPath:         envString("STORES_PATH", "./data/stores"),
-		ProductsPath:       envString("PRODUCTS_PATH", "./data/products"),
-		CORSAllowedOrigins: envList("CORS_ALLOWED_ORIGINS", ""),
-		LogLevel:           logLevel,
-		LogFile:            envString("LOG_FILE", "./data/server.log"),
-		AIEncryptionKey:    envString("AI_ENCRYPTION_KEY", ""),
-		LLMTimeout:         llmTimeout,
-		LLMNumCtx:          llmNumCtx,
-		FXTimeout:          fxTimeout,
-		ReadTimeout:        30 * time.Second,
-		WriteTimeout:       llmTimeout + 60*time.Second,
-		ShutdownTimeout:    15 * time.Second,
+		Env:                 envString("APP_ENV", "development"),
+		Port:                port,
+		DBPath:              envString("DB_PATH", "./data/finance.db"),
+		BillsPath:           envString("BILLS_PATH", "./data/bills"),
+		StoresPath:          envString("STORES_PATH", "./data/stores"),
+		ProductsPath:        envString("PRODUCTS_PATH", "./data/products"),
+		CORSAllowedOrigins:  envList("CORS_ALLOWED_ORIGINS", ""),
+		LogLevel:            logLevel,
+		LogFile:             envString("LOG_FILE", "./data/server.log"),
+		AIEncryptionKey:     envString("AI_ENCRYPTION_KEY", ""),
+		LLMTimeout:          llmTimeout,
+		LLMNumCtx:           llmNumCtx,
+		FXTimeout:           fxTimeout,
+		InsightThresholdPct: insightThreshold,
+		ReadTimeout:         30 * time.Second,
+		WriteTimeout:        llmTimeout + 60*time.Second,
+		ShutdownTimeout:     15 * time.Second,
 	}, nil
 }
 
@@ -106,6 +115,22 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("invalid integer %q", v)
 	}
 	return n, nil
+}
+
+// envFloat parses a percent-style float ("10", "7.5", "1e1" not).
+func envFloat(key string, fallback float64) (float64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number %q", v)
+	}
+	if f < 0 {
+		return 0, fmt.Errorf("must be >= 0, got %q", v)
+	}
+	return f, nil
 }
 
 // envDuration parses a Go duration string ("90s", "5m", "2m30s").

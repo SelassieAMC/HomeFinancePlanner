@@ -546,7 +546,7 @@ func newTestBillServiceWithProducts(t *testing.T, extractFn func(context.Context
 		&fakeSettingsStore{data: map[string]string{settingsKeyAIProviders: testProviderJSON()}},
 		passthroughBox{}, extractor)
 	svc := NewBillService(billStore, scanStore, extractor, settings,
-		nil, newFakeAccountStore(), catStore, storeStore, products, nil, nil, newFakeTxStore(), nil, t.TempDir(), 5*time.Second, nil)
+		nil, newFakeAccountStore(), catStore, storeStore, products, nil, nil, newFakeTxStore(), nil, t.TempDir(), nil, 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, storeStore, catStore, products
 }
@@ -1725,7 +1725,7 @@ func newTestBillServiceCustom(t *testing.T, settingsData map[string]string, rate
 	}
 	svc := NewBillService(billStore, scanStore, extractor, settings,
 		nil, accounts, &fakeCategoryStore{cats: map[int64]domain.Category{}}, storeStore,
-		nil, nil, nil, txs, rates, t.TempDir(), 5*time.Second, nil)
+		nil, nil, nil, txs, rates, t.TempDir(), nil, 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, store
 }
@@ -2602,7 +2602,7 @@ func newTestBillServiceWithMappings(t *testing.T, mappings ProductMappingStore, 
 	svc := NewBillService(&fakeBillStore{}, scanStore, extractor, settings,
 		nil, newFakeAccountStore(), &fakeCategoryStore{cats: map[int64]domain.Category{}},
 		newFakeStoreStore(), newFakeProductStore(), mappings, nil, newFakeTxStore(), nil,
-		t.TempDir(), 5*time.Second, nil)
+		t.TempDir(), nil, 5*time.Second, nil)
 	t.Cleanup(svc.Close)
 	return svc, scanStore
 }
