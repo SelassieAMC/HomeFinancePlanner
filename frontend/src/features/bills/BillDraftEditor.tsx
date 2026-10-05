@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Product, Store } from '../../types/domain';
-import { formatCents, dollarsToCents } from '../../lib/money';
+import { formatCents, dollarsToCents, parseDecimalInput } from '../../lib/money';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
@@ -852,10 +852,16 @@ export function BillDraftEditor({
                         placeholder="500"
                         aria-label={`Size value for ${it.name}`}
                         onBlur={(e) => {
-                          const v = Number(e.target.value.trim().replace(',', '.'));
-                          updateItem(it.id, {
-                            unit_value: Number.isFinite(v) && v > 0 ? v : undefined,
-                          });
+                          // Decimal comma tolerated (mobile keypads type it);
+                          // blank or non-positive clears the magnitude.
+                          const v = parseDecimalInput(e.target.value);
+                          const next = Number.isFinite(v) && v > 0 ? v : undefined;
+                          if (next !== it.unit_value) {
+                            updateItem(it.id, { unit_value: next });
+                          }
+                          if (next === undefined) {
+                            e.target.value = ''; // keep the DOM in sync with the cleared state
+                          }
                         }}
                       />
                     </div>
@@ -867,11 +873,16 @@ export function BillDraftEditor({
                       inputMode="decimal"
                       defaultValue={it.quantity}
                       aria-label={`Quantity for ${it.name}`}
-                      onBlur={(e) =>
-                        Number(e.target.value) !== it.quantity &&
-                        Number(e.target.value) > 0 &&
-                        updateItem(it.id, { quantity: Number(e.target.value) })
-                      }
+                      onBlur={(e) => {
+                        // Decimal comma tolerated (mobile keypads type it);
+                        // unparseable text reverts instead of sticking stale.
+                        const v = parseDecimalInput(e.target.value);
+                        if (!Number.isFinite(v) || v <= 0) {
+                          e.target.value = String(it.quantity);
+                          return;
+                        }
+                        if (v !== it.quantity) updateItem(it.id, { quantity: v });
+                      }}
                     />
                   </div>
                 </div>

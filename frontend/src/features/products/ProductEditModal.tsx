@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { productsApi } from '../../api/products';
-import { formatCents } from '../../lib/money';
+import { formatCents, parseDecimalInput } from '../../lib/money';
 import type { Category, Product, ProductInput, ProductMergeCheck } from '../../types/domain';
 import { ProductMergeDialog } from './ProductMergeDialog';
 import {
@@ -54,14 +54,15 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   function buildInput(): ProductInput {
-    // Decimal comma tolerated; blank = untouched, non-positive = clear.
-    const magnitude = unitValue.trim().replace(',', '.');
-    const parsed = magnitude === '' ? NaN : Number(magnitude);
+    // Decimal comma tolerated (mobile keypads type it); blank = untouched,
+    // non-positive or unparseable = clear.
+    const magnitude = unitValue.trim();
+    const parsed = magnitude === '' ? NaN : parseDecimalInput(magnitude);
     return {
       name: name.trim(),
       brand: brand.trim(),
       unit: unit.trim().toLowerCase(),
-      unit_value: magnitude === '' ? undefined : parsed > 0 ? parsed : 0,
+      unit_value: magnitude === '' ? undefined : Number.isFinite(parsed) && parsed > 0 ? parsed : 0,
       category_id: categoryId,
       description: description.trim(),
       standard_name: standardName.trim(),

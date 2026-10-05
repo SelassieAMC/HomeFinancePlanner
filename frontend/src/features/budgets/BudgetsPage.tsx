@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAsync } from '../../hooks/useAsync';
 import { budgetsApi } from '../../api/budgets';
+import { dollarsToCents } from '../../lib/money';
 import { summaryApi } from '../../api/summary';
 import { categoriesApi } from '../../api/categories';
 import type { Budget } from '../../types/domain';
@@ -37,7 +38,7 @@ export function BudgetsPage() {
     e.preventDefault();
     setFormError(null);
 
-    const cents = Math.round(Number(amount) * 100);
+    const cents = dollarsToCents(amount); // parses the comma decimal separator too
     if (!Number.isFinite(cents) || cents <= 0) {
       setFormError('Enter a positive budget amount.');
       return;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Account, Category, Store, Transaction, TransactionInput, TransactionKind } from '../../types/domain';
 import { productsApi } from '../../api/products';
-import { dollarsToCents, formatCents } from '../../lib/money';
+import { dollarsToCents, formatCents, parseDecimalInput } from '../../lib/money';
 import {
   Button,
   CategorySelect,
@@ -87,7 +87,9 @@ function lineAllowsNegative(line: LineDraft, categories: Category[]): boolean {
 // (quantity × unit price − discount, clamped to ≥ 0 unless the line allows
 // negatives); NaN until filled in.
 function lineCents(line: LineDraft, categories: Category[]): number {
-  const qty = Number(line.qty);
+  // parseDecimalInput accepts the comma decimal separator mobile numeric
+  // keypads type on non-US locales (Number('1,5') is NaN there).
+  const qty = parseDecimalInput(line.qty);
   const price = dollarsToCents(line.price);
   const discount = line.discount.trim() === '' ? 0 : dollarsToCents(line.discount);
   if (!Number.isFinite(qty) || qty <= 0 || Number.isNaN(price) || Number.isNaN(discount) || discount < 0) {
@@ -215,8 +217,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       const discount = line.discount.trim() === '' ? 0 : dollarsToCents(line.discount);
       // Printed size magnitude, decimal comma tolerated; blank or non-positive
       // stays "unknown".
-      const unitValueRaw = line.unit_value.trim().replace(',', '.');
-      const unitValueNumber = unitValueRaw === '' ? NaN : Number(unitValueRaw);
+      const unitValueRaw = line.unit_value.trim();
+      const unitValueNumber = unitValueRaw === '' ? NaN : parseDecimalInput(unitValueRaw);
       const unitValue = Number.isFinite(unitValueNumber) && unitValueNumber > 0 ? unitValueNumber : undefined;
       // "Leergut" and allows_negative categories are money back; anything
       // else must not go negative (the backend rejects it).
@@ -232,7 +234,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         unit: line.unit || undefined,
         unit_value: unitValue,
         category_id: line.category_id,
-        quantity: Number(line.qty),
+        quantity: parseDecimalInput(line.qty),
         unit_price_cents: price,
         discount_cents: discount,
       });
@@ -383,9 +385,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               />
               <input
                 className="transaction-line-num"
-                type="number"
-                min="0"
-                step="any"
+                type="text"
+                inputMode="decimal"
                 value={line.qty}
                 onChange={(e) => updateLine(line.key, { qty: e.target.value })}
                 aria-label={`Item ${i + 1} quantity`}
