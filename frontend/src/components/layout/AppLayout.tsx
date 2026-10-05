@@ -4,13 +4,17 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 // Mobile bottom tab bar: the three destinations that matter daily get tabs;
 // the rest live behind "More". The center button opens a speed dial with the
 // two quick-entry actions. The desktop sidebar is unchanged.
-const TAB_ITEMS: { to: string; label: string; icon: string; end?: boolean }[] = [
+// External items are plain anchors outside the SPA router (the backend serves
+// them directly — e.g. the River job-queue UI), never NavLink routes.
+type NavItem = { to: string; label: string; icon: string; end?: boolean };
+
+const TAB_ITEMS: NavItem[] = [
   { to: '/', label: 'Home', icon: '🏠', end: true },
   { to: '/transactions', label: 'Activity', icon: '🧾' },
   { to: '/budgets', label: 'Budgets', icon: '🎯' },
 ];
 
-const MORE_ITEMS: { to: string; label: string; icon: string; end?: boolean }[] = [
+const MORE_ITEMS: (NavItem & { external?: true; href?: string })[] = [
   { to: '/accounts', label: 'Accounts', icon: '🏦' },
   { to: '/stores', label: 'Stores', icon: '🏪' },
   { to: '/products', label: 'Products', icon: '📦' },
@@ -18,11 +22,25 @@ const MORE_ITEMS: { to: string; label: string; icon: string; end?: boolean }[] =
   { to: '/bills', label: 'Bills', icon: '🗂️' },
   { to: '/scan', label: 'Scan bill', icon: '📷' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },
+  {
+    to: '/riverui',
+    label: 'Job queue',
+    icon: '🐇',
+    external: true,
+    href: '/riverui',
+  },
 ];
 
 const FAB_ITEMS = [
   { to: '/scan', label: 'Scan bill', icon: '📷' },
   { to: '/transactions', label: 'Add transaction', icon: '➕' },
+];
+
+// Every destination in one list for the desktop sidebar; the union keeps
+// external fields available while mapping.
+const ALL_ITEMS: (NavItem & { external?: true; href?: string })[] = [
+  ...TAB_ITEMS,
+  ...MORE_ITEMS,
 ];
 
 export function AppLayout() {
@@ -65,17 +83,25 @@ export function AppLayout() {
         </div>
         <nav aria-label="Main navigation">
           <ul className="sidebar-nav">
-            {[...TAB_ITEMS, ...MORE_ITEMS].map((item) => (
-              <li key={item.to}>
-                <NavLink
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
-                >
-                  {item.label}
-                </NavLink>
-              </li>
-            ))}
+            {ALL_ITEMS.map((item) =>
+              item.external ? (
+                <li key={item.to}>
+                  <a href={item.href} className="nav-link">
+                    {item.label}
+                  </a>
+                </li>
+              ) : (
+                <li key={item.to}>
+                  <NavLink
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+                  >
+                    {item.label}
+                  </NavLink>
+                </li>
+              ),
+            )}
           </ul>
         </nav>
       </aside>
@@ -166,15 +192,22 @@ export function AppLayout() {
               <ul onClick={() => setMoreOpen(false)}>
                 {MORE_ITEMS.map((item) => (
                   <li key={item.to}>
-                    <NavLink
-                      to={item.to}
-                      className={({ isActive }) =>
-                        isActive ? 'more-link active' : 'more-link'
-                      }
-                    >
-                      <span className="more-icon" aria-hidden="true">{item.icon}</span>
-                      {item.label}
-                    </NavLink>
+                    {item.external ? (
+                      <a href={item.href} className="more-link">
+                        <span className="more-icon" aria-hidden="true">{item.icon}</span>
+                        {item.label}
+                      </a>
+                    ) : (
+                      <NavLink
+                        to={item.to}
+                        className={({ isActive }) =>
+                          isActive ? 'more-link active' : 'more-link'
+                        }
+                      >
+                        <span className="more-icon" aria-hidden="true">{item.icon}</span>
+                        {item.label}
+                      </NavLink>
+                    )}
                   </li>
                 ))}
               </ul>

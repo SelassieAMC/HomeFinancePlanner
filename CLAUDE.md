@@ -349,7 +349,15 @@ the **River web UI embedded at `/riverui`** (OSS `riverqueue.com/riverui`
 compiled into the backend binary — no extra process, no auth, the same
 LAN-host posture as the API; retry/cancel/delete and job details live there):
 reachable directly on the backend port and proxied through nginx in
-`frontend/nginx.conf`. When adding
+`frontend/nginx.conf` (dev vite proxies `/riverui` too). Cross-links:
+the sidebar's "Job queue" entry is a plain anchor (River lives outside the
+SPA router), and `backend/internal/api/middleware/riverui_banner.go` injects
+a "← Back to planner" pill into River's SPA-shell `text/html` response
+(buffered only for browser-navigations whose Accept asks for text/html;
+Content-Length is deleted before WriteHeader or the longer body truncates).
+When adding
 a new entity, follow the vertical slice:
+migration → domain model → repository → service → handler → route → frontend
+api module → feature page.
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.

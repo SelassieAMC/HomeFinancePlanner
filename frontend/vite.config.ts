@@ -12,6 +12,12 @@ export default defineConfig({
         target: 'http://localhost:5001',
         changeOrigin: true,
       },
+      // The embedded River job-queue UI lives on the backend, outside the SPA
+      // (identical split to production nginx).
+      '/riverui': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+      },
     },
   },
   build: {

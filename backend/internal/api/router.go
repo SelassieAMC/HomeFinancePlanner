@@ -18,8 +18,11 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux := http.NewServeMux()
 
 	if ui != nil {
-		mux.Handle("GET /riverui", ui)
-		mux.Handle("/riverui/", ui)
+		// Wrapped in a middleware that injects the "back to the planner" link
+		// into River's SPA shell (its only text/html response); the UI itself
+		// strips the /riverui prefix internally.
+		mux.Handle("GET /riverui", middleware.RiverUIBackLink(ui))
+		mux.Handle("/riverui/", middleware.RiverUIBackLink(ui))
 	}
 
 	healthH := handlers.NewHealthHandler(cfg)
