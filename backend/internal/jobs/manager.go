@@ -70,6 +70,14 @@ func NewManager(ctx context.Context, dbPath string, aiTimeout time.Duration, wor
 		},
 		Workers:     workers,
 		RetryPolicy: newRetryPolicy(aiTimeout),
+		// River's default JobTimeout (1 minute) cancels every job's context
+		// after 60s — on a data-heavy install the backfill's first AI batch is
+		// still generating when it fires, so the call dies with "context
+		// deadline exceeded" and every retry dies the same way. Workers set
+		// their own per-call AI budgets (LLM_TIMEOUT), and the shutdown path
+		// (Stop then StopAndCancel) cancels running job contexts regardless of
+		// this setting, so a job cannot outlive the process.
+		JobTimeout: -1,
 	})
 	if err != nil {
 		pool.Close()

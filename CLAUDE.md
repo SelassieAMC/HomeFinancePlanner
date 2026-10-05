@@ -313,7 +313,12 @@ NOCASE-matches a product name; all mapping lookups stay name-based).
 (`riverqueue.com/river` v0.48 with the `riversqlite` driver over the same
 SQLite file): `internal/jobs/manager.go` owns a dedicated
 single-connection pool (`_txlock=immediate` in the DSN) plus the queue's own
-`rivermigrate` schema, `river.NewClient` with a 2-worker default queue and a
+`rivermigrate` schema, `river.NewClient` with a 2-worker default queue, a
+**disabled `JobTimeout`** (`-1`: River's built-in 1-minute default cancels a
+job's context after 60s — on data-heavy installs the backfill's AI batch was
+still generating when it fired and every retry died with "context deadline
+exceeded"; workers bound their own per-call AI budgets with `LLM_TIMEOUT`, and
+shutdown still cancels jobs via `StopAndCancel`) and a
 **LLM-aware retry policy** — the first retry waits 2× `LLM_TIMEOUT` (floor
 30s, doubling per attempt, capped 24h) so a retry never lands while a slow
 local model is still generating the abandoned call, the lesson the

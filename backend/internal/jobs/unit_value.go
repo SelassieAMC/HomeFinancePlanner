@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -347,6 +348,9 @@ func (w *UnitValueBackfillWorker) passAI(
 		answers, err := w.ai.UnitValues(callCtx, provider, extractor.FormatUnitValuePrompt(prompt, names))
 		cancel()
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return written, fmt.Errorf("unit-value backfill: AI read of %s batch of %d exceeded its LLM_TIMEOUT budget — raise LLM_TIMEOUT so the model can finish a batch (job retries with backoff): %w", table, len(batch), err)
+			}
 			return written, fmt.Errorf("unit-value backfill: AI read of %s batch (job retries with backoff, batch of %d): %w", table, len(batch), err)
 		}
 
