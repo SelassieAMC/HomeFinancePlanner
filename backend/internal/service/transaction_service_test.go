@@ -404,3 +404,46 @@ func TestTransactionCreateUnitValue(t *testing.T) {
 		t.Errorf("magnitude leaked onto bread through the 0 line: %v", bread2.UnitValue)
 	}
 }
+
+// TestTransactionCreateSkipsDepositArtifacts: a positive Pfand charge typed as
+// a manual line stays an unlinked financial line — no product, no memory
+// lookup, no identity mapping — while the real purchase next to it links
+// normally.
+func TestTransactionCreateSkipsDepositArtifacts(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newTestTransactionService(t)
+	mappings := newFakeProductMappingStore()
+	svc.mappings = mappings
+
+	in := validTransactionInput()
+	in.Items = []TransactionItemInput{
+		{Name: "PFAND 0,25", Quantity: 2, UnitPriceCents: 25},
+		{Name: "Milk", Quantity: 1, UnitPriceCents: 139},
+	}
+	created, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.Items[0].ProductID != nil {
+		t.Errorf("pfand line must stay unlinked, got product %d", *created.Items[0].ProductID)
+	}
+	if created.Items[1].ProductID == nil {
+		t.Errorf("the real purchase must still link to its product")
+	}
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	for _, looked := range mappings.lookups {
+		if strings.Contains(strings.ToLower(looked), "pfand") {
+			t.Errorf("artifact name %q must not be looked up in the memory", looked)
+		}
+	}
+	for _, c := range mappings.creates {
+		if strings.Contains(strings.ToLower(c.RawName), "pfand") {
+			t.Errorf("artifact name %q must not be recorded into the memory (creates=%+v)", c.RawName, mappings.creates)
+		}
+	}
+	if len(mappings.creates) != 1 || mappings.creates[0].RawName != "Milk" {
+		t.Errorf("creates = %+v, want only the Milk identity mapping", mappings.creates)
+	}
+}

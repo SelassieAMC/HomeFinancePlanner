@@ -2964,3 +2964,84 @@ func TestConfirmLinksMappingToProduct(t *testing.T) {
 		t.Fatalf("link = %v %v; want raw text + a positive product id", raw, id)
 	}
 }
+
+// TestConfirmNeverLinksDepositArtifacts pins the future-analysis guard:
+// positive Pfand/Mehrweg deposit charges and a bare Gratis marker keep their
+// real money in the bill, but (like the Leergut returns) never become
+// catalogue products — the AI prompt asks for the same, and the
+// domain.IsDepositArtifact code guard holds even when a custom prompt still
+// misclassifies.
+func TestConfirmNeverLinksDepositArtifacts(t *testing.T) {
+	draft := domain.BillDraft{
+		MarketName: "REWE", Currency: "EUR",
+		Items: []domain.BillItemDraft{
+			{Name: "PFAND 0,25", Quantity: 2, UnitPriceCents: 25, LineTotalCents: 50},
+			{Name: "MEHRWEG-PFAND 1,50", Quantity: 1, UnitPriceCents: 150, LineTotalCents: 150},
+			{Name: "GRATIS", Quantity: 1, UnitPriceCents: 0, LineTotalCents: 0},
+		},
+	}
+	svc, scanStore, billStore, _, _, products := newTestBillServiceWithProducts(t,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return draft, nil
+		})
+
+	confirmDraft(t, svc, scanStore, []byte("receipt-1"), domain.BillConfirmInput{MarketName: "REWE", Currency: "EUR", Items: draft.Items})
+
+	if len(products.items) != 0 {
+		t.Fatalf("deposit artifact lines must not create products, got %+v", products.items)
+	}
+	if len(billStore.items) != 1 {
+		t.Fatalf("expected the persisted bill with its lines, got %d bills", len(billStore.items))
+	}
+	for _, it := range billStore.items[0].Items {
+		if it.ProductID != nil {
+			t.Errorf("artifact line %q must stay unlinked, got product %d", it.Name, *it.ProductID)
+		}
+	}
+}
+
+// TestApplyMappingMemorySkipsDepositArtifacts: a receipt line naming a
+// deposit artifact is never looked up in the naming memory and never
+// recorded into it, even though it is not flagged as a return.
+func TestApplyMappingMemorySkipsDepositArtifacts(t *testing.T) {
+	ctx := context.Background()
+	mappings := newFakeProductMappingStore()
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName: "Gratis", StandardName: "Free Item", Source: domain.MappingSourceAI,
+	})
+	svc := &BillService{mappings: mappings, log: slog.Default()}
+	draft := domain.BillDraft{Items: []domain.BillItemDraft{
+		{Name: "GRATIS", StandardName: "Gratis"},
+		{Name: "PFAND 0,25", StandardName: "Pfand 0,25"},
+	}}
+	svc.applyMappingMemory(ctx, &draft)
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.lookups) != 0 {
+		t.Errorf("artifact names must not be looked up, got %v", mappings.lookups)
+	}
+	if len(mappings.creates) != 0 {
+		t.Errorf("artifact names must not be recorded, got %+v", mappings.creates)
+	}
+}
+
+// TestLearnMappingOverridesSkipsDepositArtifacts: review edits of a deposit
+// artifact line (a custom prompt may hand it standard/generic names) are
+// never learned into the memory.
+func TestLearnMappingOverridesSkipsDepositArtifacts(t *testing.T) {
+	ctx := context.Background()
+	mappings := newFakeProductMappingStore()
+	svc := &BillService{mappings: mappings, log: slog.Default()}
+	items := []domain.BillItemDraft{
+		{Name: "PFAND 0,25", StandardName: "Bottle Deposit", GenericName: "Deposits", Quantity: 1, UnitPriceCents: 25, LineTotalCents: 25},
+		{Name: "GRATIS", CategoryID: ptrInt64(7), Quantity: 1, UnitPriceCents: 0, LineTotalCents: 0},
+	}
+	svc.learnMappingOverrides(ctx, items, []priorStandardLine{})
+
+	mappings.mu.Lock()
+	defer mappings.mu.Unlock()
+	if len(mappings.upserts) != 0 {
+		t.Errorf("artifact lines must not be learned, got %+v", mappings.upserts)
+	}
+}

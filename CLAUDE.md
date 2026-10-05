@@ -191,7 +191,19 @@ sweep with the session TTL. Negative item prices are allowed
 only for "Leergut" lines or items under a category with `allows_negative` (the
 seeded "Deposit & Returns" product category covers Pfand/Leergut) — the same
 rule applies to manual transaction item lines, whose money-back lines also stay
-unlinked from products. The bill total is always recomputed as the sum of the
+unlinked from products. **Deposit-artifact lines are never products**: the
+shared `domain.IsDepositArtifact` predicate (regex over `pfand`/`leergut`
+unanchored and `mehrweg`/`einweg`/`deposit`/`gratis` word-bounded — glued
+compounds like "Einwegpfand" match, "Einwegkamera"/"Gratissauce" don't) guards
+every confirm path, so deposit charges (Pfand, Mehrweg, Einweg, "Bottle
+deposit") and bare "Gratis" markers keep their real money in the bill or
+transaction (charge positive under "Deposit & Returns", a Gratis line's
+product belongs at price 0 per the prompts) but never link to a product or
+enter the `product_name_mappings` memory on future confirms — existing data
+is deliberately left untouched (no cleanup job; user decision), and migration
+0030 refreshed the `bill_extraction` and `product_normalization` prompt seeds
+(byte-guarded, custom prompts survive) to ask the AI for the same behavior.
+The bill total is always recomputed as the sum of the
 line totals **minus the bill-level global discount** (`discount_cents`, the
 receipt-wide rebate printed after the article lines, e.g. "10% Rabatt" —
 per-line discounts are already inside the lines), so discounted receipts

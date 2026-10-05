@@ -291,9 +291,10 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		// Normalization memory: a typed name that is already mapped fills its
 		// category when the user left it open. The typed name itself stays
 		// untouched — it is the raw text the product catalogue keys on.
+		// Deposit lines are never looked up (they are not products).
 		categoryID := it.CategoryID
 		isReturn := isDepositReturn(name)
-		if s.mappings != nil && !isReturn {
+		if s.mappings != nil && !isReturn && !domain.IsDepositArtifact(name) {
 			if m, err := s.mappings.FindByRawName(ctx, name); err == nil {
 				if categoryID == nil {
 					categoryID = m.CategoryID
@@ -342,10 +343,12 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	// Link each line to its catalogue product, find-or-created on first use —
 	// the same lenient rule as the bill flow: a product-link problem is logged
 	// and the line stays unlinked, never blocking the financial record.
-	// Money-back lines (Leergut / negative prices) stay unlinked, like bill
+	// Money-back lines (Leergut / negative prices) and deposit charges or
+	// free-item markers (domain.IsDepositArtifact) stay unlinked, like bill
 	// returns, so purchase stats and store prices stay about real purchases.
 	for i := range items {
-		if items[i].UnitPriceCents < 0 || isDepositReturn(items[i].Name) {
+		if items[i].UnitPriceCents < 0 || isDepositReturn(items[i].Name) ||
+			domain.IsDepositArtifact(items[i].Name) {
 			continue
 		}
 		items[i].ProductID = s.resolveTransactionProduct(ctx, items[i])

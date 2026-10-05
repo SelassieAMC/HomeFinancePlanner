@@ -1106,12 +1106,15 @@ func (s *BillService) resolveStore(ctx context.Context, market string) (*int64, 
 // resolveProduct links a bill item to its catalogue product, matched
 // case-insensitively on the (trimmed) item name and created on first use —
 // the same find-or-create shape as resolveStore, race-safe through the
-// unique name index. Deposit returns are skipped: they are money back, not a
-// purchase. Failures are non-fatal (logged, link left nil) — a product-link
-// problem must not block confirming an otherwise valid receipt; the next
-// confirm of the same item name retries.
+// unique name index. Deposit lines are skipped: returns ("Leergut") are money
+// back, and deposit charges ("Pfand") are the refund deposit itself — neither
+// is a purchasable product (domain.IsDepositArtifact), whatever the AI read
+// printed on the line. Failures are non-fatal (logged, link left nil) — a
+// product-link problem must not block confirming an otherwise valid receipt;
+// the next confirm of the same item name retries.
 func (s *BillService) resolveProduct(ctx context.Context, it domain.BillItem) *int64 {
-	if s.products == nil || it.IsReturn {
+	if s.products == nil || it.IsReturn || domain.IsDepositArtifact(it.Name) ||
+		domain.IsDepositArtifact(it.StandardName) {
 		return nil
 	}
 	name := strings.TrimSpace(it.Name)
@@ -1229,7 +1232,9 @@ func (s *BillService) extractDraft(ctx context.Context, files []domain.ReceiptFi
 // text stays stable without re-asking. A remembered empty generic name does
 // NOT override the fresh suggestion — "no family known yet" is not a
 // decision, and the backfill job fills the gap later. Return/deposit lines
-// are skipped — they are not products. Failures are logged and non-fatal,
+// are skipped — they are not products (return lines and, whatever the AI
+// classified, names carrying deposit/gratis wording never enter the memory).
+// Failures are logged and non-fatal,
 // like resolveProduct: a memory problem must never fail an extraction.
 func (s *BillService) applyMappingMemory(ctx context.Context, draft *domain.BillDraft) {
 	if s.mappings == nil {
@@ -1238,7 +1243,7 @@ func (s *BillService) applyMappingMemory(ctx context.Context, draft *domain.Bill
 	for i := range draft.Items {
 		it := &draft.Items[i]
 		raw := strings.TrimSpace(it.Name)
-		if raw == "" || it.IsReturn {
+		if raw == "" || it.IsReturn || domain.IsDepositArtifact(raw) {
 			continue
 		}
 		standard := strings.TrimSpace(it.StandardName)
@@ -1352,7 +1357,7 @@ func (s *BillService) learnMappingOverrides(ctx context.Context, items []domain.
 	}
 	for _, it := range items {
 		raw := strings.TrimSpace(it.Name)
-		if raw == "" || it.IsReturn {
+		if raw == "" || it.IsReturn || domain.IsDepositArtifact(raw) {
 			continue
 		}
 		standard := strings.TrimSpace(it.StandardName)
