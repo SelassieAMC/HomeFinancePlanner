@@ -1121,6 +1121,14 @@ func (s *BillService) resolveProduct(ctx context.Context, it domain.BillItem) *i
 	if name == "" {
 		return nil
 	}
+	// Mapping-first: a raw text the normalization memory links to a product
+	// joins that product's history, even when the memory's standard name no
+	// longer matches the product's raw name.
+	if p := mappingProduct(ctx, s.mappings, s.products, s.log, name); p != nil {
+		learnProductUnitValue(ctx, s.products, s.log, p, it.UnitValue)
+		id := p.ID
+		return &id
+	}
 	product, err := s.products.FindByName(ctx, name)
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
@@ -1193,6 +1201,29 @@ func linkProductMapping(ctx context.Context, mappings ProductMappingStore, log *
 	if err := mappings.LinkProduct(ctx, raw, productID); err != nil {
 		log.Warn("link product mapping", "raw", raw, "error", err)
 	}
+}
+
+// mappingProduct returns the catalogue product the normalization memory
+// links a raw text to, when that link still resolves — the mapping-first
+// rule: the memory's product_id is what earlier purchase lines decided, so a
+// printed or typed name resolvable through it joins that product's purchase
+// history instead of find-or-creating a near-duplicate by raw name. A stale
+// link (merged or deleted product leaves a nil/dangling id) falls through and
+// the caller re-points the memory at what it resolves to this time.
+func mappingProduct(ctx context.Context, mappings ProductMappingStore, products ProductStore, log *slog.Logger, name string) *domain.Product {
+	if mappings == nil || products == nil {
+		return nil
+	}
+	m, err := mappings.FindByRawName(ctx, name)
+	if err != nil || m.ProductID == nil {
+		return nil
+	}
+	p, err := products.GetByID(ctx, *m.ProductID)
+	if err != nil {
+		log.Warn("resolve mapped product", "raw", name, "product", *m.ProductID, "error", err)
+		return nil
+	}
+	return &p
 }
 
 // extractDraft resolves the managed extraction prompt (built-in default when

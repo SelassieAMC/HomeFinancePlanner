@@ -238,9 +238,6 @@ func (s *TransactionService) guardNotBill(ctx context.Context, id int64) error {
 }
 
 func (s *TransactionService) build(ctx context.Context, in TransactionInput) (domain.Transaction, error) {
-	if in.AccountID <= 0 {
-		return domain.Transaction{}, validationError("account_id must be a positive id")
-	}
 	if err := validatePositiveCents(in.AmountCents, "amount_cents"); err != nil {
 		return domain.Transaction{}, err
 	}
@@ -259,10 +256,25 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	if len(in.Description) > 500 {
 		return domain.Transaction{}, validationError("description must be at most 500 characters")
 	}
-	// Referential checks: a transaction must point at real rows.
-	acc, err := s.accounts.GetByID(ctx, in.AccountID)
-	if err != nil {
-		return domain.Transaction{}, fmt.Errorf("validate account_id: %w", err)
+	// Referential checks: a transaction must point at real rows. An open
+	// account defaults to the primary (first listed) account — with no
+	// accounts yet the request stays an error.
+	acc := domain.Account{}
+	var err error
+	if in.AccountID > 0 {
+		acc, err = s.accounts.GetByID(ctx, in.AccountID)
+		if err != nil {
+			return domain.Transaction{}, fmt.Errorf("validate account_id: %w", err)
+		}
+	} else {
+		list, lerr := s.accounts.List(ctx)
+		if lerr != nil {
+			return domain.Transaction{}, fmt.Errorf("list accounts: %w", lerr)
+		}
+		if len(list) == 0 {
+			return domain.Transaction{}, validationError("account_id must be a positive id")
+		}
+		acc = list[0]
 	}
 	if in.CategoryID != nil {
 		if _, err := s.categories.GetByID(ctx, *in.CategoryID); err != nil {
@@ -279,6 +291,10 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		s.log = slog.Default()
 	}
 	items := make([]domain.TransactionItem, 0, len(in.Items))
+	// recordableCats tracks the per-line category the normalization memory may
+	// record (explicit or mapped) — the transaction-level fallback below is a
+	// display default, never a memory decision.
+	recordableCats := make([]*int64, 0, len(in.Items))
 	itemsTotal := int64(0)
 	for _, it := range in.Items {
 		name := strings.TrimSpace(it.Name)
@@ -293,16 +309,24 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		// untouched — it is the raw text the product catalogue keys on.
 		// Deposit lines are never looked up (they are not products).
 		categoryID := it.CategoryID
+		recordable := it.CategoryID
 		isReturn := isDepositReturn(name)
 		if s.mappings != nil && !isReturn && !domain.IsDepositArtifact(name) {
 			if m, err := s.mappings.FindByRawName(ctx, name); err == nil {
-				if categoryID == nil {
+				if categoryID == nil && m.CategoryID != nil {
 					categoryID = m.CategoryID
+					recordable = m.CategoryID
 				}
 			} else if !errors.Is(err, domain.ErrNotFound) {
 				s.log.Warn("lookup product mapping", "raw", name, "error", err)
 			}
 		}
+		// Low-friction default: a line the user left open files under the
+		// transaction's main category.
+		if categoryID == nil && in.CategoryID != nil {
+			categoryID = in.CategoryID
+		}
+		recordableCats = append(recordableCats, recordable)
 		// The negative rule needs the line's category, so it is resolved
 		// before the price checks — like buildBill.
 		allowsNegative := isReturn
@@ -351,7 +375,20 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 			domain.IsDepositArtifact(items[i].Name) {
 			continue
 		}
-		items[i].ProductID = s.resolveTransactionProduct(ctx, items[i])
+		pid, product := s.resolveTransactionProduct(ctx, items[i])
+		items[i].ProductID = pid
+		// Low-friction entry: fields the user left blank inherit the linked
+		// product's descriptors (its purchase history knows the size), without
+		// touching what was typed explicitly — an entered-but-unsanitary value
+		// stays the "unknown" the sanitize wrote.
+		if product != nil {
+			if strings.TrimSpace(in.Items[i].Unit) == "" && product.Unit != "" {
+				items[i].Unit = product.Unit
+			}
+			if in.Items[i].UnitValue == nil && product.UnitValue != nil {
+				items[i].UnitValue = product.UnitValue
+			}
+		}
 		// Record the typed name into the normalization memory (identity
 		// mapping, source 'manual'): a name that matches nothing today is its
 		// own standard form until a scan or the analysis job decides
@@ -360,7 +397,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 			if _, err := s.mappings.Create(ctx, domain.ProductNameMapping{
 				RawName:      items[i].Name,
 				StandardName: items[i].Name,
-				CategoryID:   items[i].CategoryID,
+				CategoryID:   recordableCats[i],
 				ProductID:    items[i].ProductID,
 				Source:       domain.MappingSourceManual,
 			}); err != nil && !errors.Is(err, domain.ErrConflict) {
@@ -370,7 +407,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	}
 
 	return domain.Transaction{
-		AccountID:       in.AccountID,
+		AccountID:       acc.ID,
 		CategoryID:      in.CategoryID,
 		Kind:            in.Kind,
 		AmountCents:     in.AmountCents,
@@ -410,17 +447,28 @@ func (s *TransactionService) resolveTransactionStore(ctx context.Context, market
 }
 
 // resolveTransactionProduct links a manual item line to its catalogue
-// product, find-or-created case-insensitively from the line name (CategoryID
-// seeds a new product). Failures are non-fatal (logged, link left nil) — a
-// catalogue problem must not block recording the purchase; the next save
-// retries.
-func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it domain.TransactionItem) *int64 {
+// product, resolved mapping-first (the normalization memory's product_id,
+// which earlier purchase lines decided) and otherwise find-or-created
+// case-insensitively from the line name (CategoryID seeds a new product).
+// Failures are non-fatal (logged, link left nil) — a catalogue problem must
+// not block recording the purchase; the next save retries. The matched
+// product (nil when unlinked) comes back so the line can inherit its
+// unit/unit_value.
+func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it domain.TransactionItem) (*int64, *domain.Product) {
 	if s.products == nil {
-		return nil
+		return nil, nil
 	}
 	name := strings.TrimSpace(it.Name)
 	if name == "" {
-		return nil
+		return nil, nil
+	}
+	// Mapping-first: a raw text the normalization memory links to a product
+	// joins that product's history, even when the typed name never matches a
+	// catalogue name (e.g. "Whole Milk" mapping to "Whole Milk 3.8%").
+	if p := mappingProduct(ctx, s.mappings, s.products, s.log, name); p != nil {
+		learnProductUnitValue(ctx, s.products, s.log, p, it.UnitValue)
+		id := p.ID
+		return &id, p
 	}
 	product, err := s.products.FindByName(ctx, name)
 	switch {
@@ -438,11 +486,11 @@ func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it d
 		}
 		if err != nil {
 			s.log.Warn("create product from transaction item", "name", name, "error", err)
-			return nil
+			return nil, nil
 		}
 	case err != nil:
 		s.log.Warn("find product for transaction item", "name", name, "error", err)
-		return nil
+		return nil, nil
 	default:
 		// Existing product: fill its missing size magnitude from the line,
 		// never overwriting a decided value (same rule as the bill flow).
@@ -450,7 +498,8 @@ func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it d
 	}
 	linkProductMapping(ctx, s.mappings, s.log, name, product.ID)
 	id := product.ID
-	return &id
+	linked := product
+	return &id, &linked
 }
 
 // BudgetService implements budget business rules. Budgets are open-ended

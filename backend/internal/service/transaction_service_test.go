@@ -447,3 +447,151 @@ func TestTransactionCreateSkipsDepositArtifacts(t *testing.T) {
 		t.Errorf("creates = %+v, want only the Milk identity mapping", mappings.creates)
 	}
 }
+
+// TestTransactionCreateMappingFirstAndFillDown: a typed name that the
+// normalization memory links to a catalogue product joins that product's
+// purchase history (no near-duplicate by raw name), and blank unit/unit_value
+// fields inherit the linked product's descriptors. Garbage the user actually
+// typed is still sanitized to unknown, never replaced.
+func TestTransactionCreateMappingFirstAndFillDown(t *testing.T) {
+	ctx := context.Background()
+	svc, _, products, _ := newTestTransactionService(t)
+	mappings := newFakeProductMappingStore()
+	svc.mappings = mappings
+
+	one := 1.0
+	milk := domain.Product{Name: "Whole Milk 3.8%", Unit: "l", UnitValue: &one}
+	products.insert(milk)
+	milk, err := products.FindByName(ctx, "Whole Milk 3.8%")
+	if err != nil {
+		t.Fatalf("seed milk: %v", err)
+	}
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName:      "Whole Milk",
+		StandardName: "Whole Milk 3.8%",
+		ProductID:    &milk.ID,
+		Source:       domain.MappingSourceAI,
+	})
+
+	in := validTransactionInput()
+	in.Items = []TransactionItemInput{
+		// Typed name differs from the catalogue row, unit/unit_value blank.
+		{Name: "Whole Milk", Quantity: 2, UnitPriceCents: 149},
+		// Garbage magnitude actually typed: sanitized to unknown, not replaced.
+		{Name: "Whole Milk", Quantity: 1, UnitPriceCents: 99, UnitValue: floatPtr(0)},
+	}
+	created, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for i, want := range []struct {
+		unit  string
+		value *float64
+	}{
+		{"l", &one},
+		{"l", nil},
+	} {
+		line := created.Items[i]
+		if line.ProductID == nil || *line.ProductID != milk.ID {
+			t.Errorf("line %d product_id = %v; want mapped product %d", i, line.ProductID, milk.ID)
+		}
+		if line.Unit != want.unit {
+			t.Errorf("line %d unit = %q; want %q", i, line.Unit, want.unit)
+		}
+		got, wantV := line.UnitValue, want.value
+		if wantV == nil {
+			if got != nil {
+				t.Errorf("line %d unit_value = %v; want NULL (garbage stays unknown)", i, *got)
+			}
+		} else if got == nil || *got != *wantV {
+			t.Errorf("line %d unit_value = %v; want %v (filled from the product)", i, got, *wantV)
+		}
+	}
+	// Mapping-first means no find-or-create: the catalogue still has the one
+	// milk row under its standard name, and the memory's link was never
+	// repointed at a duplicate.
+	if len(mappings.links) != 0 {
+		t.Errorf("memory link rewritten: %v", mappings.links)
+	}
+	if _, err := products.FindByName(ctx, "Whole Milk"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("a duplicate product was created under the typed name")
+	}
+	// The create attempt hits the unique constraint; the AI-reviewed mapping
+	// decision must still be what the memory holds.
+	mappings.mu.Lock()
+	still := mappings.items["whole milk"]
+	mappings.mu.Unlock()
+	if still.Source != domain.MappingSourceAI || still.ProductID == nil || *still.ProductID != milk.ID {
+		t.Errorf("mapping decision overwritten: %+v", still)
+	}
+}
+
+// TestTransactionCreateDefaultsFromTransaction: an open account defaults to
+// the primary (first listed) account, and an uncategorized item line files
+// under the transaction's main category — the display default never learning
+// into the normalization memory.
+func TestTransactionCreateDefaultsFromTransaction(t *testing.T) {
+	ctx := context.Background()
+	svc, txs, _, _ := newTestTransactionService(t)
+	mappings := newFakeProductMappingStore()
+	svc.mappings = mappings
+
+	in := validTransactionInput()
+	in.AccountID = 0 // open → the primary account (the harness's EUR wallet)
+	cat8 := int64(8)
+	in.CategoryID = &cat8
+	in.Items = []TransactionItemInput{{Name: "Dish Soap", Quantity: 1, UnitPriceCents: 199}}
+	created, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.AccountID != 1 || created.Currency != "EUR" {
+		t.Fatalf("account = %d %s; want 1 EUR", created.AccountID, created.Currency)
+	}
+	if created.Items[0].CategoryID == nil || *created.Items[0].CategoryID != cat8 {
+		t.Fatalf("line category = %v; want the transaction's main category", created.Items[0].CategoryID)
+	}
+	// But the transaction-level default is not a memory decision: the identity
+	// mapping records no category, and the seeded product is not created with
+	// a reviewed-looking category either.
+	mappings.mu.Lock()
+	recorded := mappings.items["dish soap"]
+	mappings.mu.Unlock()
+	if recorded.RawName == "" {
+		t.Fatalf("identity mapping missing")
+	}
+	if recorded.CategoryID != nil {
+		t.Errorf("transaction-level category learned into the memory: %+v", recorded)
+	}
+	saved := txs.items[created.ID]
+	if len(saved.Items) != 1 || saved.Items[0].CategoryID == nil || *saved.Items[0].CategoryID != cat8 {
+		t.Fatalf("line category not persisted: %+v", saved.Items)
+	}
+
+	// Explicit and mapped categories still outrank the transaction default and
+	// are recorded: the mapped name fills first, the explicit last.
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName:      "Bread",
+		StandardName: "Bread",
+		CategoryID:   &cat8,
+		Source:       domain.MappingSourceUser,
+	})
+	cat7 := int64(7)
+	in2 := validTransactionInput()
+	in2.AccountID = 0
+	in2.CategoryID = nil
+	in2.Items = []TransactionItemInput{
+		{Name: "Bread", Quantity: 1, UnitPriceCents: 150},                     // mapped → 8
+		{Name: "Butter", CategoryID: &cat7, Quantity: 1, UnitPriceCents: 200}, // explicit → 7
+	}
+	created2, err := svc.Create(ctx, in2)
+	if err != nil {
+		t.Fatalf("create 2: %v", err)
+	}
+	if created2.Items[0].CategoryID == nil || *created2.Items[0].CategoryID != cat8 {
+		t.Errorf("mapped category lost: %v", created2.Items[0].CategoryID)
+	}
+	if created2.Items[1].CategoryID == nil || *created2.Items[1].CategoryID != cat7 {
+		t.Errorf("explicit category lost: %v", created2.Items[1].CategoryID)
+	}
+}

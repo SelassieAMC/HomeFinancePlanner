@@ -276,8 +276,18 @@ family and category — a blank remembered family keeps the fresh suggestion —
 and unmapped ones record the AI suggestion as `ai`), and
 confirm/update learn real per-line edits permanently (upsert as `user`) —
 deposit/return lines are never normalized or remembered. Manual purchases look
-the memory up per typed line (category filled only when unset, typed name
-never rewritten; unknown names record identity mappings as `manual`). Product
+the memory up per typed line (category filled only when unset — explicit >
+mapped > the transaction's main category, with that transaction-level default
+never learned into the memory — typed name never rewritten; unknown names
+record identity mappings as `manual`). Product resolution on both bill confirm
+and manual saves is **mapping-first**: the memory's `product_id` link is
+consulted before find-or-create by raw name, so a printed/typed name whose
+standard form differs joins the mapped product's purchase history instead of
+duplicating it (a stale link falls through and gets re-pointed by the save).
+Blank manual `unit`/`unit_value` inherit the linked product's descriptors;
+entered-but-unsanitary values stay the sanitized "unknown". A manual expense
+with an open `account_id` records on the first listed account (error only when
+no accounts exist). Product
 edits learn the mapping too (`standard_name`/`generic_name` on
 `PUT /products/{id}`, source
 `user`): untouched saves write nothing, renames carry a mapped decision to

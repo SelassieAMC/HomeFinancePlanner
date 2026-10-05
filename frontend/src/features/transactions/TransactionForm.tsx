@@ -123,6 +123,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   const sortedStores = useMemo(() => [...stores].sort((a, b) => a.name.localeCompare(b.name)), [stores]);
   const pickedStore = stores.find((s) => String(s.id) === storeId) ?? null;
 
+  // Optional account: creating defaults to the primary (first listed) one —
+  // the same default the backend applies when account_id is omitted on the
+  // wire. Runs once the accounts arrive; the select still lists them all.
+  useEffect(() => {
+    const primary = accounts[0];
+    if (!initial && !accountId && primary) setAccountId(String(primary.id));
+  }, [initial, accountId, accounts]);
+
   // Display currency: the selected account's, falling back to the edited
   // transaction's. formatCents needs a real ISO code, so USD is the last resort.
   const currency =
@@ -208,6 +216,10 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
     }
     const items = [];
     for (const line of lines) {
+      if (line.name.trim() === '') {
+        setFormError('Give every item a name, or remove the empty line.');
+        return;
+      }
       const total = lineCents(line, categories);
       if (Number.isNaN(total)) {
         setFormError(`Complete the numbers for “${line.name || 'unnamed item'}”.`);

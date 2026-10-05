@@ -3045,3 +3045,46 @@ func TestLearnMappingOverridesSkipsDepositArtifacts(t *testing.T) {
 		t.Errorf("artifact lines must not be learned, got %+v", mappings.upserts)
 	}
 }
+
+// TestConfirmResolvesProductsThroughMappings: a printed raw name the
+// normalization memory links to a catalogue product joins that product's
+// purchase history even when no catalogue row carries the raw name.
+func TestConfirmResolvesProductsThroughMappings(t *testing.T) {
+	ctx := context.Background()
+	draft := domain.BillDraft{
+		MarketName: "REWE", Currency: "EUR",
+		Items: []domain.BillItemDraft{
+			{Name: "Whole Milk", Unit: "l", Quantity: 1, UnitPriceCents: 149, LineTotalCents: 149},
+		},
+	}
+	svc, scanStore, _, _, _, products := newTestBillServiceWithProducts(t,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return draft, nil
+		})
+	one := 1.0
+	products.insert(domain.Product{Name: "Whole Milk 3.8%", Unit: "l", UnitValue: &one})
+	milk, err := products.FindByName(ctx, "whole milk 3.8%")
+	if err != nil {
+		t.Fatalf("seed milk: %v", err)
+	}
+	mappings := newFakeProductMappingStore()
+	svc.mappings = mappings
+	mappings.seedMapping(domain.ProductNameMapping{
+		RawName:      "Whole Milk",
+		StandardName: "Whole Milk 3.8%",
+		ProductID:    &milk.ID,
+		Source:       domain.MappingSourceAI,
+	})
+
+	b := confirmDraft(t, svc, scanStore, []byte("receipt-mapped"),
+		domain.BillConfirmInput{MarketName: "REWE", Currency: "EUR", Items: draft.Items})
+	if len(products.items) != 1 {
+		t.Fatalf("a duplicate product was find-or-created by raw name, got %d", len(products.items))
+	}
+	if len(b.Items) != 1 || b.Items[0].ProductID == nil || *b.Items[0].ProductID != milk.ID {
+		t.Errorf("line not linked through the mapping: %+v", b.Items[0].ProductID)
+	}
+	if links := mappings.links; len(links) != 0 {
+		t.Errorf("memory link rewritten: %v", links)
+	}
+}
