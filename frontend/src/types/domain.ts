@@ -110,16 +110,24 @@ export interface Category {
 
 export type BudgetLifecycle = 'open' | 'closed';
 
+/** 'open' = open-ended envelope; 'monthly' = fixed cap reset per calendar month. */
+export type BudgetCadence = 'open' | 'monthly';
+
 /**
- * An open-ended spending envelope for one category: no period. It stays open
- * — accumulating attributed spend — until it is marked finished and closed,
- * so total spend, savings and overspend can be evaluated over its lifetime.
+ * A spending pool for one category. Envelopes (cadence 'open') have no
+ * period: they stay open — accumulating attributed spend — until marked
+ * finished and closed. Monthly budgets (cadence 'monthly') cover exactly the
+ * calendar `month` they carry; a lazy rollover closes the stale open monthly
+ * row and opens the current month's successor with the same amount — no
+ * leftover roll-over.
  */
 export interface Budget {
   id: number;
   category_id: number;
   amount_cents: number;
   status: BudgetLifecycle;
+  cadence: BudgetCadence;
+  month?: string; // YYYY-MM, monthly rows only
   closed_at?: string; // set when closed, cleared on reopen
   created_at: string;
   updated_at: string;
@@ -128,11 +136,14 @@ export interface Budget {
 export interface BudgetInput {
   category_id: number;
   amount_cents: number;
+  cadence?: BudgetCadence; // empty = envelope
 }
 
 export interface BudgetStatus extends Budget {
   spent_cents: number; // spend attributed inside the reported range
-  lifetime_spent_cents: number; // all spend attributed since creation
+  // All spend attributed since creation; for monthly rows, bounded to the
+  // row's own month.
+  lifetime_spent_cents: number;
   remaining_cents: number; // amount − lifetime spend (negative = overspent)
 }
 
@@ -293,6 +304,26 @@ export interface Summary {
 export interface DayTotal {
   date: string; // YYYY-MM-DD
   expense_cents: number;
+}
+
+/**
+ * Period-independent "at a glance" row: current standing regardless of the
+ * dashboard period navigation. Cash flow covers the current calendar month;
+ * burn_rate_cents is the average daily expense over the trailing 30 days.
+ * pending_receipts is the scan review backlog — money already spent (not
+ * unpaid obligations).
+ */
+export interface Glance {
+  currency: string; // base currency of all amounts
+  conversion_warnings: string[];
+  month: string; // YYYY-MM the cash-flow window covers
+  income_cents: number;
+  expense_cents: number;
+  net_cents: number; // income minus expense for month
+  net_worth_cents: number;
+  burn_rate_cents: number;
+  pending_receipts: number;
+  pending_receipt_cents: number;
 }
 
 export interface CategoryTotal {

@@ -4,7 +4,7 @@ import { budgetsApi } from '../../api/budgets';
 import { dollarsToCents } from '../../lib/money';
 import { summaryApi } from '../../api/summary';
 import { categoriesApi } from '../../api/categories';
-import type { Budget } from '../../types/domain';
+import type { Budget, BudgetCadence } from '../../types/domain';
 import { formatCents } from '../../lib/money';
 import {
   Button,
@@ -15,16 +15,28 @@ import {
   EmptyState,
 } from '../../components/ui';
 
-// Budgets are open-ended envelopes: they stay open — accumulating attributed
-// spend — until they are marked finished and closed. Progress is lifetime,
-// not monthly: the point is to see how much was spent, saved or overspent on
-// e.g. a vacations budget once it is closed.
+/** Short month label for a monthly budget's period ("2026-10" → "Oct 2026"). */
+function monthTag(month: string): string {
+  return new Date(`${month}-01T00:00:00`).toLocaleDateString('en-US', {
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+// Budgets come in two cadences. Envelopes stay open — accumulating attributed
+// spend — until marked finished and closed; progress is lifetime, so a closed
+// vacations budget shows how much was spent, saved or overspent. Monthly
+// budgets are fixed caps for the calendar month they carry: a lazy rollover
+// closes the stale monthly row once its month has passed and opens the
+// current month's successor with the same amount (leftovers never roll
+// over), so the list doubles as the Jan-vs-Feb history.
 export function BudgetsPage() {
   const { data, loading, error, reload } = useAsync(() => budgetsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
-  // Lifetime spend per budget. The summary's lifetime fields are
-  // range-independent, and a range covering all time makes every envelope
-  // with any attributed spend show up (closed ones included).
+  // Lifetime spend per budget (month-bounded for monthly rows). The
+  // summary's lifetime fields are range-independent, and a range covering
+  // all time makes every budget with any attributed spend show up (closed
+  // ones included).
   const summary = useAsync(
     () => summaryApi.range('1970-01-01', '2999-12-31'),
     [],
@@ -32,6 +44,9 @@ export function BudgetsPage() {
 
   const [categoryId, setCategoryId] = useState('');
   const [amount, setAmount] = useState('');
+  // Monthly is the common case (groceries, dining out); envelopes cover
+  // irregular pools like clothes or vacations.
+  const [cadence, setCadence] = useState<BudgetCadence>('monthly');
   const [formError, setFormError] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
@@ -51,6 +66,7 @@ export function BudgetsPage() {
       await budgetsApi.create({
         category_id: Number(categoryId),
         amount_cents: cents,
+        cadence,
       });
       setAmount('');
       reload();
@@ -87,10 +103,13 @@ export function BudgetsPage() {
   // Budget amounts and spend are denominated in the base currency.
   const currency = summary.data?.currency ?? 'USD';
 
-  // Open envelopes first — the ones still accepting spend.
-  const budgets = [...(data ?? [])].sort(
-    (a, b) => (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1),
-  );
+  // Open budgets first — the ones still accepting spend; closed rows newest
+  // month first so monthly history reads chronologically.
+  const budgets = [...(data ?? [])].sort((a, b) => {
+    const open = (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1);
+    if (open !== 0) return open;
+    return (b.month ?? '').localeCompare(a.month ?? '');
+  });
 
   return (
     <div className="page">
@@ -113,6 +132,14 @@ export function BudgetsPage() {
             onChange={(e) => setAmount(e.target.value)}
             required
           />
+          <select
+            value={cadence}
+            onChange={(e) => setCadence(e.target.value as BudgetCadence)}
+            aria-label="Budget cadence"
+          >
+            <option value="monthly">Monthly</option>
+            <option value="open">Open envelope</option>
+          </select>
           <Button type="submit">Add</Button>
         </form>
         {formError && <ErrorMessage message={formError} />}
@@ -182,6 +209,11 @@ function BudgetCard({
           {categoryIcon && <span aria-hidden="true">{categoryIcon} </span>}
           {categoryName}
         </span>
+        {budget.cadence === 'monthly' && (
+          <span className="stat-label">
+            Monthly{budget.month ? ` · ${monthTag(budget.month)}` : ''}
+          </span>
+        )}
         <span className="budget-amounts">
           <strong>{formatCents(lifetimeSpent, currency)}</strong>
           {' / '}

@@ -157,15 +157,35 @@ func (s BudgetLifecycle) Valid() bool {
 	return s == BudgetOpen || s == BudgetClosed
 }
 
-// Budget is an open-ended spending envelope for one category. It has no
-// period: it stays open — accumulating attributed spend — until it is marked
-// finished and closed, so total spend, savings and overspend can be evaluated
-// over its whole lifetime (e.g. a vacations budget).
+// BudgetCadence distinguishes open-ended envelopes from monthly budgets.
+// Monthly budgets materialize one row per calendar month through a lazy
+// rollover: a stale open monthly row is closed (its month stays the
+// historical label; leftovers never roll over) and a successor opens for the
+// current month with the same amount.
+type BudgetCadence string
+
+const (
+	BudgetEnvelope BudgetCadence = "open"
+	BudgetMonthly  BudgetCadence = "monthly"
+)
+
+func (c BudgetCadence) Valid() bool {
+	return c == BudgetEnvelope || c == BudgetMonthly
+}
+
+// Budget is a spending pool for one category. Envelopes (cadence 'open')
+// have no period: they stay open — accumulating attributed spend — until
+// marked finished and closed (e.g. a vacations budget). Monthly budgets
+// (cadence 'monthly') cover exactly the calendar Month they carry; the lazy
+// rollover closes a stale open monthly row and opens the successor for the
+// current month with the same amount.
 type Budget struct {
 	ID          int64           `json:"id"`
 	CategoryID  int64           `json:"category_id"`
 	AmountCents int64           `json:"amount_cents"`
 	Status      BudgetLifecycle `json:"status"`
+	Cadence     BudgetCadence   `json:"cadence"`
+	Month       string          `json:"month,omitempty"` // YYYY-MM, monthly rows only
 	ClosedAt    *time.Time      `json:"closed_at,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
@@ -186,6 +206,37 @@ type Summary struct {
 	Budgets            []BudgetStatus  `json:"budgets"`
 	TopCategories      []CategoryTotal `json:"top_categories"`
 	DailyExpenses      []DayTotal      `json:"daily_expenses"`
+}
+
+// Glance is the period-independent "at a glance" dashboard row: current
+// standing regardless of the period the user navigated to. Every amount is
+// converted into the user's base Currency. Cash flow covers the current
+// calendar month; BurnRateCents is the average daily expense over the
+// trailing 30 days (today included). PendingReceipts is the review backlog
+// of scanned bills not yet confirmed — money already spent, not unpaid
+// obligations.
+type Glance struct {
+	Currency            string   `json:"currency"`            // base currency of all amounts
+	ConversionWarnings  []string `json:"conversion_warnings"` // currencies shown 1:1 (no rate available)
+	Month               string   `json:"month"`               // YYYY-MM the cash-flow window covers
+	IncomeCents         int64    `json:"income_cents"`
+	ExpenseCents        int64    `json:"expense_cents"`
+	NetCents            int64    `json:"net_cents"` // income minus expense for Month
+	NetWorthCents       int64    `json:"net_worth_cents"`
+	BurnRateCents       int64    `json:"burn_rate_cents"` // average daily expense, trailing 30 days
+	PendingReceipts     int64    `json:"pending_receipts"`
+	PendingReceiptCents int64    `json:"pending_receipt_cents"`
+}
+
+// RawGlance carries the native-currency subtotals behind Glance; conversion
+// into the base currency happens in the service layer.
+type RawGlance struct {
+	MonthIncome     []CurrencyAmount
+	MonthExpense    []CurrencyAmount
+	Balances        []CurrencyAmount
+	Expense30Days   []CurrencyAmount
+	PendingReceipts int64
+	PendingTotals   []CurrencyAmount
 }
 
 // DayTotal aggregates one day of expenses for the dashboard chart.
@@ -257,7 +308,20 @@ type RawSummary struct {
 	// category (transactions) and per budget (accepted bill lines).
 	LifetimeCategorySpend   []CategoryCurrencyTotal
 	LifetimeBillBudgetSpend []BudgetCurrencySpend
-	Budgets                 []Budget // base-currency amounts; compared against converted spend
+	// CategoryMonthSpend buckets transaction expenses per category AND
+	// calendar month, all time: the evaluation base for monthly budgets,
+	// whose spend is bounded to their own month row.
+	CategoryMonthSpend []CategoryMonthCurrencyTotal
+	Budgets            []Budget // base-currency amounts; compared against converted spend
+}
+
+// CategoryMonthCurrencyTotal is one category's transaction expenses for one
+// calendar month in one native currency.
+type CategoryMonthCurrencyTotal struct {
+	CategoryID int64
+	Month      string // YYYY-MM (derived from the transaction date)
+	Currency   string
+	TotalCents int64
 }
 
 // RateSnapshot is a set of reference exchange rates quoted against a pivot

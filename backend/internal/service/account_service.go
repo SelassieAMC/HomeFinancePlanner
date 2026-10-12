@@ -527,8 +527,13 @@ func (s *TransactionService) resolveTransactionProduct(ctx context.Context, it d
 	return &id, &linked
 }
 
-// BudgetService implements budget business rules. Budgets are open-ended
-// envelopes: no period, open until manually closed.
+// BudgetService implements budget business rules. Budgets are either
+// open-ended envelopes (no period, open until manually closed) or monthly
+// caps that reset each calendar month through the lazy rollover: reading
+// budgets on/after the first of a new month closes the stale open monthly
+// row — its month stays the historical label, leftovers never roll over —
+// and opens a successor for the current month carrying the same amount.
+// Manually closing a monthly row ends its series (no successor).
 type BudgetService struct {
 	budgets    BudgetStore
 	categories CategoryStore
@@ -538,11 +543,40 @@ type BudgetService struct {
 type BudgetInput struct {
 	CategoryID  int64
 	AmountCents int64
+	Cadence     domain.BudgetCadence // empty = envelope (the default)
+}
+
+// currentMonth returns the calendar month ("YYYY-MM") the server is in.
+func currentMonth() string { return time.Now().Format("2006-01") }
+
+// monthEnd converts "YYYY-MM" to the month's inclusive last day
+// ("YYYY-MM-DD"); malformed input degrades to a conservative upper bound.
+func monthEnd(month string) string {
+	first, err := timeParseDate(month + "-01")
+	if err != nil {
+		return month + "-31"
+	}
+	last := time.Date(first.Year(), first.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+	return last.Format("2006-01-02")
+}
+
+// EnsureMonthlyCurrent runs the lazy month rollover to the given month
+// ("YYYY-MM"): every open monthly budget stale against it is closed and
+// succeeded for that month.
+func (s *BudgetService) EnsureMonthlyCurrent(ctx context.Context, month string) error {
+	if err := validateMonth(month, "month"); err != nil {
+		return err
+	}
+	return s.budgets.RolloverMonthly(ctx, month)
 }
 
 // List returns budgets, optionally filtered by lifecycle status
-// ("" = all, "open", "closed").
+// ("" = all, "open", "closed"). Triggers the month rollover first so a
+// monthly row never lingers past its own month.
 func (s *BudgetService) List(ctx context.Context, status string) ([]domain.Budget, error) {
+	if err := s.EnsureMonthlyCurrent(ctx, currentMonth()); err != nil {
+		return nil, fmt.Errorf("budget month rollover: %w", err)
+	}
 	budgets, err := s.budgets.List(ctx)
 	if err != nil {
 		return nil, err
@@ -619,14 +653,28 @@ func (s *BudgetService) build(ctx context.Context, in BudgetInput) (domain.Budge
 	if err := validatePositiveCents(in.AmountCents, "amount_cents"); err != nil {
 		return domain.Budget{}, err
 	}
+	cadence := in.Cadence
+	if cadence == "" {
+		cadence = domain.BudgetEnvelope
+	}
+	if !cadence.Valid() {
+		return domain.Budget{}, validationError("cadence %q must be open or monthly", cadence)
+	}
 	if _, err := s.categories.GetByID(ctx, in.CategoryID); err != nil {
 		return domain.Budget{}, fmt.Errorf("validate category_id: %w", err)
 	}
-	return domain.Budget{
+	b := domain.Budget{
 		CategoryID:  in.CategoryID,
 		AmountCents: in.AmountCents,
 		Status:      domain.BudgetOpen,
-	}, nil
+		Cadence:     cadence,
+	}
+	if cadence == domain.BudgetMonthly {
+		// A new monthly row covers the month it is created in; the rollover
+		// takes it from there.
+		b.Month = currentMonth()
+	}
+	return b, nil
 }
 
 // SummaryService implements dashboard aggregates, converting every total
@@ -636,6 +684,10 @@ type SummaryService struct {
 	settings   *SettingsService
 	rates      RateSource
 	categories CategoryStore
+	// budgets is optional (nil in unit tests): when set, Range/Month summary
+	// first run the monthly-budget rollover so a stale open monthly row
+	// never lingers past its own month.
+	budgets *BudgetService
 }
 
 // MonthSummary returns the dashboard aggregate for one calendar month
@@ -673,6 +725,13 @@ func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (dom
 	snap, err := s.rates.Snapshot(ctx)
 	if err != nil {
 		return domain.Summary{}, err
+	}
+	// Rollover targets the real current month, not the queried range: viewing
+	// a past period must not leave a stale open monthly row behind.
+	if s.budgets != nil {
+		if err := s.budgets.EnsureMonthlyCurrent(ctx, currentMonth()); err != nil {
+			return domain.Summary{}, fmt.Errorf("budget month rollover: %w", err)
+		}
 	}
 	raw, err := s.summary.RawRangeSummary(ctx, from, to)
 	if err != nil {
@@ -743,9 +802,12 @@ func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (dom
 
 	// Budget progress: in-range spend is transaction-category spend plus
 	// bill-line spend attributed to the budget (per-line overrides included);
-	// the envelope balance is lifetime spend against the amount. Open
-	// envelopes are always reported; closed ones only when they had
-	// attributed activity inside the range.
+	// the balance is lifetime spend against the amount. For MONTHLY rows the
+	// transaction side is bounded to the row's own month (later months belong
+	// to successor rows) while explicit bill-line links stay all-time — the
+	// link is the attribution, regardless of the bill's date. Open budgets
+	// are always reported; closed ones only when they had attributed activity
+	// inside the range.
 	billSpend := map[int64]int64{}
 	for _, b := range raw.BillBudgetSpend {
 		billSpend[b.BudgetID] += conv.add(b.Currency, b.Cents)
@@ -758,17 +820,110 @@ func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (dom
 	for _, c := range raw.LifetimeCategorySpend {
 		lifetimeCategorySpend[c.CategoryID] += conv.add(c.Currency, c.TotalCents)
 	}
+	// Per-category per-month transaction spend for the monthly rows.
+	categoryMonthSpend := map[int64]map[string]int64{}
+	for _, c := range raw.CategoryMonthSpend {
+		m, ok := categoryMonthSpend[c.CategoryID]
+		if !ok {
+			m = map[string]int64{}
+			categoryMonthSpend[c.CategoryID] = m
+		}
+		m[c.Month] += conv.add(c.Currency, c.TotalCents)
+	}
 	out.Budgets = []domain.BudgetStatus{}
 	for _, b := range raw.Budgets {
 		st := domain.BudgetStatus{Budget: b}
-		st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
-		st.LifetimeSpentCents = lifetimeCategorySpend[b.CategoryID] + lifetimeBillSpend[b.ID]
+		if b.Cadence == domain.BudgetMonthly && b.Month != "" {
+			monthFrom := b.Month + "-01"
+			monthTo := monthEnd(b.Month)
+			switch {
+			case to < monthFrom || from > monthTo:
+				// Disjoint: nothing of this month falls inside the range.
+				st.SpentCents = 0
+			case from >= monthFrom && to <= monthTo:
+				// Range inside the month: exact in-range attribution.
+				st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
+			default:
+				// Range spans the month (or beyond): the month bucket is the
+				// best attribution — exact when the range covers the month,
+				// approximate for a partial overlap (e.g. a week crossing a
+				// month boundary).
+				st.SpentCents = categoryMonthSpend[b.CategoryID][b.Month] + billSpend[b.ID]
+			}
+			st.LifetimeSpentCents = categoryMonthSpend[b.CategoryID][b.Month] + lifetimeBillSpend[b.ID]
+		} else {
+			st.SpentCents = categorySpend[b.CategoryID] + billSpend[b.ID]
+			st.LifetimeSpentCents = lifetimeCategorySpend[b.CategoryID] + lifetimeBillSpend[b.ID]
+		}
 		st.RemainingCents = b.AmountCents - st.LifetimeSpentCents
 		if b.Status == domain.BudgetOpen || st.SpentCents != 0 {
 			out.Budgets = append(out.Budgets, st)
 		}
 	}
 
+	out.ConversionWarnings = conv.warnings()
+	return out, nil
+}
+
+// Glance returns the period-independent "at a glance" dashboard row for the
+// given day ("YYYY-MM-DD", supplied by the handler so the service stays
+// deterministic): cash flow for today's calendar month, net worth across all
+// accounts, the average daily expense over the trailing 30 days (today
+// included — an under-filled day pulls the average down slightly), and the
+// pending-receipt backlog (scanned bills awaiting review — money already
+// spent, not unpaid obligations).
+func (s *SummaryService) Glance(ctx context.Context, today string) (domain.Glance, error) {
+	if err := validateDate(today, "today"); err != nil {
+		return domain.Glance{}, err
+	}
+	t, err := timeParseDate(today)
+	if err != nil {
+		return domain.Glance{}, validationError("today %q is not a real date", today)
+	}
+	monthFrom := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthTo := monthFrom.AddDate(0, 1, -1)
+	burnFrom := t.AddDate(0, 0, -29)
+
+	base, err := s.settings.BaseCurrency(ctx)
+	if err != nil {
+		return domain.Glance{}, err
+	}
+	snap, err := s.rates.Snapshot(ctx)
+	if err != nil {
+		return domain.Glance{}, err
+	}
+	raw, err := s.summary.RawGlance(ctx,
+		monthFrom.Format("2006-01-02"), monthTo.Format("2006-01-02"),
+		burnFrom.Format("2006-01-02"), today)
+	if err != nil {
+		return domain.Glance{}, err
+	}
+	conv := newConverter(base, snap)
+
+	out := domain.Glance{
+		Currency:           base,
+		Month:              monthFrom.Format("2006-01"),
+		ConversionWarnings: []string{},
+		PendingReceipts:    raw.PendingReceipts,
+	}
+	for _, a := range raw.MonthIncome {
+		out.IncomeCents += conv.add(a.Currency, a.Cents)
+	}
+	for _, a := range raw.MonthExpense {
+		out.ExpenseCents += conv.add(a.Currency, a.Cents)
+	}
+	out.NetCents = out.IncomeCents - out.ExpenseCents
+	for _, a := range raw.Balances {
+		out.NetWorthCents += conv.add(a.Currency, a.Cents)
+	}
+	var expense30 int64
+	for _, a := range raw.Expense30Days {
+		expense30 += conv.add(a.Currency, a.Cents)
+	}
+	out.BurnRateCents = expense30 / 30
+	for _, a := range raw.PendingTotals {
+		out.PendingReceiptCents += conv.add(a.Currency, a.Cents)
+	}
 	out.ConversionWarnings = conv.warnings()
 	return out, nil
 }

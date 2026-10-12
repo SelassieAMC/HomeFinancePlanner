@@ -66,6 +66,8 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("DELETE /api/v1/budgets/{id}", budgetH.Delete)
 
 	mux.HandleFunc("GET /api/v1/summary", summaryH.Get)
+	// Literal route next to the exact-match /summary — no wildcard interactions.
+	mux.HandleFunc("GET /api/v1/summary/glance", summaryH.Glance)
 
 	// Analytics: dashboard chart aggregates. All literal routes — no wildcard
 	// interactions with the {id} routes above.

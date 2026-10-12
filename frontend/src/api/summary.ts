@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { Summary } from '../types/domain';
+import type { Glance, Summary } from '../types/domain';
 import { monthBounds } from '../lib/date';
 
 const BASE = '/api/v1';
@@ -15,4 +15,6 @@ export const summaryApi = {
     const { from, to } = monthBounds(month);
     return summaryApi.range(from, to);
   },
+  /** Period-independent "at a glance" row (net worth, cash flow, burn rate). */
+  glance: () => apiClient.get<Glance>(`${BASE}/summary/glance`),
 };

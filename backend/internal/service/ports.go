@@ -53,6 +53,10 @@ type BudgetStore interface {
 	Create(ctx context.Context, b domain.Budget) (domain.Budget, error)
 	Update(ctx context.Context, b domain.Budget) (domain.Budget, error)
 	Delete(ctx context.Context, id int64) error
+	// RolloverMonthly closes open monthly budgets older than the given month
+	// ("YYYY-MM") and creates each one's successor for that month with the
+	// same amount — the lazy month rollover the service triggers on reads.
+	RolloverMonthly(ctx context.Context, month string) error
 }
 
 // SummaryStore is the persistence contract for dashboard aggregates. It
@@ -60,6 +64,11 @@ type BudgetStore interface {
 // the base currency is the service's job.
 type SummaryStore interface {
 	RawRangeSummary(ctx context.Context, from, to string) (domain.RawSummary, error)
+	// RawGlance returns the period-independent "at a glance" subtotals:
+	// income/expense for the inclusive month range, expenses for the
+	// inclusive burn range, account balances, and the pending-receipt
+	// backlog (count + totals). Ranges are "YYYY-MM-DD".
+	RawGlance(ctx context.Context, monthFrom, monthTo, burnFrom, burnTo string) (domain.RawGlance, error)
 }
 
 // RateSource supplies the freshest cached exchange-rate snapshot
@@ -228,14 +237,17 @@ func New(
 	prompts *AIPromptService,
 	insights *InsightService,
 ) *Services {
+	budgetSvc := &BudgetService{budgets: budgets, categories: categories}
 	return &Services{
-		Accounts:      &AccountService{accounts: accounts},
-		Categories:    &CategoryService{categories: categories},
-		Stores:        storeSvc,
-		Products:      productSvc,
-		Transactions:  &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, log: slog.Default()},
-		Budgets:       &BudgetService{budgets: budgets, categories: categories},
-		Summary:       &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories},
+		Accounts:     &AccountService{accounts: accounts},
+		Categories:   &CategoryService{categories: categories},
+		Stores:       storeSvc,
+		Products:     productSvc,
+		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, log: slog.Default()},
+		Budgets:      budgetSvc,
+		// The summary reads budgets, so it runs the monthly rollover first:
+		// the reference is the same instance the budgets handler uses.
+		Summary:       &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories, budgets: budgetSvc},
 		Settings:      settings,
 		Bills:         bills,
 		OfferSearches: offerSearches,

@@ -13,6 +13,7 @@ import { PersonalPriceIndexChart } from './charts/PersonalPriceIndexChart';
 import { SpendSunburst } from './charts/SpendSunburst';
 import { SpendHeatmapChart } from './charts/SpendHeatmap';
 import { InsightsCard } from './InsightsCard';
+import { AtAGlanceRow } from './AtAGlanceRow';
 
 export function DashboardPage() {
   const [type, setType] = useState<PeriodType>('month');
@@ -32,6 +33,9 @@ export function DashboardPage() {
   // Month-to-date tile: the summary for the anchor's calendar month.
   const monthSummary = useAsync(() => summaryApi.month(month), [month]);
   // Chart payloads; each ChartCard renders its own loading/error/empty state.
+  // The at-a-glance row is period-independent: fetched once, never re-fetched
+  // when the period navigates.
+  const glance = useAsync(() => summaryApi.glance(), []);
   const runRate = useAsync(() => analyticsApi.runRate(month), [month]);
   const fixedSplit = useAsync(() => analyticsApi.fixedSplit(sixMonths.from, sixMonths.to), [sixMonths.from, sixMonths.to]);
   const priceIndex = useAsync(() => analyticsApi.priceIndex(twelveMonths.from, twelveMonths.to), [twelveMonths.from, twelveMonths.to]);
@@ -43,7 +47,7 @@ export function DashboardPage() {
   // every chart that hit it.
   const warnings = [
     ...new Set(
-      [runRate.data, fixedSplit.data, priceIndex.data, storeIndex.data, sunburst.data, heatmap.data].flatMap(
+      [glance.data, runRate.data, fixedSplit.data, priceIndex.data, storeIndex.data, sunburst.data, heatmap.data].flatMap(
         (d) => d?.conversion_warnings ?? [],
       ),
     ),
@@ -87,6 +91,9 @@ export function DashboardPage() {
       />
 
       {conversionWarning && <div className="bill-warning">{conversionWarning}</div>}
+
+      {/* Step-1 at-a-glance row: current standing, period-independent. */}
+      <AtAGlanceRow glance={glance} />
 
       {/* Deferred intelligence: unread price-per-unit nudges the analysis job
           wrote after recent purchases. Hidden entirely when none are unread. */}

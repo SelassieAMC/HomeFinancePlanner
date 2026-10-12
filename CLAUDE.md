@@ -134,7 +134,24 @@ All configuration is env-driven (`internal/config`):
 Accounts, categories, stores, products, transactions, budgets, the planning
 dashboard (daily expenses, budget progress, per-product-category spending), and
 AI bill scanning (upload → extract → review → confirm, saved-bill editing,
-stats) are implemented. Bills link to stores via `store_id`; on confirm/update
+stats) are implemented. The dashboard opens with a period-independent
+**at-a-glance row** (`GET /api/v1/summary/glance`, `SummaryService.Glance`
+takes `today` from the handler so the service stays deterministic): net worth
+across accounts, current-month cash flow, the burn rate as average daily
+expense over the trailing 30 days (today included), and the scan review
+backlog as count + total of `bills.status = 'pending'` — reported as
+"Receipts to review", not pending obligations: in this app pending bills are
+money already spent (real payables wait for the recurring-transactions
+schema). **Budgets have two cadences** (migration 0032): `open` envelopes keep
+the 0015 open-ended behavior, while `monthly` budgets are fixed caps for the
+calendar month they carry (`month` column, YYYY-MM). A lazy rollover closes a
+stale open monthly row and opens the successor for the current month with the
+same amount (leftovers never roll over; manually closing a monthly row ends
+its series) — triggered by `BudgetService.List` and `SummaryService` range
+reads (`EnsureMonthlyCurrent`). Monthly evaluation bounds transaction spend
+to the row's own month (the new `CategoryMonthSpend` bucketing) while
+explicit bill-line links stay all-time, so historical Jan-vs-Feb comparisons
+never re-evaluate old months against a changed amount. Bills link to stores via `store_id`; on confirm/update
 the service find-or-creates the store from the (case-insensitive) market name,
 while `market_name` stays a denormalized snapshot. Bill items link to products
 via `product_id`: on confirm the service find-or-creates the product from the

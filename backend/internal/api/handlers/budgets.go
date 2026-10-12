@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 	"home-finance-planner/backend/internal/service"
@@ -11,8 +12,9 @@ import (
 type BudgetHandler struct{ Svc *service.BudgetService }
 
 type budgetRequest struct {
-	CategoryID  int64 `json:"category_id"`
-	AmountCents int64 `json:"amount_cents"`
+	CategoryID  int64                `json:"category_id"`
+	AmountCents int64                `json:"amount_cents"`
+	Cadence     domain.BudgetCadence `json:"cadence"` // empty = envelope
 }
 
 type budgetStatusRequest struct {
@@ -39,6 +41,7 @@ func (h *BudgetHandler) Create(w http.ResponseWriter, r *http.Request) {
 	b, err := h.Svc.Create(r.Context(), service.BudgetInput{
 		CategoryID:  req.CategoryID,
 		AmountCents: req.AmountCents,
+		Cadence:     req.Cadence,
 	})
 	if err != nil {
 		respondServiceError(w, r, err)
@@ -129,4 +132,16 @@ func (h *SummaryHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, r, http.StatusOK, s)
+}
+
+// Glance returns the period-independent "at a glance" dashboard row: net
+// worth, current-month cash flow, the 30-day burn rate and the
+// pending-receipt backlog. No query params — the server date decides today.
+func (h *SummaryHandler) Glance(w http.ResponseWriter, r *http.Request) {
+	g, err := h.Svc.Glance(r.Context(), time.Now().Format("2006-01-02"))
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, g)
 }

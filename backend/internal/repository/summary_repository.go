@@ -43,6 +43,9 @@ func (r *SummaryRepository) RawRangeSummary(ctx context.Context, from, to string
 	if raw.LifetimeCategorySpend, err = r.spendByCategoryAllTime(ctx); err != nil {
 		return raw, err
 	}
+	if raw.CategoryMonthSpend, err = r.spendByCategoryMonth(ctx); err != nil {
+		return raw, err
+	}
 	if raw.LifetimeBillBudgetSpend, err = r.billSpendByBudgetAllTime(ctx); err != nil {
 		return raw, err
 	}
@@ -50,6 +53,62 @@ func (r *SummaryRepository) RawRangeSummary(ctx context.Context, from, to string
 		return raw, err
 	}
 	return raw, nil
+}
+
+// RawGlance aggregates the period-independent "at a glance" subtotals: income
+// and expense for the inclusive month range, expense for the inclusive burn
+// range, account balances, and the pending-receipt backlog — each group
+// labeled with its native currency.
+func (r *SummaryRepository) RawGlance(ctx context.Context, monthFrom, monthTo, burnFrom, burnTo string) (domain.RawGlance, error) {
+	raw := domain.RawGlance{}
+
+	kinds, err := r.amountsByKind(ctx, monthFrom, monthTo)
+	if err != nil {
+		return raw, err
+	}
+	raw.MonthIncome = kinds["income"]
+	raw.MonthExpense = kinds["expense"]
+
+	burn, err := r.amountsByKind(ctx, burnFrom, burnTo)
+	if err != nil {
+		return raw, err
+	}
+	raw.Expense30Days = burn["expense"]
+
+	if raw.Balances, err = r.balances(ctx); err != nil {
+		return raw, err
+	}
+	if raw.PendingReceipts, raw.PendingTotals, err = r.pendingReceipts(ctx); err != nil {
+		return raw, err
+	}
+	return raw, nil
+}
+
+// pendingReceipts counts scanned bills awaiting review and sums their
+// recomputed totals per native currency.
+func (r *SummaryRepository) pendingReceipts(ctx context.Context) (int64, []domain.CurrencyAmount, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT currency, SUM(total_cents), COUNT(*)
+		FROM bills
+		WHERE status = 'pending'
+		GROUP BY currency`)
+	if err != nil {
+		return 0, nil, fmt.Errorf("summary pending receipts: %w", err)
+	}
+	defer rows.Close()
+
+	var count int64
+	out := []domain.CurrencyAmount{}
+	for rows.Next() {
+		var a domain.CurrencyAmount
+		var n int64
+		if err := rows.Scan(&a.Currency, &a.Cents, &n); err != nil {
+			return 0, nil, fmt.Errorf("scan pending receipt: %w", err)
+		}
+		count += n
+		out = append(out, a)
+	}
+	return count, out, rows.Err()
 }
 
 // amountsByKind sums transaction amounts per kind and native currency.
@@ -175,7 +234,7 @@ func (r *SummaryRepository) spendByCategoryAllTime(ctx context.Context) ([]domai
 // they had attributed spend inside the range).
 func (r *SummaryRepository) budgets(ctx context.Context) ([]domain.Budget, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, category_id, amount_cents, status, closed_at, created_at, updated_at
+		SELECT `+budgetColumns+`
 		FROM budgets ORDER BY category_id`)
 	if err != nil {
 		return nil, fmt.Errorf("summary budgets: %w", err)
@@ -189,6 +248,31 @@ func (r *SummaryRepository) budgets(ctx context.Context) ([]domain.Budget, error
 			return nil, fmt.Errorf("scan budget: %w", err)
 		}
 		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// spendByCategoryMonth buckets expense transactions per category AND calendar
+// month (date prefix), all time and per native currency — the evaluation
+// base for monthly budgets, whose spend is bounded to their own month row.
+func (r *SummaryRepository) spendByCategoryMonth(ctx context.Context) ([]domain.CategoryMonthCurrencyTotal, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT category_id, substr(date, 1, 7), currency, SUM(amount_cents)
+		FROM transactions
+		WHERE kind = 'expense' AND category_id IS NOT NULL
+		GROUP BY category_id, substr(date, 1, 7), currency`)
+	if err != nil {
+		return nil, fmt.Errorf("summary spend by category+month: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.CategoryMonthCurrencyTotal{}
+	for rows.Next() {
+		var c domain.CategoryMonthCurrencyTotal
+		if err := rows.Scan(&c.CategoryID, &c.Month, &c.Currency, &c.TotalCents); err != nil {
+			return nil, fmt.Errorf("scan category+month spend: %w", err)
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }

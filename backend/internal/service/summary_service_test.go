@@ -8,17 +8,26 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// fakeSummaryStore returns a canned RawSummary and records the last range
-// it was queried with.
+// fakeSummaryStore returns canned RawSummary/RawGlance and records the
+// ranges it was queried with.
 type fakeSummaryStore struct {
-	raw  domain.RawSummary
-	from string
-	to   string
+	raw       domain.RawSummary
+	rawGlance domain.RawGlance
+	from      string
+	to        string
+
+	monthFrom, monthTo string
+	burnFrom, burnTo   string
 }
 
 func (f *fakeSummaryStore) RawRangeSummary(_ context.Context, from, to string) (domain.RawSummary, error) {
 	f.from, f.to = from, to
 	return f.raw, nil
+}
+
+func (f *fakeSummaryStore) RawGlance(_ context.Context, monthFrom, monthTo, burnFrom, burnTo string) (domain.RawGlance, error) {
+	f.monthFrom, f.monthTo, f.burnFrom, f.burnTo = monthFrom, monthTo, burnFrom, burnTo
+	return f.rawGlance, nil
 }
 
 // fakeCategoryNames lists categories for the top-spend name resolution.
@@ -283,5 +292,157 @@ func TestRangeSummaryBudgetsForAnyRange(t *testing.T) {
 	closed := s.Budgets[1]
 	if closed.ID != 11 || closed.SpentCents != 5_000 || closed.LifetimeSpentCents != 45_000 || closed.RemainingCents != 5_000 {
 		t.Errorf("closed budget status = %+v, want spent 5000 lifetime 45000 remaining 5000", closed)
+	}
+}
+
+func glanceTestRaw() domain.RawGlance {
+	return domain.RawGlance{
+		MonthIncome: []domain.CurrencyAmount{
+			{Currency: "EUR", Cents: 100_000},
+			{Currency: "USD", Cents: 22_000}, // 220 USD ≈ 200 EUR at 1.1
+		},
+		MonthExpense: []domain.CurrencyAmount{{Currency: "EUR", Cents: 50_000}},
+		Balances: []domain.CurrencyAmount{
+			{Currency: "EUR", Cents: 10_000},
+			{Currency: "USD", Cents: 11_000}, // 100 EUR at 1.1
+		},
+		Expense30Days: []domain.CurrencyAmount{
+			{Currency: "EUR", Cents: 45_000},
+			{Currency: "USD", Cents: 16_500}, // → 15_000 EUR, 60_000 total
+		},
+		PendingReceipts: 3,
+		PendingTotals: []domain.CurrencyAmount{
+			{Currency: "EUR", Cents: 2_000},
+			{Currency: "USD", Cents: 3_300}, // → 3_000 EUR
+		},
+	}
+}
+
+func newTestGlanceService(raw domain.RawGlance, base string, snap domain.RateSnapshot) (*SummaryService, *fakeSummaryStore) {
+	svc, fake := newTestSummaryService(domain.RawSummary{}, base, snap, nil)
+	fake.rawGlance = raw
+	return svc, fake
+}
+
+func TestGlanceConvertsIntoBaseCurrency(t *testing.T) {
+	svc, _ := newTestGlanceService(glanceTestRaw(), "EUR", summaryTestSnapshot())
+
+	g, err := svc.Glance(context.Background(), "2026-10-12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Currency != "EUR" {
+		t.Errorf("Currency = %q, want EUR", g.Currency)
+	}
+	if g.Month != "2026-10" {
+		t.Errorf("Month = %q, want 2026-10", g.Month)
+	}
+	if g.IncomeCents != 120_000 {
+		t.Errorf("IncomeCents = %d, want 120000 (100000 EUR + 22000 USD→20000)", g.IncomeCents)
+	}
+	if g.ExpenseCents != 50_000 {
+		t.Errorf("ExpenseCents = %d, want 50000", g.ExpenseCents)
+	}
+	if g.NetCents != 70_000 {
+		t.Errorf("NetCents = %d, want 70000", g.NetCents)
+	}
+	if g.NetWorthCents != 20_000 {
+		t.Errorf("NetWorthCents = %d, want 20000", g.NetWorthCents)
+	}
+	// Trailing-30-day expense 60000 EUR → 2000 per day.
+	if g.BurnRateCents != 2_000 {
+		t.Errorf("BurnRateCents = %d, want 2000", g.BurnRateCents)
+	}
+	if g.PendingReceipts != 3 {
+		t.Errorf("PendingReceipts = %d, want 3", g.PendingReceipts)
+	}
+	if g.PendingReceiptCents != 5_000 {
+		t.Errorf("PendingReceiptCents = %d, want 5000 (2000 EUR + 3300 USD→3000)", g.PendingReceiptCents)
+	}
+	if len(g.ConversionWarnings) != 0 {
+		t.Errorf("ConversionWarnings = %v, want none", g.ConversionWarnings)
+	}
+}
+
+func TestGlanceWindowsFollowToday(t *testing.T) {
+	svc, store := newTestGlanceService(domain.RawGlance{}, "EUR", summaryTestSnapshot())
+
+	if _, err := svc.Glance(context.Background(), "2026-10-12"); err != nil {
+		t.Fatal(err)
+	}
+	// Cash flow covers the current calendar month; the burn window is the
+	// trailing 30 days, today included.
+	if store.monthFrom != "2026-10-01" || store.monthTo != "2026-10-31" {
+		t.Errorf("month window %s..%s, want 2026-10-01..2026-10-31", store.monthFrom, store.monthTo)
+	}
+	if store.burnFrom != "2026-09-13" || store.burnTo != "2026-10-12" {
+		t.Errorf("burn window %s..%s, want 2026-09-13..2026-10-12", store.burnFrom, store.burnTo)
+	}
+}
+
+func TestGlanceRejectsBadDate(t *testing.T) {
+	svc, _ := newTestGlanceService(domain.RawGlance{}, "EUR", summaryTestSnapshot())
+	for _, today := range []string{"", "2026-13-01", "2026-02-30", "2026-1-5"} {
+		if _, err := svc.Glance(context.Background(), today); err == nil {
+			t.Errorf("today %q: expected validation error, got nil", today)
+		}
+	}
+}
+
+// TestRangeSummaryMonthlyBudgetBoundsToMonth checks the monthly cadence:
+// transaction spend counts only inside the row's own month (later months
+// belong to successors), while explicit bill links stay all-time.
+func TestRangeSummaryMonthlyBudgetBoundsToMonth(t *testing.T) {
+	raw := func(rangeCatSpend int64) domain.RawSummary {
+		return domain.RawSummary{
+			From:            "2026-08-01",
+			To:              "2026-08-31",
+			CategorySpend:   []domain.CategoryCurrencyTotal{{CategoryID: 3, Currency: "EUR", TotalCents: rangeCatSpend}},
+			BillBudgetSpend: []domain.BudgetCurrencySpend{{BudgetID: 20, Currency: "EUR", Cents: 3_000}},
+			CategoryMonthSpend: []domain.CategoryMonthCurrencyTotal{
+				{CategoryID: 3, Month: "2026-08", Currency: "EUR", TotalCents: 12_000},
+				{CategoryID: 3, Month: "2026-09", Currency: "EUR", TotalCents: 9_000},
+			},
+			LifetimeCategorySpend:   []domain.CategoryCurrencyTotal{{CategoryID: 3, Currency: "EUR", TotalCents: 21_000}},
+			LifetimeBillBudgetSpend: []domain.BudgetCurrencySpend{{BudgetID: 20, Currency: "EUR", Cents: 3_000}},
+			Budgets: []domain.Budget{
+				{ID: 20, CategoryID: 3, AmountCents: 50_000, Status: domain.BudgetClosed, Cadence: domain.BudgetMonthly, Month: "2026-08"},
+				{ID: 21, CategoryID: 3, AmountCents: 50_000, Status: domain.BudgetOpen, Cadence: domain.BudgetMonthly, Month: "2026-09"},
+			},
+		}
+	}
+
+	// Viewing August: the closed August row reports its month's bounded spend
+	// (12_000 transactions + 3_000 explicitly linked bill lines); the open
+	// September row takes its September evaluation even from an August view.
+	svc, _ := newTestSummaryService(raw(12_000), "EUR", summaryTestSnapshot(), nil)
+	s, err := svc.RangeSummary(context.Background(), "2026-08-01", "2026-08-31")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Budgets) != 2 {
+		t.Fatalf("Budgets = %+v, want both monthly rows", s.Budgets)
+	}
+	aug, sep := s.Budgets[0], s.Budgets[1]
+	if aug.ID != 20 || aug.SpentCents != 15_000 || aug.LifetimeSpentCents != 15_000 || aug.RemainingCents != 35_000 {
+		t.Errorf("august row = %+v, want spent 15000 lifetime 15000 remaining 35000", aug)
+	}
+	if sep.ID != 21 || sep.SpentCents != 0 || sep.LifetimeSpentCents != 9_000 {
+		t.Errorf("september row = %+v, want spent 0 (disjoint range) lifetime 9000", sep)
+	}
+
+	// Viewing September: the closed August row is disjoint and drops out.
+	raw2 := raw(9_000)
+	raw2.From, raw2.To = "2026-09-01", "2026-09-30"
+	svc, _ = newTestSummaryService(raw2, "EUR", summaryTestSnapshot(), nil)
+	s, err = svc.RangeSummary(context.Background(), "2026-09-01", "2026-09-30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Budgets) != 1 || s.Budgets[0].ID != 21 {
+		t.Fatalf("Budgets = %+v, want only the open September row", s.Budgets)
+	}
+	if s.Budgets[0].SpentCents != 9_000 || s.Budgets[0].LifetimeSpentCents != 9_000 {
+		t.Errorf("september row = %+v, want spent 9000 lifetime 9000", s.Budgets[0])
 	}
 }
