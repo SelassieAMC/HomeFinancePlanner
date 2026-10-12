@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
+	"home-finance-planner/backend/internal/imageproc"
 )
 
 // BillExtractor abstracts the AI extraction engine (implemented by
@@ -214,22 +215,24 @@ func (s *BillService) Scan(ctx context.Context, files []domain.ReceiptFile, prov
 	}
 
 	// Per-part validation: the same rules the single-file upload always had,
-	// now naming the offending part.
+	// now naming the offending part. Conversion to the normalized JPEG form
+	// happens per file after validation; the hash stays over the ORIGINAL
+	// upload bytes so dedup never depends on transcode reproducibility.
 	parts := make([]scanPart, 0, len(files))
 	seen := make(map[string]bool, len(files))
 	for i, f := range files {
 		mimeType := strings.ToLower(f.MimeType)
-		ext, ok := allowedMime[mimeType]
-		if !ok {
+		if _, ok := allowedMime[mimeType]; !ok {
 			// Browsers outside Safari often upload .heic/.pdf with a generic
 			// content type — sniff the magic bytes before rejecting the upload.
 			if sniffed := sniffMime(f.Data); sniffed != "" {
-				mimeType = sniffed
-				ext, ok = allowedMime[sniffed], true
+				if _, ok := allowedMime[sniffed]; ok {
+					mimeType = sniffed
+				}
 			}
 		}
-		if !ok {
-			return domain.BillScan{}, validationError("unsupported file type %q in file %d of %d (want jpeg, png, webp, heic, heif or pdf)", mimeType, i+1, len(files))
+		if _, ok := allowedMime[mimeType]; !ok {
+			return domain.BillScan{}, validationError("unsupported file type %q in file %d of %d (want jpeg, png, webp, heic, heif, gif, tiff, bmp or pdf)", mimeType, i+1, len(files))
 		}
 		if len(f.Data) == 0 {
 			return domain.BillScan{}, validationError("receipt file %d of %d is empty", i+1, len(files))
@@ -242,7 +245,20 @@ func (s *BillService) Scan(ctx context.Context, files []domain.ReceiptFile, prov
 			return domain.BillScan{}, validationError("file %d of %d is a duplicate of an earlier file in this upload", i+1, len(files))
 		}
 		seen[hash] = true
-		parts = append(parts, scanPart{data: f.Data, mime: mimeType, ext: ext, hash: hash})
+		// Normalize into JPEG (every format but JPEG itself is decoded,
+		// EXIF-oriented, downscaled and re-encoded; a multi-page scanned PDF
+		// expands to one part per page). Legacy formats that cannot be
+		// converted pass through in their original form.
+		outs, err := imageproc.Process(ctx, f.Data, mimeType, imageproc.ReceiptOpts)
+		if err != nil {
+			return domain.BillScan{}, validationError("file %d of %d: %v", i+1, len(files), err)
+		}
+		for _, o := range outs {
+			parts = append(parts, scanPart{data: o.Data, mime: o.MimeType, ext: allowedMime[o.MimeType], hash: hash})
+		}
+	}
+	if len(parts) > MaxBillScanFiles {
+		return domain.BillScan{}, validationError("the %d uploaded files expand to %d receipt parts — at most %d are allowed in one receipt", len(files), len(parts), MaxBillScanFiles)
 	}
 
 	// Duplicate protection: the same receipt (any of its parts) must not be
@@ -1592,7 +1608,11 @@ func newScanToken() (string, error) {
 }
 
 // fileHash identifies a receipt by its content (sha256 hex). Equal bytes mean
-// the same receipt — re-uploading it must not create a second analysis or bill.
+// the same receipt — re-uploading it must not create a second analysis or
+// bill. The hash is computed over the upload's ORIGINAL bytes, before
+// conversion to JPEG, so dedup never depends on transcode reproducibility;
+// every converted part derived from one original (a multi-page scanned PDF)
+// carries that original's hash.
 func fileHash(file []byte) string {
 	sum := sha256.Sum256(file)
 	return hex.EncodeToString(sum[:])

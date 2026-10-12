@@ -140,6 +140,10 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 		Currency:       strings.ToUpper(strings.TrimSpace(wire.Currency)),
 		PaymentMethod:  strings.ToLower(strings.TrimSpace(wire.PaymentMethod)),
 		CardLastDigits: normalizeCardDigits(wire.CardLastDigits),
+		// Never nil: a read that produced no usable item lines must marshal as
+		// an empty array, not `items: null` (the frontend editor reduces over
+		// the list at render time).
+		Items: []domain.BillItemDraft{},
 	}
 
 	itemsSubtotal := 0.0

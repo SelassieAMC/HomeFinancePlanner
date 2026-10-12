@@ -223,7 +223,7 @@ export function StoresPage() {
       <input
         ref={logoInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/*,.heic,.heif,.tif,.tiff,.bmp,.gif"
         style={{ display: 'none' }}
         onChange={(e) => {
           const storeId = logoTargetRef.current;

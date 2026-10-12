@@ -183,6 +183,10 @@ func (e *Extractor) TestConnection(ctx context.Context, provider domain.AIProvid
 // checkFileTypeSupport verifies the provider family can read the uploaded
 // file type before an API call is wasted. PDF receipts are supported by
 // Gemini and Anthropic (document block); HEIC/HEIF photos by Gemini only.
+// With server-side conversion (internal/imageproc) in front of this pipeline
+// the gate is effectively legacy-only: rows written after that change are
+// image/jpeg, so it stays for the pre-conversion files already on disk (and
+// for stored PDFs that pass through unconverted, e.g. vector-only pages).
 // The error names the configured model so the message is actionable.
 func checkFileTypeSupport(provider domain.AIProvider, mimeType string) error {
 	switch mimeType {

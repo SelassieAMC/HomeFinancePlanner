@@ -4,30 +4,44 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"home-finance-planner/backend/internal/imageproc"
 )
 
 // Shared storage helpers for uploaded files (bill receipts, store logos).
 
-// allowedMime maps accepted receipt types to file extensions.
+// allowedMime maps accepted receipt types to the file extension those bytes
+// are stored under. Converted parts are always written as ".jpg" (their mime
+// becomes image/jpeg); the other extensions only ever apply when an
+// un-convertible legacy upload passes through unchanged.
 var allowedMime = map[string]string{
 	"image/jpeg":      ".jpg",
 	"image/png":       ".png",
 	"image/webp":      ".webp",
 	"image/heic":      ".heic",
 	"image/heif":      ".heif",
+	"image/gif":       ".gif",
+	"image/tiff":      ".tif",
+	"image/bmp":       ".bmp",
 	"application/pdf": ".pdf",
 }
 
-// logoMime maps accepted store-logo types to extensions (images only, no PDF).
+// logoMime accepts the same raster formats as receipts (extension values are
+// only used for the rare pass-through saves) but no PDFs — logos and product
+// photos are UI images, never receipts.
 var logoMime = map[string]string{
 	"image/jpeg": ".jpg",
 	"image/png":  ".png",
 	"image/webp": ".webp",
+	"image/heic": ".heic",
+	"image/heif": ".heif",
+	"image/gif":  ".gif",
+	"image/tiff": ".tif",
+	"image/bmp":  ".bmp",
 }
 
 // writeFileRandom writes file under dir with a random, unguessable name
@@ -67,22 +81,9 @@ func detectMime(path string) string {
 }
 
 // sniffMime detects an upload's type from its magic bytes, for files that
-// arrive with a generic or untrustworthy content type. HEIC/HEIF and PDF are
-// detected by hand (the net/http sniff table is incomplete there); the rest
-// falls through to the standard sniff table (jpeg, png, gif, webp, …).
+// arrive with a generic or untrustworthy content type. The magic-byte table
+// (HEIC/HEIF, PDF, BMP, TIFF, WebP) lives in imageproc next to the decoders
+// that consume it — this wrapper keeps the service-side call sites stable.
 func sniffMime(file []byte) string {
-	if len(file) >= 12 && string(file[4:8]) == "ftyp" {
-		brand := string(file[8:12])
-		switch {
-		case strings.HasPrefix(brand, "heic"), strings.HasPrefix(brand, "heix"),
-			strings.HasPrefix(brand, "hevc"), strings.HasPrefix(brand, "hevx"):
-			return "image/heic"
-		case strings.HasPrefix(brand, "mif1"), strings.HasPrefix(brand, "msf1"):
-			return "image/heif"
-		}
-	}
-	if len(file) >= 5 && string(file[:4]) == "%PDF" {
-		return "application/pdf"
-	}
-	return http.DetectContentType(file)
+	return imageproc.Sniff(file)
 }

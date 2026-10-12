@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
+	"home-finance-planner/backend/internal/imageproc"
 )
 
 // ProductService manages the product catalogue. Products are created only by
@@ -509,8 +510,10 @@ func derefInput(in *ProductInput) ProductInput {
 	return *in
 }
 
-// MaxPhotoBytes caps uploaded photo files at 2 MB.
-const MaxPhotoBytes = 2 << 20
+// MaxPhotoBytes caps uploaded photo files at 10 MB — the original upload may
+// be a heavy camera format (HEIC, TIFF); conversion shrinks it before it is
+// stored.
+const MaxPhotoBytes = 10 << 20
 
 // SetPhoto stores an uploaded product photo, replacing any previous one.
 func (s *ProductService) SetPhoto(ctx context.Context, id int64, mimeType string, file []byte) (domain.Product, error) {
@@ -522,9 +525,8 @@ func (s *ProductService) SetPhoto(ctx context.Context, id int64, mimeType string
 		mimeType = sniffed
 	}
 	mimeType = strings.ToLower(mimeType)
-	ext, ok := logoMime[mimeType]
-	if !ok {
-		return domain.Product{}, validationError("unsupported file type %q (want jpeg, png or webp)", mimeType)
+	if _, ok := logoMime[mimeType]; !ok {
+		return domain.Product{}, validationError("unsupported file type %q (want jpeg, png, webp, gif, tiff, bmp, heic or heif)", mimeType)
 	}
 	if len(file) == 0 {
 		return domain.Product{}, validationError("photo file is empty")
@@ -533,11 +535,20 @@ func (s *ProductService) SetPhoto(ctx context.Context, id int64, mimeType string
 		return domain.Product{}, validationError("photo file exceeds %d MB limit", MaxPhotoBytes>>20)
 	}
 
+	// Normalize to a UI-sized JPEG for display and storage.
+	outs, err := imageproc.Process(ctx, file, mimeType, imageproc.PhotoOpts)
+	if err != nil {
+		return domain.Product{}, validationError("%v", err)
+	}
+	ext, ok := logoMime[outs[0].MimeType]
+	if !ok || len(outs) != 1 {
+		return domain.Product{}, validationError("a photo must be a single image, not a PDF")
+	}
 	existing, err := s.products.GetByID(ctx, id)
 	if err != nil {
 		return domain.Product{}, err
 	}
-	path, err := writeFileRandom(s.photosDir, ext, file)
+	path, err := writeFileRandom(s.photosDir, ext, outs[0].Data)
 	if err != nil {
 		return domain.Product{}, fmt.Errorf("save photo: %w", err)
 	}

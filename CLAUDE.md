@@ -174,8 +174,27 @@ columns stay a denormalized mirror of part 1 for `GET /bills/image/{id}`,
 which serves part N via `?part=N`), the AI payload carries all parts per
 family (Ollama `images` array, OpenAI `image_url` parts, Gemini
 `inline_data` parts, Anthropic image/document blocks), and
-`file_count` (omitted for 1) is exposed on scans and bills. Receipt uploads
-are deduplicated by
+`file_count` (omitted for 1) is exposed on scans and bills. Every uploaded
+file — bill receipts and store logos / product photos alike — is **converted
+server-side to normalized JPEG** by `internal/imageproc` before anything is
+stored or sent to the AI (pure Go, no cgo: HEIC/HEIF via
+`gen2brain/heic`'s WASM decoder, multi-page PDF page images via `pdfcpu`,
+GIF/TIFF/BMP/PNG/WebP via `golang.org/x/image`): decode → EXIF-orient →
+downscale to the preset's max long edge (receipts 2048 px, product photos
+1024, store logos 512) → white-composite alpha → JPEG q85; the data folder
+holds only the converted result. The sniff wins over declared Content-Type,
+a fresh JPEG within 2 MB passing through unconverted, a pixel-budget guard
+(40 MP) rejects decompression bombs, and a **scanned PDF becomes one part per
+image page** (largest image per page ≤ 8 pages; a raster PDF past the cap is
+rejected, never truncated, and expands count toward `MaxBillScanFiles`) —
+vector-only PDFs pass through unchanged. The dedup sha256 is computed on the
+**original upload bytes before conversion** (all PDF page parts share the
+PDF's own hash), so HEIC/GIF/TIFF/BMP uploads dedup like any other and newly
+accepted formats (gif/tiff/bmp) error out on decode failure while the
+legacy pass-through formats (jpeg/png/webp/heic/heif/pdf) keep falling back
+to their original bytes. Store logos and product photos cap at 10 MB of
+original upload (conversion does the shrinking) and never accept PDFs.
+Receipt uploads are deduplicated by
 content: each part's sha256 lives in the child tables (backfilled from the
 legacy columns), and re-uploading any part of an existing receipt is a 409
 conflict naming the offending part — the same photo twice within one upload

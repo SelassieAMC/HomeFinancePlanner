@@ -98,7 +98,9 @@ export function ScanBillsPage() {
     if (phase !== 'analyzing' || !polled) return;
     setScan(polled); // keeps the latest status/error for display
     if (polled.status === 'done' && polled.draft) {
-      setDraft(polled.draft);
+      // Older stored drafts may marshal `items: null` (an AI read with no
+      // usable lines); the editor reduces over the list at render time.
+      setDraft({ ...polled.draft, items: polled.draft.items ?? [] });
       setDraftKey((k) => k + 1); // fresh extraction → remount the editor cells
       setPhase('review');
     }
@@ -124,7 +126,7 @@ export function ScanBillsPage() {
       .then((res) => {
         setScan(res);
         if (res.status === 'done' && res.draft) {
-          setDraft(res.draft);
+          setDraft({ ...res.draft, items: res.draft.items ?? [] });
           setDraftKey((k) => k + 1);
           setPhase('review');
         } else {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"home-finance-planner/backend/internal/domain"
+	"home-finance-planner/backend/internal/imageproc"
 )
 
 // StoreService manages the recurring markets a bill can be linked to.
@@ -75,8 +76,10 @@ func (s *StoreService) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// MaxLogoBytes caps uploaded logo files at 2 MB.
-const MaxLogoBytes = 2 << 20
+// MaxLogoBytes caps uploaded logo files at 10 MB — the original upload may be
+// a heavy camera format (HEIC, TIFF); conversion shrinks it before it is
+// stored.
+const MaxLogoBytes = 10 << 20
 
 // SetLogo stores an uploaded logo image, replacing any previous one.
 func (s *StoreService) SetLogo(ctx context.Context, id int64, mimeType string, file []byte) (domain.Store, error) {
@@ -88,9 +91,8 @@ func (s *StoreService) SetLogo(ctx context.Context, id int64, mimeType string, f
 		mimeType = sniffed
 	}
 	mimeType = strings.ToLower(mimeType)
-	ext, ok := logoMime[mimeType]
-	if !ok {
-		return domain.Store{}, validationError("unsupported file type %q (want jpeg, png or webp)", mimeType)
+	if _, ok := logoMime[mimeType]; !ok {
+		return domain.Store{}, validationError("unsupported file type %q (want jpeg, png, webp, gif, tiff, bmp, heic or heif)", mimeType)
 	}
 	if len(file) == 0 {
 		return domain.Store{}, validationError("logo file is empty")
@@ -99,11 +101,20 @@ func (s *StoreService) SetLogo(ctx context.Context, id int64, mimeType string, f
 		return domain.Store{}, validationError("logo file exceeds %d MB limit", MaxLogoBytes>>20)
 	}
 
+	// Normalize to a UI-sized JPEG the store step uses for display.
+	outs, err := imageproc.Process(ctx, file, mimeType, imageproc.LogoOpts)
+	if err != nil {
+		return domain.Store{}, validationError("%v", err)
+	}
+	ext, ok := logoMime[outs[0].MimeType]
+	if !ok || len(outs) != 1 {
+		return domain.Store{}, validationError("a logo must be a single image, not a PDF")
+	}
 	existing, err := s.stores.GetByID(ctx, id)
 	if err != nil {
 		return domain.Store{}, err
 	}
-	path, err := writeFileRandom(s.logosDir, ext, file)
+	path, err := writeFileRandom(s.logosDir, ext, outs[0].Data)
 	if err != nil {
 		return domain.Store{}, fmt.Errorf("save logo: %w", err)
 	}

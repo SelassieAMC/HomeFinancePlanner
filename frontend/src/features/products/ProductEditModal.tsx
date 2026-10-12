@@ -316,7 +316,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
       <input
         ref={photoInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/*,.heic,.heif,.tif,.tiff,.bmp,.gif"
         style={{ display: 'none' }}
         onChange={(e) => {
           void handleUploadPhoto(e.target.files?.[0]);

@@ -1,9 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -564,7 +569,20 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Fatal("condition not met within", timeout)
 }
 
-func testImage() []byte { return []byte("fake-jpeg-bytes") }
+// testImage returns a real, decodable JPEG: conversion runs for it too, and a
+// small un-oriented image passes through byte-identical, so assertions on the
+// stored bytes and hashes hold.
+func testImage() []byte { return testImageBytes() }
+
+var testImageBytes = sync.OnceValue(func() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 12, 9))
+	img.Set(3, 3, image.NewUniform(color.White))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+})
 
 // scanFile wraps raw image bytes as the single part of a receipt upload.
 func scanFile(data []byte) []domain.ReceiptFile {
@@ -1218,6 +1236,151 @@ func scanPartsUntilDone(t *testing.T, svc *BillService, scanStore *fakeBillScanS
 
 // One grouped upload of several parts becomes a single scan token: one AI read
 // handed every part in order, every part stored on disk, one row.
+// --- conversion ---------------------------------------------------------------
+
+// mustScannedPDF builds a minimal valid PDF whose pages are one JPEG each
+// (same fixture builder idea as internal/imageproc's tests).
+func mustScannedPDF(t *testing.T, imgs ...[]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	var xref []int
+	write := func(num int, text string) {
+		xref = append(xref, buf.Len())
+		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", num, text)
+	}
+	buf.WriteString("%PDF-1.7\n")
+	kids := make([]string, 0, len(imgs))
+	for i := range imgs {
+		kids = append(kids, fmt.Sprintf("%d 0 R", 4+3*i))
+	}
+	write(1, "<< /Type /Catalog /Pages 2 0 R >>")
+	write(2, fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), len(imgs)))
+	for i, data := range imgs {
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("fixture image %d: %v", i, err)
+		}
+		imgObj, pageObj, contObj := 3+3*i, 4+3*i, 5+3*i
+		write(imgObj, fmt.Sprintf(
+			"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length %d >>\nstream\n%s\nendstream",
+			cfg.Width, cfg.Height, len(data), data))
+		write(pageObj, fmt.Sprintf(
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /XObject << /Im0 %d 0 R >> >> /Contents %d 0 R >>",
+			cfg.Width, cfg.Height, imgObj, contObj))
+		content := fmt.Sprintf("q %d 0 0 %d 0 0 cm /Im0 Do Q", cfg.Width, cfg.Height)
+		write(contObj, fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
+	}
+	xrefPos := buf.Len()
+	buf.WriteString(fmt.Sprintf("xref\n0 %d\n", len(xref)+1))
+	buf.WriteString("0000000000 65535 f \n")
+	for _, off := range xref {
+		buf.WriteString(fmt.Sprintf("%010d 00000 n \n", off))
+	}
+	buf.WriteString(fmt.Sprintf("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(xref)+1, xrefPos))
+	return buf.Bytes()
+}
+
+func coloredJPEG(t *testing.T, c color.RGBA) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	for y := 0; y < 30; y++ {
+		for x := 0; x < 40; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// TestScanExpandsScannedPDFToPageParts: a PDF part of one receipt becomes one
+// page-image part per scanned page, all sharing the PDF file's original
+// content hash.
+func TestScanExpandsScannedPDFToPageParts(t *testing.T) {
+	var gotFiles []domain.ReceiptFile
+	svc, scanStore, _, _, _ := newTestBillService(t, func(_ context.Context, files []domain.ReceiptFile, _ domain.AIProvider, _ string) (domain.BillDraft, error) {
+		gotFiles = files
+		return domain.BillDraft{MarketName: "M", TotalCents: 100, Currency: "EUR"}, nil
+	})
+
+	pdfFile := mustScannedPDF(t, coloredJPEG(t, color.RGBA{R: 30, G: 30, B: 200, A: 255}), coloredJPEG(t, color.RGBA{R: 200, G: 30, B: 30, A: 255}))
+	res, err := svc.Scan(context.Background(), scanFiles(testImage(), pdfFile), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.FileCount != 3 {
+		t.Fatalf("a 2-page PDF plus a photo must expand to 3 parts, got %d", res.FileCount)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(context.Background(), res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	row, _ := scanStore.GetByToken(context.Background(), res.ScanToken)
+	if len(row.Files) != 3 || row.FileCount != 3 {
+		t.Fatalf("row files/count = %d/%d, want 3/3", len(row.Files), row.FileCount)
+	}
+
+	// Page order follows the PDF's page order; the extractor saw every
+	// converted page.
+	if len(gotFiles) != 3 {
+		t.Fatalf("extractor saw %d files, want 3", len(gotFiles))
+	}
+	if gotFiles[1].MimeType != "image/jpeg" || gotFiles[2].MimeType != "image/jpeg" {
+		t.Fatalf("converted pages must carry image/jpeg, got %s / %s", gotFiles[1].MimeType, gotFiles[2].MimeType)
+	}
+	img1, _, err := image.Decode(bytes.NewReader(gotFiles[1].Data))
+	if err != nil {
+		t.Fatalf("page 1 not decodable: %v", err)
+	}
+	r, g, b, _ := img1.At(5, 5).RGBA()
+	if b+15000 < r || b+15000 < g {
+		t.Fatalf("page 1 is not the blue page: %v", img1.At(5, 5))
+	}
+	img2, _, err := image.Decode(bytes.NewReader(gotFiles[2].Data))
+	if err != nil {
+		t.Fatalf("page 2 not decodable: %v", err)
+	}
+	r, g, b, _ = img2.At(5, 5).RGBA()
+	if r+15000 < g || r+15000 < b {
+		t.Fatalf("page 2 is not the red page: %v", img2.At(5, 5))
+	}
+
+	// Both page parts dedup under the PDF's own original-bytes hash.
+	pdfHash := fmt.Sprintf("%x", sha256.Sum256(pdfFile))
+	if row.Files[1].FileHash != pdfHash || row.Files[2].FileHash != pdfHash {
+		t.Fatalf("PDF page parts must carry the original PDF hash, got %s / %s", row.Files[1].FileHash, row.Files[2].FileHash)
+	}
+	if row.Files[0].FileHash == pdfHash {
+		t.Fatal("photo part must keep its own hash")
+	}
+
+	// Re-uploading the same PDF is a conflict named at it.
+	if _, err := svc.Scan(context.Background(), scanFiles(pdfFile), ""); err == nil {
+		t.Fatal("re-uploading the same PDF must be rejected as duplicate")
+	}
+}
+
+// TestScanRejectsPDFBeyondPartCap: conversion may never silently truncate —
+// a PDF expanding past the receipt-part cap rejects the whole upload.
+func TestScanRejectsPDFBeyondPartCap(t *testing.T) {
+	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{}, errors.New("must not be reached")
+	})
+	imgs := make([][]byte, MaxBillScanFiles+1)
+	for i := range imgs {
+		imgs[i] = coloredJPEG(t, color.RGBA{R: 10, G: uint8(20 + i*10), B: 30, A: 255})
+	}
+	_, err := svc.Scan(context.Background(), scanFiles(mustScannedPDF(t, imgs...)), "")
+	// 9 raster pages in one file overshoot the part cap before the service's
+	// own expansion check: the PDF conversion rejects it by page count.
+	if err == nil || !strings.Contains(err.Error(), "9") {
+		t.Fatalf("over-cap PDF expansion must be rejected, got %v", err)
+	}
+}
+
 func TestScanGroupsMultiFileReceipt(t *testing.T) {
 	var gotFiles []domain.ReceiptFile
 	svc, scanStore, _, _, _ := newTestBillService(t, func(_ context.Context, files []domain.ReceiptFile, _ domain.AIProvider, _ string) (domain.BillDraft, error) {
