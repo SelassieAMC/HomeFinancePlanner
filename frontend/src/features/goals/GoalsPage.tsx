@@ -136,7 +136,9 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
         </form>
         <p className="hint-text">
           Progress is the tracked account's current balance — contribute with a
-          transfer into it. The currency follows that account.
+          transfer into it. The currency follows that account. The target date
+          is a milestone you're aiming for ("by when") — purely informational:
+          nothing is enforced or reminded by it.
         </p>
         {formError && <ErrorMessage message={formError} />}
       </Card>
@@ -336,6 +338,10 @@ function GoalEditForm({
           onChange={(e) => setTargetDate(e.target.value)}
         />
       </label>
+      <p className="hint-text">
+        The target date is a milestone you're aiming for ("by when") — purely
+        informational: nothing is enforced or reminded by it.
+      </p>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         {onCancel && (

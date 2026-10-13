@@ -352,6 +352,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             value={date}
             onChange={(e) => setDate(e.target.value)}
             required
+            // No future dating: transactions record money that already moved.
+            max={new Date().toLocaleDateString('en-CA')}
           />
         </label>
         <label>

@@ -328,6 +328,12 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	if err := validateDate(in.Date, "date"); err != nil {
 		return domain.Transaction{}, err
 	}
+	// A transaction records money that already moved: a future date would be a
+	// fabricated fact (balances are stored values, and no real-world movement
+	// can have happened yet). Planned movements belong on scheduled actions.
+	if in.Date > time.Now().Format("2006-01-02") {
+		return domain.Transaction{}, validationError("date %s cannot be in the future — transactions record money that already moved, planned movements belong on scheduled actions", in.Date)
+	}
 	if len(in.Description) > 500 {
 		return domain.Transaction{}, validationError("description must be at most 500 characters")
 	}

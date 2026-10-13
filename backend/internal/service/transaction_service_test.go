@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -666,5 +667,38 @@ func TestTransactionCreateTransfer(t *testing.T) {
 	income.Kind = domain.TransactionIncome
 	if _, err := svc.Create(ctx, income); err != nil {
 		t.Errorf("plain expense with transfer rules live broke: %v", err)
+	}
+}
+
+// A transaction records money that already moved — a future date would be a
+// fabricated fact, so create and update refuse it. Planned movements belong
+// on scheduled actions, not on transactions.
+func TestTransactionFutureDateRefused(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newTestTransactionService(t)
+
+	in := validTransactionInput()
+	in.Date = "2999-12-31"
+	if _, err := svc.Create(ctx, in); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("future-dated create = %v; want ErrValidation", err)
+	}
+
+	// Update on an existing transaction: build runs after the bill guard, so
+	// a real row is needed.
+	seed := validTransactionInput()
+	existing, err := svc.Create(ctx, seed)
+	if err != nil {
+		t.Fatalf("seed existing: %v", err)
+	}
+	if _, err := svc.Update(ctx, existing.ID, in); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("future-dated update = %v; want ErrValidation", err)
+	}
+
+	// Today itself stays valid (same-day capture), and the past clearly is.
+	today := time.Now().Format("2006-01-02")
+	ok := validTransactionInput()
+	ok.Date = today
+	if _, err := svc.Create(ctx, ok); err != nil {
+		t.Errorf("today-dated create = %v; want accepted", err)
 	}
 }
