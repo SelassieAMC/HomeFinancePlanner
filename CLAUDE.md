@@ -512,4 +512,36 @@ on the `.budget-card` budget styling; open-bag selects read
 tabs. On the dashboard the three cards collapsed into one `PlanningCard`
 (tabbed; a section's body renders only with content — `BudgetsBody`,
 `GoalsBody`, `BagsBody` — the card disappears when no layer qualifies, and the
-first section with content wins the active tab).
+first section with content wins the active tab). **Scheduled Actions**
+(migration 0037, `scheduled_actions` + `scheduled_action_runs`) are the
+unified scheduler for planned money movements — `ScheduledPage` is the fourth
+`/planning` tab (`?tab=schedules`, label "Scheduled") and the dashboard has a
+standalone "Coming up" card (`frontend ComingUpCard`: pending runs due ≤7
+days plus overdue, one-click apply/dismiss, hidden when empty). Five kinds ×
+three recurrences (`once`, `monthly` day 1..28 so short months never skip,
+`yearly` adds `month_of_year`); the split is the **auto-apply boundary**:
+`bag_funding`/`bag_rebalance` are virtual (`ScheduleKind.Virtual()`) — the
+system applies them itself because they write only bag allocation ledger rows
+(dated at the due date, note `"Scheduled: <name>"`), never a stored account
+balance; `account_transfer`/`transaction`/`purchase` are confirm-first — a
+pending reminder until one click applies, dismisses or skips
+(`POST /runs/{run_id}/apply|dismiss|skip`; apply writes via `TransactionService`
+— transfers get `CounterAccountID` — or pure status change for purchases;
+`ApplyRun` refuses runs due in the future, and transactions stay
+not-future-dated). Runs **materialize lazily** on reads
+(`ScheduledActionService.EnsureUpcoming`, wired into `SummaryService.RangeSummary`
+and the schedule endpoints; no cron): due dates in a 31-day-lookback /
+2-month-ahead window, `UNIQUE(action_id, due_date)` idempotency, auto-applied
+in due order — a virtual run refused (closed bag) or a real movement's failure
+leaves the run pending with a logged warning, so the reminder nags instead of
+silently losing the occurrence. Edits affect future occurrences only: pending
+runs are deleted and regenerated (the UNIQUE index keeps applied /
+dismissed / skipped rows from being re-created); an ever-applied action
+refuses `DELETE` → `POST {id}/archive` instead (archived=1, pending runs
+dropped, history kept, and archived schedules' runs are hidden from every
+list read via the `a.archived = 0` join filter); a never-applied action
+deletes with its runs cascading. `BagService.Delete` refuses while a
+non-archived virtual-kind schedule targets the bag
+(`ActiveActionsTargetingBag`). The service takes `today` from the handler
+(server-clock, like `Glance`) and tests live in
+`internal/service/scheduled_action_service_test.go`.

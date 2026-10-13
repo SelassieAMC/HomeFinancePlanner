@@ -715,7 +715,10 @@ func (s *BudgetService) Create(ctx context.Context, in BudgetInput) (domain.Budg
 	return out, nil
 }
 
-// Update changes only a budget's amount (category is immutable).
+// Update changes only a budget's amount (category is immutable). A closed
+// row refuses: a closed envelope's amount is its final account, and a closed
+// monthly row's cap is the historical fact the Jan-vs-Feb comparison reads —
+// both would be falsified by a late edit (reopen first, then edit).
 func (s *BudgetService) Update(ctx context.Context, id int64, amountCents int64) (domain.Budget, error) {
 	if err := validatePositiveCents(amountCents, "amount_cents"); err != nil {
 		return domain.Budget{}, err
@@ -723,6 +726,10 @@ func (s *BudgetService) Update(ctx context.Context, id int64, amountCents int64)
 	existing, err := s.budgets.GetByID(ctx, id)
 	if err != nil {
 		return domain.Budget{}, err
+	}
+	if existing.Status == domain.BudgetClosed {
+		return domain.Budget{}, validationError(
+			"closed budgets keep their amount — reopen the budget before editing it")
 	}
 	existing.AmountCents = amountCents
 	return s.budgets.Update(ctx, existing)
@@ -794,6 +801,11 @@ type SummaryService struct {
 	// first run the monthly-budget rollover so a stale open monthly row
 	// never lingers past its own month.
 	budgets *BudgetService
+	// schedules is optional (nil in unit tests): when set, Range/Month
+	// summary runs the scheduler's lazy catch-up (materialize runs, auto-apply
+	// virtual ones) so the dashboard's "Coming up" feed never lags behind a
+	// dashboard that never visits the schedules page.
+	schedules *ScheduledActionService
 }
 
 // MonthSummary returns the dashboard aggregate for one calendar month
@@ -837,6 +849,14 @@ func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (dom
 	if s.budgets != nil {
 		if err := s.budgets.EnsureMonthlyCurrent(ctx, currentMonth()); err != nil {
 			return domain.Summary{}, fmt.Errorf("budget month rollover: %w", err)
+		}
+	}
+	// The scheduler's lazy catch-up rides the same read (materialize runs,
+	// auto-apply the virtual ones) — the dashboard always sees an honest
+	// "Coming up" feed even without visiting the schedules page.
+	if s.schedules != nil {
+		if err := s.schedules.EnsureUpcoming(ctx, time.Now().Format("2006-01-02")); err != nil {
+			return domain.Summary{}, fmt.Errorf("schedule catch-up: %w", err)
 		}
 	}
 	raw, err := s.summary.RawRangeSummary(ctx, from, to)

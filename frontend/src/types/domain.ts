@@ -806,3 +806,75 @@ export interface ProductInsight {
   created_at: string; // unix seconds
   updated_at: string;
 }
+
+// --- Scheduled actions (the unified scheduler) ------------------------------
+
+/** What the scheduled action is. The split is the auto-apply boundary:
+ *  virtual kinds (bag_funding, bag_rebalance) write only bag allocation rows —
+ *  the system applies them itself on the due date; real kinds
+ *  (account_transfer, transaction) and purchase are confirm-first — a
+ *  reminder until one user click applies. */
+export type ScheduleKind = 'bag_funding' | 'bag_rebalance' | 'account_transfer' | 'transaction' | 'purchase';
+
+export type ScheduleRecurrence = 'once' | 'monthly' | 'yearly';
+
+export type ScheduleRunStatus = 'pending' | 'applied' | 'dismissed' | 'skipped';
+
+/** Kind-switched action details; which fields are meaningful is decided by
+ *  the action's kind (validated backend-side). */
+export interface SchedulePayload {
+  bag_id?: number; // bag_funding: the bag to fund
+  from_bag_id?: number; // bag_rebalance: source bag
+  to_bag_id?: number; // bag_rebalance: destination bag
+  account_id?: number; // account_transfer: source account; transaction: its account
+  counter_account_id?: number; // account_transfer: destination account
+  amount_cents?: number; // bag kinds + transfer/transaction kinds
+  transaction_kind?: 'expense' | 'income'; // transaction kind only (never 'transfer')
+  category_id?: number; // transaction kind, optional
+  description?: string; // transaction kind; blank defaults to the schedule name
+  estimated_cents?: number; // purchase kind, optional
+  note?: string; // purchase kind
+}
+
+/** One plan row: what should move, how often, from when. */
+export interface ScheduledAction {
+  id: number;
+  name: string;
+  kind: ScheduleKind;
+  payload: SchedulePayload;
+  recurrence: ScheduleRecurrence;
+  start_date: string; // YYYY-MM-DD
+  day_of_month?: number; // 1..28, monthly/yearly only
+  month_of_year?: number; // 1..12, yearly only
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The full create/edit body (the payload mirrors SchedulePayload). */
+export interface ScheduledActionInput {
+  name: string;
+  kind: ScheduleKind;
+  payload: SchedulePayload;
+  recurrence: ScheduleRecurrence;
+  start_date: string;
+  day_of_month?: number;
+  month_of_year?: number;
+}
+
+/** One materialized occurrence with its action attached (a run alone is
+ *  uninterpretable). result_* records what apply wrote: allocation (virtual
+ *  auto-apply) or transaction (confirm-first apply). */
+export interface ScheduleRunView {
+  id: number;
+  action_id: number;
+  due_date: string; // YYYY-MM-DD
+  status: ScheduleRunStatus;
+  result_type?: 'allocation' | 'transaction';
+  result_id?: number;
+  created_at: string;
+  updated_at: string;
+  action_name: string;
+  kind: ScheduleKind;
+  schedule: SchedulePayload;
+}

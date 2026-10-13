@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   CategorySelect,
+  Dialog,
   Spinner,
   ErrorMessage,
   EmptyState,
@@ -48,6 +49,40 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   // irregular pools like clothes or vacations.
   const [cadence, setCadence] = useState<BudgetCadence>('monthly');
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Amount editing: only open rows offer it (the backend refuses closed ones
+  // — a closed row's amount is settled history).
+  const [editing, setEditing] = useState<Budget | null>(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  function openEdit(b: Budget) {
+    setEditing(b);
+    setEditAmount((b.amount_cents / 100).toFixed(2));
+    setEditError(null);
+  }
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    const cents = dollarsToCents(editAmount);
+    if (!Number.isFinite(cents) || cents <= 0) {
+      setEditError('Enter a positive budget amount.');
+      return;
+    }
+    setBusy(true);
+    setEditError(null);
+    try {
+      await budgetsApi.updateAmount(editing.id, cents);
+      setEditing(null);
+      reload();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to update budget.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -160,11 +195,41 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
                 lifetimeSpent={lifetime}
                 currency={currency}
                 onSetStatus={(status) => handleStatus(b.id, status)}
+                onEdit={() => openEdit(b)}
                 onDelete={() => handleDelete(b.id)}
               />
             );
           })}
         </div>
+      )}
+
+      {editing && (
+        <Dialog title={`Edit budget${editing.cadence === 'monthly' ? ` · ${monthTag(editing.month ?? '')}` : ''}`}>
+          <form className="form-row" onSubmit={handleEdit}>
+            <input
+              placeholder={`Budget amount (${currency})`}
+              inputMode="decimal"
+              value={editAmount}
+              onChange={(e) => setEditAmount(e.target.value)}
+              autoFocus
+              aria-label="Budget amount"
+              required
+            />
+            <p className="hint-text">
+              The category and cadence are fixed. Closed budgets keep their
+              amount — reopen before editing.
+            </p>
+            {editError && <ErrorMessage message={editError} />}
+            <div className="dialog-actions">
+              <Button variant="ghost" onClick={() => setEditing(null)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" disabled={busy}>
+                Save
+              </Button>
+            </div>
+          </form>
+        </Dialog>
       )}
     </>
   );
@@ -189,6 +254,7 @@ function BudgetCard({
   lifetimeSpent,
   currency,
   onSetStatus,
+  onEdit,
   onDelete,
 }: {
   budget: Budget;
@@ -197,6 +263,7 @@ function BudgetCard({
   lifetimeSpent: number;
   currency: string;
   onSetStatus: (status: 'open' | 'closed') => void;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
   const isClosed = budget.status === 'closed';
@@ -251,11 +318,16 @@ function BudgetCard({
         {isClosed ? (
           <Button onClick={() => onSetStatus('open')}>Reopen</Button>
         ) : (
-          <Button variant="secondary" onClick={() => onSetStatus('closed')}>
-            Mark finished
-          </Button>
+          <>
+            <Button variant="secondary" className="btn-sm" onClick={onEdit}>
+              Edit
+            </Button>
+            <Button variant="secondary" className="btn-sm" onClick={() => onSetStatus('closed')}>
+              Mark finished
+            </Button>
+          </>
         )}
-        <Button variant="danger" onClick={onDelete}>
+        <Button variant="danger" className="btn-sm" onClick={onDelete}>
           Delete
         </Button>
       </div>

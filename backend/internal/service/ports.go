@@ -72,6 +72,40 @@ type GoalStore interface {
 // returns native-currency groups for an inclusive date range; conversion into
 // the base currency is the service's job.
 
+// ScheduledActionStore is the persistence contract for the unified scheduler:
+// the plan rows and their lazily materialized runs. Run creation is
+// idempotent (UNIQUE action_id+due_date) so the catch-up never duplicates.
+type ScheduledActionStore interface {
+	ListActions(ctx context.Context, includeArchived bool) ([]domain.ScheduledAction, error)
+	GetActionByID(ctx context.Context, id int64) (domain.ScheduledAction, error)
+	// ActiveActionsTargetingBag lists non-archived bag_funding/bag_rebalance
+	// actions whose payload moves money into or out of the bag — the guard
+	// behind BagService's delete refusal.
+	ActiveActionsTargetingBag(ctx context.Context, bagID int64) ([]domain.ScheduledAction, error)
+	CreateAction(ctx context.Context, a domain.ScheduledAction) (domain.ScheduledAction, error)
+	UpdateAction(ctx context.Context, a domain.ScheduledAction) (domain.ScheduledAction, error)
+	DeleteAction(ctx context.Context, id int64) error
+	// HasAppliedRuns reports whether the action carries applied history —
+	// a plain delete of the row (and with it, via cascade, the run history)
+	// is refused when this is true.
+	HasAppliedRuns(ctx context.Context, actionID int64) (bool, error)
+	// MaterializeRuns inserts the given due dates for one action, skipping
+	// dates that already have a run row; returns the newly created count.
+	MaterializeRuns(ctx context.Context, actionID int64, dueDates []string) (int64, error)
+	// DeletePendingRuns drops only the still-pending runs of one action (the
+	// edit rule regenerates future occurrences; acknowledgements and history
+	// stay).
+	DeletePendingRuns(ctx context.Context, actionID int64) error
+	// ListRuns returns runs matching the filters (due ascending), each with
+	// its action's name/kind/payload attached.
+	ListRuns(ctx context.Context, f domain.ScheduleRunFilters) ([]domain.ScheduleRunView, error)
+	GetRunByID(ctx context.Context, id int64) (domain.ScheduleRunView, error)
+	UpdateRunStatus(ctx context.Context, runID int64, status domain.ScheduleRunStatus, resultType *string, resultID *int64) error
+	// ListRunsByStatus returns one action's runs in one status, due first —
+	// the auto-apply loop's input.
+	ListRunsByStatus(ctx context.Context, actionID int64, status domain.ScheduleRunStatus) ([]domain.ScheduledActionRun, error)
+}
+
 // BagStore is the persistence contract for bags and their allocation ledger.
 // Balance aggregation (Σ allocations − live tagged spend) is not persisted:
 // the read-side sums the ledger rows and computes spend from the tagged
@@ -255,6 +289,7 @@ type Services struct {
 	Insights      *InsightService
 	Goals         *GoalService
 	Bags          *BagService
+	Schedules     *ScheduledActionService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -281,18 +316,33 @@ func New(
 	insights *InsightService,
 	goals GoalStore,
 	bags BagStore,
+	schedules ScheduledActionStore,
 ) *Services {
 	budgetSvc := &BudgetService{budgets: budgets, categories: categories}
+	bagSvc := &BagService{bags: bags, accounts: accounts, fx: fx, log: slog.Default()}
+	// The bag delete guard consults the scheduler: a bag an active schedule
+	// funds or drains cannot be deleted (archive the schedule first). nil (a
+	// store-less test) skips the guard.
+	bagSvc.schedules = schedules
+	scheduleSvc := &ScheduledActionService{
+		actions:      schedules,
+		bags:         bagSvc,
+		transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, bags: bags, log: slog.Default()},
+		accounts:     accounts,
+		categories:   categories,
+		log:          slog.Default(),
+	}
 	return &Services{
 		Accounts:     &AccountService{accounts: accounts},
 		Categories:   &CategoryService{categories: categories},
 		Stores:       storeSvc,
 		Products:     productSvc,
-		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, bags: bags, log: slog.Default()},
+		Transactions: scheduleSvc.transactions,
 		Budgets:      budgetSvc,
-		// The summary reads budgets, so it runs the monthly rollover first:
-		// the reference is the same instance the budgets handler uses.
-		Summary:       &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories, budgets: budgetSvc},
+		// The summary reads budgets and schedules, so it runs both lazy
+		// catch-ups first: the references are the same instances the
+		// dedicated handlers use.
+		Summary:       &SummaryService{summary: summary, settings: settings, rates: fx, categories: categories, budgets: budgetSvc, schedules: scheduleSvc},
 		Settings:      settings,
 		Bills:         bills,
 		OfferSearches: offerSearches,
@@ -300,6 +350,7 @@ func New(
 		Prompts:       prompts,
 		Insights:      insights,
 		Goals:         &GoalService{goals: goals, accounts: accounts},
-		Bags:          &BagService{bags: bags, accounts: accounts, fx: fx, log: slog.Default()},
+		Bags:          bagSvc,
+		Schedules:     scheduleSvc,
 	}
 }

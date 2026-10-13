@@ -41,6 +41,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	insightH := &handlers.InsightHandler{Svc: svc.Insights}
 	goalH := &handlers.GoalHandler{Svc: svc.Goals}
 	bagH := &handlers.BagHandler{Svc: svc.Bags}
+	scheduleH := &handlers.ScheduleHandler{Svc: svc.Schedules}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -170,6 +171,20 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("DELETE /api/v1/bags/{id}", bagH.Delete)
 	mux.HandleFunc("GET    /api/v1/bags/{id}/allocations", bagH.ListAllocations)
 	mux.HandleFunc("POST   /api/v1/bags/{id}/allocations", bagH.Allocate)
+
+	// Scheduled actions: the unified scheduler. /runs is a literal next to the
+	// {id} wildcard routes; the run action routes live one segment deeper
+	// (/runs/{run_id}/apply), so the two id spaces never collide. Self-
+	// contained family — no wildcard interactions.
+	mux.HandleFunc("GET    /api/v1/scheduled-actions", scheduleH.List)
+	mux.HandleFunc("POST   /api/v1/scheduled-actions", scheduleH.Create)
+	mux.HandleFunc("GET    /api/v1/scheduled-actions/runs", scheduleH.ListRuns)
+	mux.HandleFunc("PUT    /api/v1/scheduled-actions/{id}", scheduleH.Update)
+	mux.HandleFunc("DELETE /api/v1/scheduled-actions/{id}", scheduleH.Delete)
+	mux.HandleFunc("POST   /api/v1/scheduled-actions/{id}/archive", scheduleH.Archive)
+	mux.HandleFunc("POST   /api/v1/scheduled-actions/runs/{run_id}/apply", scheduleH.ApplyRun)
+	mux.HandleFunc("POST   /api/v1/scheduled-actions/runs/{run_id}/dismiss", scheduleH.DismissRun)
+	mux.HandleFunc("POST   /api/v1/scheduled-actions/runs/{run_id}/skip", scheduleH.SkipRun)
 
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)

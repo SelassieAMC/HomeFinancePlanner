@@ -34,6 +34,12 @@ func (f *fakeBudgetStore) Create(_ context.Context, b domain.Budget) (domain.Bud
 }
 
 func (f *fakeBudgetStore) Update(_ context.Context, b domain.Budget) (domain.Budget, error) {
+	for i := range f.items {
+		if f.items[i].ID == b.ID {
+			f.items[i] = b
+			return b, nil
+		}
+	}
 	return b, nil
 }
 
@@ -85,6 +91,42 @@ func TestBudgetCreateRejectsBadCadence(t *testing.T) {
 		CategoryID: 1, AmountCents: 10_000, Cadence: "weekly",
 	}); err == nil {
 		t.Fatal("expected validation error for cadence weekly")
+	}
+}
+
+func TestBudgetUpdateChangesAmountOfOpenRow(t *testing.T) {
+	svc, _ := newTestBudgetService()
+	b, err := svc.Create(context.Background(), BudgetInput{CategoryID: 1, AmountCents: 50_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := svc.Update(context.Background(), b.ID, 75_000)
+	if err != nil {
+		t.Fatalf("update open budget: %v", err)
+	}
+	if updated.AmountCents != 75_000 {
+		t.Errorf("AmountCents = %d, want 75000", updated.AmountCents)
+	}
+}
+
+func TestBudgetUpdateRefusesClosedRow(t *testing.T) {
+	svc, _ := newTestBudgetService()
+	b, err := svc.Create(context.Background(), BudgetInput{CategoryID: 1, AmountCents: 50_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetStatus(context.Background(), b.ID, domain.BudgetClosed); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	// A closed envelope's amount is its final account; a closed monthly row's
+	// cap is history. Reopen, then edit.
+	if _, err := svc.Update(context.Background(), b.ID, 75_000); err == nil {
+		t.Fatal("expected refusal to edit a closed budget")
+	} else if !contains(err.Error(), "reopen") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if _, err := svc.Update(context.Background(), b.ID, 0); err == nil {
+		t.Fatal("expected refusal of zero amount")
 	}
 }
 

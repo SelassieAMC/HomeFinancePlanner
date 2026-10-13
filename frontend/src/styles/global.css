@@ -830,6 +830,11 @@ textarea:focus,
   background: var(--surface-2);
 }
 
+.badge.danger {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+  color: var(--negative);
+}
+
 .badge-draft {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   color: var(--accent);

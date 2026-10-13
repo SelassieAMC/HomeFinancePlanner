@@ -26,8 +26,13 @@ type BagService struct {
 	// foreign currency (bills) into the bag's account currency. nil disables
 	// conversion (tests): foreign-currency spend then counts 1:1 with a
 	// warning — the same degradation the summary services accept.
-	fx  *FXService
-	log *slog.Logger
+	fx *FXService
+	// schedules powers the delete guard: an active (non-archived) schedule
+	// funding or draining the bag refuses its deletion — the auto-applied
+	// movements would resurrect allocations into a gone ledger. nil skips the
+	// guard (tests).
+	schedules ScheduledActionStore
+	log       *slog.Logger
 }
 
 // BagInput is the user-facing payload for create/update.
@@ -210,10 +215,25 @@ func (s *BagService) SetStatus(ctx context.Context, id int64, status domain.BagL
 
 // Delete removes a bag outright — no history is kept (decision 2026-10-13):
 // allocations cascade, tagged spend falls back to untagged via SET NULL and
-// reads as plain expense. The guard for bags targeted by an active schedule
-// arrives with the scheduler (0036); until then nothing can auto-apply into
-// a bag, so nothing can break here.
+// reads as plain expense. The scheduler guard bites since 0037: an active
+// schedule funding or draining the bag would otherwise keep auto-applying
+// allocations into a ledger that just vanished (archive the schedules first).
 func (s *BagService) Delete(ctx context.Context, id int64) error {
+	if s.schedules != nil {
+		targets, err := s.schedules.ActiveActionsTargetingBag(ctx, id)
+		if err != nil {
+			return err
+		}
+		if len(targets) > 0 {
+			names := make([]string, 0, len(targets))
+			for _, t := range targets {
+				names = append(names, fmt.Sprintf("%q", t.Name))
+			}
+			return conflictError(
+				"active schedule(s) %s move money into or out of this bag — archive them before deleting it",
+				strings.Join(names, ", "))
+		}
+	}
 	return s.bags.DeleteBag(ctx, id)
 }
 

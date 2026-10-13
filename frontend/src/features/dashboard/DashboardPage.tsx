@@ -13,6 +13,7 @@ import { PersonalPriceIndexChart } from './charts/PersonalPriceIndexChart';
 import { SpendSunburst } from './charts/SpendSunburst';
 import { SpendHeatmapChart } from './charts/SpendHeatmap';
 import { InsightsCard } from './InsightsCard';
+import { ComingUpCard } from './ComingUpCard';
 import { PriceCreepCard } from './PriceCreepCard';
 import { AtAGlanceRow } from './AtAGlanceRow';
 import { PlanningCard } from './PlanningCard';
@@ -105,6 +106,10 @@ export function DashboardPage() {
       {/* Deferred intelligence: unread price-per-unit nudges the analysis job
           wrote after recent purchases. Hidden entirely when none are unread. */}
       <InsightsCard />
+
+      {/* The scheduler's due-and-overdue occurrences: the confirm-first nudge
+          with one-click apply. Hidden entirely when nothing is due. */}
+      <ComingUpCard />
 
       {/* Step-3 price-creep tracker: unread creep warnings, latest per product.
           Hidden entirely when nothing qualifies. */}
