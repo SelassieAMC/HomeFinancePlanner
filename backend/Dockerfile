@@ -8,7 +8,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
+# -tags nodynamic: gen2brain/heic's default "dynamic" decoder imports
+# purego, which makes even a CGO_ENABLED=0 binary carry a musl interpreter
+# (exec then fails in distroless with "no such file or directory" — and
+# silently, since docker compose up only surfaces it via the healthcheck).
+# The tag keeps the WASM decoder path, which is what this server actually
+# wants.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -tags nodynamic -ldflags="-s -w" -o /out/server ./cmd/server \
     && mkdir /data-dir
 
 # --- Runtime stage -----------------------------------------------------------
