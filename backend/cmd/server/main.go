@@ -96,7 +96,7 @@ func run() error {
 	// start must never block the API: its failure is logged and boot continues
 	// (the enqueue adapter degrades to a no-op), and the one-time unit-value
 	// backfill simply re-attempts on the next start.
-	jobsMgr, err := buildJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, insights, log)
+	jobsMgr, err := buildJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, insights, fxSvc, log)
 	if err != nil {
 		log.Error("background jobs disabled for this run", "error", err)
 	}
@@ -204,6 +204,12 @@ func (a riverPurchaseAnalyzer) AnalyzeTransaction(ctx context.Context, transacti
 	return a.insert(ctx, jobs.TransactionPPUAnalysisArgs{TransactionID: transactionID})
 }
 
+// AnalyzeTransactionCategories enqueues the category anomaly check of a
+// saved manual expense transaction.
+func (a riverPurchaseAnalyzer) AnalyzeTransactionCategories(ctx context.Context, transactionID int64) error {
+	return a.insert(ctx, jobs.TransactionCategoryAnalysisArgs{TransactionID: transactionID})
+}
+
 func (a riverPurchaseAnalyzer) insert(ctx context.Context, args river.JobArgs) error {
 	if a.manager == nil {
 		return nil
@@ -225,6 +231,7 @@ func buildJobs(
 	promptSvc *service.AIPromptService,
 	extractor *extractor.Extractor,
 	insights *repository.InsightRepository,
+	fxSvc *service.FXService,
 	log *slog.Logger,
 ) (*jobs.Manager, error) {
 	workers := river.NewWorkers()
@@ -260,6 +267,21 @@ func buildJobs(
 		promptSvc,
 		extractor,
 		cfg.InsightThresholdPct,
+		cfg.LLMTimeout,
+		log,
+	))
+	river.AddWorker(workers, jobs.NewTransactionCategoryAnalysisWorker(
+		insights,
+		repository.NewTransactionRepository(db),
+		repository.NewCategoryRepository(db),
+		insights, // the day-grained category spend read lives on the insight repository
+		settingsSvc,
+		fxSvc,
+		settingsSvc,
+		promptSvc,
+		extractor,
+		cfg.AnomalyRisePct,
+		cfg.AnomalyMinBaseline,
 		cfg.LLMTimeout,
 		log,
 	))

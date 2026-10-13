@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -140,5 +141,93 @@ func TestInsightRepositoryKindFilter(t *testing.T) {
 	seenAll, err := repo.List(ctx, domain.InsightFilters{Kind: domain.ProductInsightBulkBuy})
 	if err != nil || len(seenAll) != 1 {
 		t.Fatalf("bulk_buy list = %d rows (%v); want 1", len(seenAll), err)
+	}
+}
+
+// TestInsightRepositoryCategoryAnomaly covers the category-spike slice:
+// a row with category attribution round-trips, the kind+category+month
+// cooldown checks, and the day-grained category spend read the analyzer
+// folds (expense transactions with a category only — transfers, income and
+// category-less rows never qualify).
+func TestInsightRepositoryCategoryAnomaly(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := NewInsightRepository(db)
+
+	if _, err := db.Exec(`INSERT INTO accounts (name, type, currency, created_at, updated_at) VALUES ('Wallet', 'cash', 'EUR', 100, 100)`); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	var catID int64
+	if err := db.QueryRow(`INSERT INTO categories (name, created_at) VALUES ('Utilities', 100) RETURNING id`).Scan(&catID); err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	seedTx := func(date string, cents int64, kind string, withCategory bool) {
+		t.Helper()
+		cat := "NULL"
+		if withCategory {
+			cat = fmt.Sprintf("%d", catID)
+		}
+		if _, err := db.Exec(fmt.Sprintf(
+			`INSERT INTO transactions (account_id, category_id, kind, amount_cents, date, currency, created_at, updated_at)
+			 VALUES (1, %s, '%s', %d, '%s', 'EUR', 100, 100)`, cat, kind, cents, date)); err != nil {
+			t.Fatalf("seed transaction %s: %v", date, err)
+		}
+	}
+	seedTx("2026-10-05", 3000, "expense", true)
+	seedTx("2026-10-11", 2500, "expense", true)
+	seedTx("2026-09-10", 2000, "expense", true)
+	seedTx("2026-08-10", 2000, "expense", true)
+	seedTx("2026-07-10", 1500, "expense", true)
+	seedTx("2026-10-06", 9999, "transfer", true) // never in the read
+	seedTx("2026-10-07", 9999, "expense", false) // category-less rows never in the read
+
+	rows, err := repo.CategoryDaySpend(ctx, catID, "2026-07-01")
+	if err != nil {
+		t.Fatalf("category day spend: %v", err)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 qualifying day rows, got %d: %+v", len(rows), rows)
+	}
+	rows, err = repo.CategoryDaySpend(ctx, catID, "2026-10-08")
+	if err != nil || len(rows) != 1 || rows[0].Date != "2026-10-11" {
+		t.Fatalf("from filter: %v %+v", err, rows)
+	}
+
+	ins := domain.ProductInsight{
+		Kind:         domain.ProductInsightCategorySpike,
+		CategoryID:   &catID,
+		CategoryName: "Utilities",
+		Currency:     "EUR",
+		Message:      "spike",
+		Source:       "auto",
+		Data: domain.ProductInsightData{
+			Month: "2026-10", CurrentCents: 5500, BaselineCents: 1833, ChangePct: 200,
+			PriorMonths: []domain.ProductInsightMonth{{Month: "2026-09", Cents: 2000}},
+		},
+	}
+	saved, err := repo.Create(ctx, ins)
+	if err != nil {
+		t.Fatalf("create category spike: %v", err)
+	}
+	got, err := repo.GetByID(ctx, saved.ID)
+	if err != nil || got.CategoryID == nil || *got.CategoryID != catID || got.CategoryName != "Utilities" ||
+		got.Data.Month != "2026-10" || got.Data.CurrentCents != 5500 || len(got.Data.PriorMonths) != 1 {
+		t.Fatalf("category spike not round-tripped: %+v", got)
+	}
+
+	// Cooldown: same kind+category+month cools down; another month does not;
+	// the same month under another category does not.
+	cutoff := time.Now().Add(-24 * time.Hour)
+	if hit, err := repo.RecentlyInsightedCategory(ctx, domain.ProductInsightCategorySpike, catID, "2026-10", cutoff); err != nil || !hit {
+		t.Fatalf("same month must cool down (%v, %v)", hit, err)
+	}
+	if hit, err := repo.RecentlyInsightedCategory(ctx, domain.ProductInsightCategorySpike, catID, "2026-09", cutoff); err != nil || hit {
+		t.Fatalf("other month must not cool down (%v, %v)", hit, err)
+	}
+	if hit, err := repo.RecentlyInsightedCategory(ctx, domain.ProductInsightCategorySpike, catID+1, "2026-10", cutoff); err != nil || hit {
+		t.Fatalf("other category must not cool down (%v, %v)", hit, err)
+	}
+	if hit, err := repo.RecentlyInsightedCategory(ctx, domain.ProductInsightPriceCreep, catID, "2026-10", cutoff); err != nil || hit {
+		t.Fatalf("other kind must not cool down (%v, %v)", hit, err)
 	}
 }

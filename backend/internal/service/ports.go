@@ -211,13 +211,15 @@ type ProductMappingStore interface {
 	UpdateJob(ctx context.Context, j domain.ProductNormalizationJob) error
 }
 
-// PurchaseAnalyzer enqueues the deferred price-per-unit analysis of an
-// accepted purchase (implemented in main by the River job manager). It is
-// fire-and-forget: a nil analyzer — or an enqueue error — must never fail the
-// purchase save.
+// PurchaseAnalyzer enqueues the deferred intelligence runs of an accepted
+// purchase (implemented in main by the River job manager): the
+// price-per-unit analysis of the linked product lines and the category
+// anomaly check of the month's category spend. It is fire-and-forget: a nil
+// analyzer — or an enqueue error — must never fail the purchase save.
 type PurchaseAnalyzer interface {
 	AnalyzeBill(ctx context.Context, billID int64) error
 	AnalyzeTransaction(ctx context.Context, transactionID int64) error
+	AnalyzeTransactionCategories(ctx context.Context, transactionID int64) error
 }
 
 // InsightStore is the persistence contract for saved price-per-unit insights

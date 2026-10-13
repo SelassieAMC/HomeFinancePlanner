@@ -11,12 +11,14 @@ const kindLabel: Record<ProductInsightKind, string> = {
   shrinkflation: 'Shrinkflation',
   bulk_buy: 'Bulk opportunity',
   price_creep: 'Price creep',
+  category_spike: 'Spend spike',
 };
 
 const kindBadgeClass: Record<ProductInsightKind, string> = {
   shrinkflation: 'badge badge-insight-watch',
   bulk_buy: 'badge badge-insight-opportunity',
   price_creep: 'badge badge-insight-watch',
+  category_spike: 'badge badge-insight-watch',
 };
 
 /** Relative age of a unix-second timestamp ("just now", "3d ago"). */
@@ -33,6 +35,11 @@ function relativeAge(unixSeconds: number): string {
 function factsOf(insight: ProductInsight): string {
   const d = insight.data;
   const parts: string[] = [];
+  if (d.month !== undefined && d.current_cents !== undefined && d.baseline_cents !== undefined) {
+    parts.push(
+      `${monthLabel(d.month)}: ${formatCents(d.current_cents, insight.currency)} vs ${formatCents(d.baseline_cents, insight.currency)} avg`,
+    );
+  }
   if (d.old_price_cents !== undefined && d.new_price_cents !== undefined) {
     parts.push(`unit price ${formatCents(d.old_price_cents, insight.currency)} → ${formatCents(d.new_price_cents, insight.currency)}`);
   }
@@ -42,6 +49,14 @@ function factsOf(insight: ProductInsight): string {
     parts.push(`per ${d.unit} ${formatCents(Math.round(d.old_ppu), insight.currency)} → ${formatCents(Math.round(d.new_ppu), insight.currency)}`);
   }
   return parts.join(' · ');
+}
+
+/** "2026-10" → "Oct 2026" (a malformed label stays as it came). */
+function monthLabel(month: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return month;
+  const date = new Date(Number(m[1]), Number(m[2]) - 1, 1);
+  return date.toLocaleString('en', { month: 'short', year: 'numeric' });
 }
 
 /** The dashboard's unread insights: one row per saved nudge with a dismiss
@@ -91,7 +106,7 @@ export function InsightsCard() {
             <span className={kindBadgeClass[insight.kind]}>{kindLabel[insight.kind]}</span>
             <div className="insight-body">
               <span className="insight-message">
-                <strong>{insight.product_name}</strong> — {insight.message}
+                <strong>{insight.product_name || insight.category_name}</strong> — {insight.message}
               </span>
               {factsOf(insight) && (
                 <span className="hint-inline">{factsOf(insight)}</span>

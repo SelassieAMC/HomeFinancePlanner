@@ -208,10 +208,15 @@ func (s *TransactionService) Create(ctx context.Context, in TransactionInput) (d
 		created, err := s.transactions.CreateWithItems(ctx, t, t.Items)
 		if err == nil {
 			s.enqueueInsight(ctx, created.ID)
+			s.enqueueCategoryCheck(ctx, created)
 		}
 		return created, err
 	}
-	return s.transactions.Create(ctx, t)
+	created, err := s.transactions.Create(ctx, t)
+	if err == nil {
+		s.enqueueCategoryCheck(ctx, created)
+	}
+	return created, err
 }
 
 func (s *TransactionService) Update(ctx context.Context, id int64, in TransactionInput) (domain.Transaction, error) {
@@ -229,10 +234,15 @@ func (s *TransactionService) Update(ctx context.Context, id int64, in Transactio
 		updated, err := s.transactions.UpdateWithItems(ctx, t, t.Items)
 		if err == nil {
 			s.enqueueInsight(ctx, id)
+			s.enqueueCategoryCheck(ctx, updated)
 		}
 		return updated, err
 	}
-	return s.transactions.Update(ctx, t)
+	updated, err := s.transactions.Update(ctx, t)
+	if err == nil {
+		s.enqueueCategoryCheck(ctx, updated)
+	}
+	return updated, err
 }
 
 // enqueueInsight fires the deferred price-per-unit analysis of the saved
@@ -246,6 +256,20 @@ func (s *TransactionService) enqueueInsight(ctx context.Context, id int64) {
 	}
 	if err := s.insights.AnalyzeTransaction(ctx, id); err != nil {
 		s.log.Warn("enqueue purchase analysis", "transaction_id", id, "error", err)
+	}
+}
+
+// enqueueCategoryCheck fires the deferred category-anomaly job for an expense
+// transaction: a category's month-to-date spend evaluated against the
+// preceding months. Income and transfers move no category spend, so they
+// never qualify; the worker re-checks anyway (the save decides what it saved,
+// the worker decides what it evaluates).
+func (s *TransactionService) enqueueCategoryCheck(ctx context.Context, t domain.Transaction) {
+	if s.insights == nil || t.Kind != domain.TransactionExpense {
+		return
+	}
+	if err := s.insights.AnalyzeTransactionCategories(ctx, t.ID); err != nil {
+		s.log.Warn("enqueue category anomaly check", "transaction_id", t.ID, "error", err)
 	}
 }
 

@@ -443,7 +443,22 @@ LLM-aware retry backoff covers transient failures. The API exposes
 `GET /api/v1/insights` (?unseen=true, ?limit=) and
 `POST /api/v1/insights/{id}/dismiss`; the dashboard's "Purchase insights" card
 (frontend `InsightsCard`) lists the unread rows with kind badges and a dismiss
-button, hidden entirely when none are unread.
+button, hidden entirely when none are unread. **Category spend anomalies**
+(migration 0036) ride the same pipeline as a third River kind
+(`transaction_category_analysis`, `internal/jobs/category_anomaly.go`): saving a
+manual expense transaction with a category enqueues a check of that category's
+month spend against the mean of the prior 3 non-zero months — an in-progress
+month through today, prior months through the same day-of-month; a completed
+month compares full spans on both sides. The deterministic trigger
+(≥ `ANOMALY_RISE_PCT` percent above a baseline of ≥ 2 months with spend that
+itself clears `ANOMALY_MIN_BASELINE_CENTS`; zero months never deflate it)
+persists a `category_spike` finding with
+`category_id`/`category_name`/month facts (cooldown 14d keyed kind+category+**month**
+via `json_extract(data_json,'$.month')`, so backfilled months report
+independently), AI-phrased through the DB-prompt `category_anomaly` with the
+auto wording as fallback. The category basis is manual expense transactions
+only — bills attribute via budget/bag links, never categories, so scanned
+receipts cannot spike-flag (same basis as `CategoryMonthSpend`).
 When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend

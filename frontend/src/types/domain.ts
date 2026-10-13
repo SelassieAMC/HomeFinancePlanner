@@ -755,7 +755,7 @@ export interface NormalizationJob {
 /** What the analysis detected. shrinkflation = smaller pack at a flat price,
  *  bulk_buy = a bigger pack of the same family is cheaper per unit,
  *  price_creep = the price per unit keeps rising purchase after purchase. */
-export type ProductInsightKind = 'shrinkflation' | 'bulk_buy' | 'price_creep';
+export type ProductInsightKind = 'shrinkflation' | 'bulk_buy' | 'price_creep' | 'category_spike';
 
 /** One purchase snapshot inside the insight's facts. */
 export interface ProductInsightPurchase {
@@ -779,6 +779,12 @@ export interface ProductInsightData {
   old_ppu?: number; // cents per canonical unit
   new_ppu?: number;
   change_pct: number;
+  // Category-spike facts: the evaluated month vs the mean of the prior
+  // months (money in the base currency, per prior month).
+  month?: string; // YYYY-MM
+  current_cents?: number;
+  baseline_cents?: number;
+  prior_months?: { month: string; cents: number }[];
 }
 
 /** One saved insight (GET /insights). Written by the background analysis job
@@ -788,7 +794,9 @@ export interface ProductInsight {
   id: number;
   kind: ProductInsightKind;
   product_id?: number | null;
+  category_id?: number | null;
   product_name: string;
+  category_name?: string;
   generic_name: string;
   currency: string;
   message: string;

@@ -186,6 +186,21 @@ Rules:
 - Respond with ONLY the nudge text.
 `
 
+// defaultCategoryAnomalyPrompt is the fallback for key 'category_anomaly',
+// the anomaly-detection River job that turns a deterministic category-spend
+// spike (a month's spend in one category clearly above the average of the
+// preceding months, through the same day) into one friendly sentence. The
+// finding facts are appended as JSON by the worker; the model's answer is
+// used verbatim as the stored message.
+const defaultCategoryAnomalyPrompt = `You are a friendly financial advisor for a personal finance planner. You receive ONE spending anomaly as JSON: a month's spending in one category that came out clearly above the recent average, already detected by deterministic math. Write the nudge the user reads. Return the nudge text and nothing else — no explanations, no markdown, no quotes around it.
+
+Rules:
+- ONE short sentence (at most two), warm and direct, speaking to the reader as "you". Never a question, never a lecture.
+- State which category spent more than usual and what it could mean, in everyday words — never show a formula, a raw percentage of the rise, or unrounded numbers; round amounts to the currency scale.
+- The numbers given are the facts; use them only to say the right thing. Never claim anything the finding does not state. A spike is something to look at, not proof of a problem — no guilt, no lecture.
+- Respond with ONLY the nudge text.
+`
+
 // defaultPrompt returns the built-in template content for a prompt key —
 // the fallback when the ai_prompts row is missing or empty. Custom keys
 // have no built-in; an empty result means "nothing to fall back to".
@@ -201,6 +216,8 @@ func defaultPrompt(key string) string {
 		return defaultUnitValueBackfillPrompt
 	case domain.PromptKeyProductInsights:
 		return defaultProductInsightsPrompt
+	case domain.PromptKeyCategoryAnomaly:
+		return defaultCategoryAnomalyPrompt
 	default:
 		return ""
 	}

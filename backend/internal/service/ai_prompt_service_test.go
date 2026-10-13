@@ -335,6 +335,15 @@ func TestAIPromptMigrationSeedMatchesDefaults(t *testing.T) {
 	if insights.Content != defaultPrompt(domain.PromptKeyProductInsights) {
 		t.Errorf("seeded product_insights drifted from the built-in default")
 	}
+	// Migration 0036 seeds the category-anomaly prompt the same way (new row;
+	// there is no prior seed to refresh).
+	anomaly, err := repo.GetByKey(ctx, domain.PromptKeyCategoryAnomaly)
+	if err != nil {
+		t.Fatalf("get seeded category-anomaly prompt: %v", err)
+	}
+	if anomaly.Content != defaultPrompt(domain.PromptKeyCategoryAnomaly) {
+		t.Errorf("seeded category_anomaly drifted from the built-in default")
+	}
 }
 
 // openRawSQLite opens a plain SQLite database without applying migrations

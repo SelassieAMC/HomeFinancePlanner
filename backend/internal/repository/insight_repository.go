@@ -24,7 +24,8 @@ func NewInsightRepository(db *sql.DB) *InsightRepository {
 }
 
 const insightColumns = `
-	i.id, i.kind, i.product_id, i.product_name, COALESCE(i.generic_name, ''), i.currency,
+	i.id, i.kind, i.product_id, i.category_id, i.category_name, i.product_name,
+	COALESCE(i.generic_name, ''), i.currency,
 	i.message, i.source, i.data_json, i.acknowledged, i.created_at, i.updated_at`
 
 // historyTemplate selects one analyzable purchase row. The two %s filters
@@ -83,10 +84,11 @@ func (r *InsightRepository) Create(ctx context.Context, ins domain.ProductInsigh
 	}
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO product_insights
-			(kind, product_id, product_name, generic_name, currency, message, source,
-			 data_json, acknowledged, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-		string(ins.Kind), ins.ProductID, ins.ProductName, ins.GenericName, ins.Currency,
+			(kind, product_id, category_id, category_name, product_name, generic_name,
+			 currency, message, source, data_json, acknowledged, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+		string(ins.Kind), ins.ProductID, ins.CategoryID, ins.CategoryName,
+		ins.ProductName, ins.GenericName, ins.Currency,
 		ins.Message, ins.Source, raw, now, now)
 	if err != nil {
 		return domain.ProductInsight{}, mapWriteError("create insight", err)
@@ -178,6 +180,24 @@ func (r *InsightRepository) RecentlyInsighted(ctx context.Context, kind domain.P
 	return row != 0, nil
 }
 
+// RecentlyInsightedCategory is the category-spike cooldown: a nudge for the
+// same category AND the same evaluated month is the repeat the rule suppresses
+// (different months flag independently — a backfilled March and April both
+// deserve their own finding). The evaluated month lives in the facts JSON.
+func (r *InsightRepository) RecentlyInsightedCategory(ctx context.Context, kind domain.ProductInsightKind, categoryID int64, month string, since time.Time) (bool, error) {
+	var row int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM product_insights
+			WHERE kind = ? AND category_id = ?
+			  AND json_extract(data_json, '$.month') = ?
+			  AND created_at >= ?)`,
+		string(kind), categoryID, month, since.Unix()).Scan(&row)
+	if err != nil {
+		return false, fmt.Errorf("check recent category insight: %w", err)
+	}
+	return row != 0, nil
+}
+
 // ProductPurchaseHistory lists the newest analyzable purchases of one
 // product, newest first.
 func (r *InsightRepository) ProductPurchaseHistory(ctx context.Context, productID int64, limit int) ([]domain.ProductHistoryEntry, error) {
@@ -197,6 +217,33 @@ func (r *InsightRepository) FamilyPurchaseHistory(ctx context.Context, genericNa
 	}
 	tpl, fBill, fTx := historyQuery(historyScopeFamily)
 	return r.history(ctx, tpl, fBill, fTx, []any{genericName, genericName, limit}, "family purchase history")
+}
+
+// CategoryDaySpend lists one category's expense-transaction spend day by day
+// (per native currency) from the given date to today — the raw input of the
+// category-spike analyzer. Same category basis as the summary's
+// CategoryMonthSpend: kind='expense' with a category; transfers and bill
+// transactions never qualify by construction.
+func (r *InsightRepository) CategoryDaySpend(ctx context.Context, categoryID int64, from string) ([]domain.CategoryDayCurrencyTotal, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT date, currency, SUM(amount_cents)
+		FROM transactions
+		WHERE kind = 'expense' AND category_id = ? AND date >= ?
+		GROUP BY date, currency ORDER BY date`, categoryID, from)
+	if err != nil {
+		return nil, fmt.Errorf("category day spend: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.CategoryDayCurrencyTotal{}
+	for rows.Next() {
+		var d domain.CategoryDayCurrencyTotal
+		if err := rows.Scan(&d.Date, &d.Currency, &d.TotalCents); err != nil {
+			return nil, fmt.Errorf("scan category day spend: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func (r *InsightRepository) history(ctx context.Context, tpl, filterBill, filterTx string, args []any, op string) ([]domain.ProductHistoryEntry, error) {
@@ -236,15 +283,17 @@ func scanHistoryEntry(row interface{ Scan(...any) error }) (domain.ProductHistor
 
 func scanInsight(row interface{ Scan(...any) error }) (domain.ProductInsight, error) {
 	var (
-		ins       domain.ProductInsight
-		kind      string
-		productID sql.NullInt64
-		dataJSON  string
-		acked     int64
-		createdAt int64
-		updatedAt int64
+		ins        domain.ProductInsight
+		kind       string
+		productID  sql.NullInt64
+		categoryID sql.NullInt64
+		dataJSON   string
+		acked      int64
+		createdAt  int64
+		updatedAt  int64
 	)
-	if err := row.Scan(&ins.ID, &kind, &productID, &ins.ProductName, &ins.GenericName,
+	if err := row.Scan(&ins.ID, &kind, &productID, &categoryID, &ins.CategoryName,
+		&ins.ProductName, &ins.GenericName,
 		&ins.Currency, &ins.Message, &ins.Source, &dataJSON, &acked, &createdAt, &updatedAt); err != nil {
 		return domain.ProductInsight{}, err
 	}
@@ -252,6 +301,10 @@ func scanInsight(row interface{ Scan(...any) error }) (domain.ProductInsight, er
 	if productID.Valid {
 		id := productID.Int64
 		ins.ProductID = &id
+	}
+	if categoryID.Valid {
+		id := categoryID.Int64
+		ins.CategoryID = &id
 	}
 	ins.Acknowledged = acked != 0
 	if dataJSON != "" {

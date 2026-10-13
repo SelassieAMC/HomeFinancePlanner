@@ -14,25 +14,32 @@ const (
 	ProductInsightBulkBuy ProductInsightKind = "bulk_buy"
 	// ProductInsightPriceCreep marks the "price per unit keeps rising" finding.
 	ProductInsightPriceCreep ProductInsightKind = "price_creep"
+	// ProductInsightCategorySpike marks the "this category spends clearly above
+	// its recent monthly average" finding — the anomaly-detection trigger.
+	ProductInsightCategorySpike ProductInsightKind = "category_spike"
 )
 
 func (k ProductInsightKind) Valid() bool {
 	switch k {
-	case ProductInsightShrinkflation, ProductInsightBulkBuy, ProductInsightPriceCreep:
+	case ProductInsightShrinkflation, ProductInsightBulkBuy, ProductInsightPriceCreep, ProductInsightCategorySpike:
 		return true
 	}
 	return false
 }
 
-// ProductInsight is one persisted purchase nudge: a deterministic finding
-// about a product's price-per-unit history, phrased by the AI (source "ai")
-// or, when no connector is configured or the call fails, kept in its plain
-// auto-generated wording (source "auto"). Rows are the kept record — they are
-// never swept, only acknowledged (the dashboard lists the unread ones).
+// ProductInsight is one persisted intelligence nudge: a deterministic finding
+// — a product's price-per-unit history, or a category's month-vs-average
+// spending spike (anomaly detection; ProductID nil, CategoryID/CategoryName
+// set) — phrased by the AI (source "ai") or, when no connector is configured
+// or the call fails, kept in its plain auto-generated wording (source "auto").
+// Rows are the kept record — they are never swept, only acknowledged (the
+// dashboard lists the unread ones).
 type ProductInsight struct {
 	ID           int64              `json:"id"`
 	Kind         ProductInsightKind `json:"kind"`
 	ProductID    *int64             `json:"product_id,omitempty"` // nil after the product row was deleted (FK SET NULL)
+	CategoryID   *int64             `json:"category_id,omitempty"`
+	CategoryName string             `json:"category_name,omitempty"`
 	ProductName  string             `json:"product_name"`
 	GenericName  string             `json:"generic_name,omitempty"`
 	Currency     string             `json:"currency"` // ISO 4217 code of the compared purchases
@@ -59,7 +66,8 @@ type ProductInsightPurchase struct {
 // ProductInsightData is the JSON facts snapshot persisted alongside the
 // message (data_json): the compared purchases and the headline numbers the
 // evaluator computed (shrinkflation/price-creep rows carry old vs new,
-// bulk-buy rows the small vs large size averages).
+// bulk-buy rows the small vs large size averages, category-spike rows the
+// evaluated month and the monthly comparison).
 type ProductInsightData struct {
 	Unit          string                   `json:"unit"` // canonical comparison unit
 	Threshold     float64                  `json:"threshold_pct"`
@@ -71,6 +79,19 @@ type ProductInsightData struct {
 	OldPPU        *float64                 `json:"old_ppu_cents_per_unit,omitempty"`
 	NewPPU        *float64                 `json:"new_ppu_cents_per_unit,omitempty"`
 	ChangePct     float64                  `json:"change_pct,omitempty"`
+	// Category-spike facts: the evaluated calendar month and the month's
+	// spend against the average of the preceding months — the amounts (base
+	// currency, like Currency on the row).
+	Month         string                `json:"month,omitempty"` // "YYYY-MM"
+	CurrentCents  int64                 `json:"current_cents,omitempty"`
+	BaselineCents int64                 `json:"baseline_cents,omitempty"`
+	PriorMonths   []ProductInsightMonth `json:"prior_months,omitempty"`
+}
+
+// ProductInsightMonth is one compared month of a category-spike finding.
+type ProductInsightMonth struct {
+	Month string `json:"month"` // "YYYY-MM"
+	Cents int64  `json:"cents"`
 }
 
 // InsightLine is one purchase line the analysis worker evaluates — an
@@ -108,6 +129,18 @@ type ProductHistoryEntry struct {
 // ("b"/"t" + its row id).
 func (e ProductHistoryEntry) IsSource(source string, id int64) bool {
 	return e.Source == source && e.SourceID == id
+}
+
+// CategoryDayCurrencyTotal is one day of one category's expense-transaction
+// spend, per native currency — the day-grained attribution the category-spike
+// analyzer folds into month-to-date and month-through-day baselines. It is
+// the same category basis the summary's CategoryMonthSpend uses: manual
+// expense transactions with a category (scanned bills attribute through
+// budget/bag links, not categories).
+type CategoryDayCurrencyTotal struct {
+	Date       string `json:"date"` // "YYYY-MM-DD"
+	Currency   string `json:"currency"`
+	TotalCents int64  `json:"total_cents"`
 }
 
 // InsightFilters narrow the listed insights. Unseen lists only rows the user

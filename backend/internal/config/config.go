@@ -28,6 +28,8 @@ type Config struct {
 	LLMNumCtx           int           // Ollama context-window override (0 = model default)
 	FXTimeout           time.Duration // outbound timeout for the exchange-rates API
 	InsightThresholdPct float64       // PPU change (percent) a product insight must clear
+	AnomalyRisePct      float64       // month-vs-average rise (percent) a category anomaly must clear
+	AnomalyMinBaseline  int64         // minimum recent-average category spend (base cents) for an anomaly
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	ShutdownTimeout     time.Duration
@@ -74,6 +76,23 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("INSIGHT_THRESHOLD_PCT: %w", err)
 	}
 
+	// The anomaly job's sensitivity: a category's month spend must clear this
+	// percent above the average of the preceding months (same day-of-month)
+	// to flag. Thirty, not ten — monthly grocery-style category totals
+	// commonly wobble by tens of percent week to week without meaning
+	// anything.
+	anomalyRise, err := envFloat("ANOMALY_RISE_PCT", 30)
+	if err != nil {
+		return Config{}, fmt.Errorf("ANOMALY_RISE_PCT: %w", err)
+	}
+
+	// The anomaly job's noise floor: a baseline this small carries no signal
+	// (a €2 category doubling is not a story).
+	anomalyMinBaseline, err := envInt("ANOMALY_MIN_BASELINE_CENTS", 2000)
+	if err != nil {
+		return Config{}, fmt.Errorf("ANOMALY_MIN_BASELINE_CENTS: %w", err)
+	}
+
 	return Config{
 		Env:                 envString("APP_ENV", "development"),
 		Port:                port,
@@ -89,6 +108,8 @@ func Load() (Config, error) {
 		LLMNumCtx:           llmNumCtx,
 		FXTimeout:           fxTimeout,
 		InsightThresholdPct: insightThreshold,
+		AnomalyRisePct:      anomalyRise,
+		AnomalyMinBaseline:  int64(anomalyMinBaseline),
 		ReadTimeout:         30 * time.Second,
 		WriteTimeout:        llmTimeout + 60*time.Second,
 		ShutdownTimeout:     15 * time.Second,
