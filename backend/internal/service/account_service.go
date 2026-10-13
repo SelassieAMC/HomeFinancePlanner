@@ -158,6 +158,10 @@ type TransactionInput struct {
 	// bill's market name). Ignored for bill-linked rows, which keep their
 	// store on the bill.
 	StoreName string
+	// CounterAccountID is the destination account of a transfer (the input's
+	// AccountID is the source). Must be nil for income/expense and a distinct
+	// account for transfers.
+	CounterAccountID *int64
 	// Items are the article lines of a manually entered purchase; empty for a
 	// plain amount-only transaction. Only expenses may carry them.
 	Items []TransactionItemInput
@@ -267,10 +271,20 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		return domain.Transaction{}, err
 	}
 	if !in.Kind.Valid() {
-		return domain.Transaction{}, validationError("kind %q must be income or expense", in.Kind)
+		return domain.Transaction{}, validationError("kind %q must be income, expense or transfer", in.Kind)
 	}
 	if len(in.Items) > 0 && in.Kind != domain.TransactionExpense {
 		return domain.Transaction{}, validationError("items are only supported on expense transactions")
+	}
+	if in.Kind == domain.TransactionTransfer && (in.CategoryID != nil || in.StoreName != "") {
+		return domain.Transaction{}, validationError("transfers carry no category or store")
+	}
+	if in.Kind == domain.TransactionTransfer {
+		if in.CounterAccountID == nil {
+			return domain.Transaction{}, validationError("a transfer needs a destination account (counter_account_id)")
+		}
+	} else if in.CounterAccountID != nil {
+		return domain.Transaction{}, validationError("counter_account_id is only valid on transfers")
 	}
 	if len(in.Items) > maxTransactionItems {
 		return domain.Transaction{}, validationError("at most %d items are supported", maxTransactionItems)
@@ -305,6 +319,22 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		if _, err := s.categories.GetByID(ctx, *in.CategoryID); err != nil {
 			return domain.Transaction{}, fmt.Errorf("validate category_id: %w", err)
 		}
+	}
+
+	// Transfer destination: a real account distinct from the source. The
+	// amount is recorded in the source account's currency (like every manual
+	// row); cross-currency transfers record the sending side only — the
+	// receiving side is what the balances already say.
+	var counterID *int64
+	if in.Kind == domain.TransactionTransfer {
+		counter, err := s.accounts.GetByID(ctx, *in.CounterAccountID)
+		if err != nil {
+			return domain.Transaction{}, fmt.Errorf("validate counter_account_id: %w", err)
+		}
+		if counter.ID == acc.ID {
+			return domain.Transaction{}, validationError("source and destination accounts must differ")
+		}
+		counterID = in.CounterAccountID
 	}
 
 	// Item lines, mirroring buildBill's per-line rules minus budget
@@ -432,16 +462,17 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	}
 
 	return domain.Transaction{
-		AccountID:       acc.ID,
-		CategoryID:      in.CategoryID,
-		Kind:            in.Kind,
-		AmountCents:     in.AmountCents,
-		Currency:        acc.Currency, // manual rows are always in the account's currency
-		Description:     strings.TrimSpace(in.Description),
-		Date:            in.Date,
-		StoreID:         storeID,
-		ItemsTotalCents: itemsTotal,
-		Items:           items,
+		AccountID:        acc.ID,
+		CategoryID:       in.CategoryID,
+		Kind:             in.Kind,
+		AmountCents:      in.AmountCents,
+		Currency:         acc.Currency, // manual rows are always in the account's currency
+		Description:      strings.TrimSpace(in.Description),
+		Date:             in.Date,
+		StoreID:          storeID,
+		CounterAccountID: counterID,
+		ItemsTotalCents:  itemsTotal,
+		Items:            items,
 	}, nil
 }
 

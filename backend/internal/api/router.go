@@ -39,6 +39,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	cartSearchH := &handlers.OfferSearchHandler{Svc: svc.OfferSearches}
 	promptH := &handlers.PromptHandler{Svc: svc.Prompts}
 	insightH := &handlers.InsightHandler{Svc: svc.Insights}
+	goalH := &handlers.GoalHandler{Svc: svc.Goals}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -146,6 +147,13 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	// job. Self-contained family — no wildcard interactions.
 	mux.HandleFunc("GET  /api/v1/insights", insightH.List)
 	mux.HandleFunc("POST /api/v1/insights/{id}/dismiss", insightH.Dismiss)
+
+	// Goals: savings targets tracked against one account. Self-contained
+	// family — no wildcard interactions.
+	mux.HandleFunc("GET /api/v1/goals", goalH.List)
+	mux.HandleFunc("POST /api/v1/goals", goalH.Create)
+	mux.HandleFunc("PUT /api/v1/goals/{id}", goalH.Update)
+	mux.HandleFunc("DELETE /api/v1/goals/{id}", goalH.Delete)
 
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)

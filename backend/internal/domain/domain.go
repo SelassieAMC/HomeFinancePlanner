@@ -54,12 +54,13 @@ type Account struct {
 type TransactionKind string
 
 const (
-	TransactionIncome  TransactionKind = "income"
-	TransactionExpense TransactionKind = "expense"
+	TransactionIncome   TransactionKind = "income"
+	TransactionExpense  TransactionKind = "expense"
+	TransactionTransfer TransactionKind = "transfer"
 )
 
 func (k TransactionKind) Valid() bool {
-	return k == TransactionIncome || k == TransactionExpense
+	return k == TransactionIncome || k == TransactionExpense || k == TransactionTransfer
 }
 
 // TransactionFilters narrows transaction list queries. Zero values mean "no
@@ -90,6 +91,12 @@ type Transaction struct {
 	// transactions, which keep their store on the bill row).
 	StoreID   *int64 `json:"store_id,omitempty"`
 	StoreName string `json:"store_name,omitempty"` // display-only, joined from stores
+
+	// CounterAccountID is the destination account of a transfer: the row's
+	// AccountID is where the money left from. Always NULL for income and
+	// expense rows (a NULL on a transfer violates validation).
+	CounterAccountID   *int64 `json:"counter_account_id,omitempty"`
+	CounterAccountName string `json:"counter_account_name,omitempty"` // display-only, joined from accounts
 
 	// Display-only. ItemCount is the number of item lines (correlated count,
 	// always present); Items are loaded by Get only, never by List.
@@ -189,6 +196,32 @@ type Budget struct {
 	ClosedAt    *time.Time      `json:"closed_at,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// Goal is a named savings target tracked against one account. It holds no
+// money of its own: progress is the live balance of the linked account
+// (contributions are transfers into it), and the target is achieved once
+// that balance reaches TargetCents. TargetDate is an optional "by when"
+// milestone.
+type Goal struct {
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	TargetCents int64     `json:"target_cents"`
+	Currency   string     `json:"currency"`      // the linked account's currency (decided at save time)
+	AccountID  int64      `json:"account_id"`
+	TargetDate *string    `json:"target_date,omitempty"` // YYYY-MM-DD, nullable
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// GoalStatus is a goal with its live progress attached. ProgressCents is the
+// linked account's current balance; Achieved is derived per read, never
+// stored.
+type GoalStatus struct {
+	Goal
+	AccountName   string `json:"account_name"` // display-only, joined
+	ProgressCents int64  `json:"progress_cents"`
+	Achieved      bool   `json:"achieved"`
 }
 
 // Summary is the dashboard aggregate for an inclusive date range, with every

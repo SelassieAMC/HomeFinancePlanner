@@ -8,7 +8,7 @@ export type AccountType =
   | 'cash'
   | 'other';
 
-export type TransactionKind = 'income' | 'expense';
+export type TransactionKind = 'income' | 'expense' | 'transfer';
 
 export interface Account {
   id: number;
@@ -44,6 +44,9 @@ export interface Transaction {
   // Manual purchases: the market bought at (null for bill transactions).
   store_id?: number | null;
   store_name?: string; // display-only, joined from stores
+  // Transfers only: destination account (account_id is the source).
+  counter_account_id?: number | null;
+  counter_account_name?: string; // display-only, joined from accounts
   item_count?: number; // display-only correlated count
   items_total_cents?: number; // display-only Σ line totals
   items?: TransactionItem[]; // loaded by get only, never by list
@@ -89,7 +92,34 @@ export interface TransactionInput {
   description: string;
   date: string;
   store_name?: string; // manual purchases: market, find-or-created server-side
+  counter_account_id?: number; // transfers only: destination account
   items?: TransactionItemInput[];
+}
+
+/** A named savings target tracked against one account. */
+export interface Goal {
+  id: number;
+  name: string;
+  target_cents: number;
+  currency: string; // the linked account's currency, decided at save time
+  account_id: number;
+  target_date?: string | null; // optional YYYY-MM-DD milestone
+  created_at: string;
+  updated_at: string;
+}
+
+/** A goal with its live progress attached (server-computed per read). */
+export interface GoalStatus extends Goal {
+  account_name: string;
+  progress_cents: number; // the linked account's current balance
+  achieved: boolean;
+}
+
+export interface GoalInput {
+  name: string;
+  target_cents: number;
+  account_id: number;
+  target_date?: string | null;
 }
 
 // 'product' = bill item storage taxonomy; 'expense' = general budget grouping.

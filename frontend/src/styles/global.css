@@ -648,6 +648,15 @@ textarea:focus,
   background: var(--text-muted);
 }
 
+/* Achieved goal: green dot / green fill (goals reuse the budget card layout). */
+.budget-dot.ok {
+  background: var(--positive);
+}
+
+.progress-fill.done {
+  background: var(--positive);
+}
+
 .budget-name {
   flex: 1;
   min-width: 0;

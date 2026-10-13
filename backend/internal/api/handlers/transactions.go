@@ -13,14 +13,15 @@ import (
 type TransactionHandler struct{ Svc *service.TransactionService }
 
 type transactionRequest struct {
-	AccountID   int64                    `json:"account_id"`
-	CategoryID  *int64                   `json:"category_id"`
-	Kind        domain.TransactionKind   `json:"kind"`
-	AmountCents int64                    `json:"amount_cents"`
-	Description string                   `json:"description"`
-	Date        string                   `json:"date"`
-	StoreName   string                   `json:"store_name"`
-	Items       []transactionItemRequest `json:"items"`
+	AccountID        int64                    `json:"account_id"`
+	CategoryID       *int64                   `json:"category_id"`
+	Kind             domain.TransactionKind   `json:"kind"`
+	AmountCents      int64                    `json:"amount_cents"`
+	Description      string                   `json:"description"`
+	Date             string                   `json:"date"`
+	StoreName        string                   `json:"store_name"`
+	CounterAccountID *int64                   `json:"counter_account_id"` // transfers only: destination
+	Items            []transactionItemRequest `json:"items"`
 }
 
 // transactionItemRequest is one item line of a manually entered transaction.
@@ -116,14 +117,15 @@ func (h *TransactionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, err := h.Svc.Create(r.Context(), service.TransactionInput{
-		AccountID:   req.AccountID,
-		CategoryID:  req.CategoryID,
-		Kind:        req.Kind,
-		AmountCents: req.AmountCents,
-		Description: req.Description,
-		Date:        req.Date,
-		StoreName:   req.StoreName,
-		Items:       transactionItemInputs(req.Items),
+		AccountID:        req.AccountID,
+		CategoryID:       req.CategoryID,
+		Kind:             req.Kind,
+		AmountCents:      req.AmountCents,
+		Description:      req.Description,
+		Date:             req.Date,
+		StoreName:        req.StoreName,
+		CounterAccountID: req.CounterAccountID,
+		Items:            transactionItemInputs(req.Items),
 	})
 	if err != nil {
 		respondServiceError(w, r, err)
@@ -144,14 +146,15 @@ func (h *TransactionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, err := h.Svc.Update(r.Context(), id, service.TransactionInput{
-		AccountID:   req.AccountID,
-		CategoryID:  req.CategoryID,
-		Kind:        req.Kind,
-		AmountCents: req.AmountCents,
-		Description: req.Description,
-		Date:        req.Date,
-		StoreName:   req.StoreName,
-		Items:       transactionItemInputs(req.Items),
+		AccountID:        req.AccountID,
+		CategoryID:       req.CategoryID,
+		Kind:             req.Kind,
+		AmountCents:      req.AmountCents,
+		Description:      req.Description,
+		Date:             req.Date,
+		StoreName:        req.StoreName,
+		CounterAccountID: req.CounterAccountID,
+		Items:            transactionItemInputs(req.Items),
 	})
 	if err != nil {
 		respondServiceError(w, r, err)

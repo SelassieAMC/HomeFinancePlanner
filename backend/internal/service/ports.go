@@ -59,6 +59,15 @@ type BudgetStore interface {
 	RolloverMonthly(ctx context.Context, month string) error
 }
 
+// GoalStore is the persistence contract for financial goals.
+type GoalStore interface {
+	List(ctx context.Context) ([]domain.Goal, error)
+	GetByID(ctx context.Context, id int64) (domain.Goal, error)
+	Create(ctx context.Context, g domain.Goal) (domain.Goal, error)
+	Update(ctx context.Context, g domain.Goal) (domain.Goal, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 // SummaryStore is the persistence contract for dashboard aggregates. It
 // returns native-currency groups for an inclusive date range; conversion into
 // the base currency is the service's job.
@@ -212,6 +221,7 @@ type Services struct {
 	Analytics     *AnalyticsService
 	Prompts       *AIPromptService
 	Insights      *InsightService
+	Goals         *GoalService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -236,6 +246,7 @@ func New(
 	analytics *AnalyticsService,
 	prompts *AIPromptService,
 	insights *InsightService,
+	goals GoalStore,
 ) *Services {
 	budgetSvc := &BudgetService{budgets: budgets, categories: categories}
 	return &Services{
@@ -254,5 +265,6 @@ func New(
 		Analytics:     analytics,
 		Prompts:       prompts,
 		Insights:      insights,
+		Goals:         &GoalService{goals: goals, accounts: accounts},
 	}
 }

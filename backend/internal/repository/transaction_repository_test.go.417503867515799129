@@ -1,0 +1,335 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+
+	"home-finance-planner/backend/internal/domain"
+)
+
+// seedTransactionBase writes one account and returns its id.
+func seedTransactionBase(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+	res, err := db.Exec(`INSERT INTO accounts (name, type, currency, created_at, updated_at) VALUES ('Wallet', 'cash', 'EUR', 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("seed account id: %v", err)
+	}
+	return id
+}
+
+func TestTransactionRepositoryCreateWithItems(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	accountID := seedTransactionBase(t, db)
+
+	storeID := int64(0)
+	if res, err := db.Exec(`INSERT INTO stores (name, created_at, updated_at) VALUES ('REWE', 100, 100)`); err != nil {
+		t.Fatalf("seed store: %v", err)
+	} else if id, err := res.LastInsertId(); err != nil {
+		t.Fatalf("seed store id: %v", err)
+	} else {
+		storeID = id
+	}
+
+	pid := int64(0)
+	if res, err := db.Exec(`INSERT INTO products (name, created_at, updated_at) VALUES ('Milk', 100, 100)`); err != nil {
+		t.Fatalf("seed product: %v", err)
+	} else if id, err := res.LastInsertId(); err != nil {
+		t.Fatalf("seed product id: %v", err)
+	} else {
+		pid = id
+	}
+
+	items := []domain.TransactionItem{
+		{Name: "Milk", ProductID: &pid, Quantity: 2, UnitPriceCents: 139, LineTotalCents: 278},
+		{Name: "Bread", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250},
+	}
+	created, err := repo.CreateWithItems(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 528,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+		StoreID:     &storeID,
+	}, items)
+	if err != nil {
+		t.Fatalf("create with items: %v", err)
+	}
+
+	// GetByID loads the lines and the derived totals.
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Items) != 2 || got.ItemsTotalCents != 528 {
+		t.Fatalf("items = %d, total = %d; want 2, 528", len(got.Items), got.ItemsTotalCents)
+	}
+	if got.StoreID == nil || *got.StoreID != storeID || got.StoreName != "REWE" {
+		t.Fatalf("store = %v %q; want %d REWE", got.StoreID, got.StoreName, storeID)
+	}
+	if got.Items[0].ProductName != "Milk" {
+		t.Fatalf("product name = %q; want joined product name", got.Items[0].ProductName)
+	}
+
+	// List leaves items empty but counts them.
+	list, err := repo.List(ctx, TransactionFilters{Month: "2026-05"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].ItemCount != 2 || list[0].Items != nil {
+		t.Fatalf("list = %+v; want one row with item_count 2 and no items", list)
+	}
+
+	// UpdateWithItems replaces the lines.
+	items = []domain.TransactionItem{{Name: "Milk", ProductID: &pid, Quantity: 1, UnitPriceCents: 139, LineTotalCents: 139}}
+	updated, err := repo.UpdateWithItems(ctx, domain.Transaction{
+		ID:          created.ID,
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 139,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+		StoreID:     &storeID,
+	}, items)
+	if err != nil {
+		t.Fatalf("update with items: %v", err)
+	}
+	if len(updated.Items) != 1 || updated.ItemsTotalCents != 139 {
+		t.Fatalf("updated items = %d, total %d; want 1, 139", len(updated.Items), updated.ItemsTotalCents)
+	}
+
+	// Delete cascades the lines.
+	if err := repo.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM transaction_items WHERE transaction_id = ?`, created.ID).Scan(&count); err != nil {
+		t.Fatalf("count leftovers: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("%d item lines survived the transaction delete", count)
+	}
+}
+
+func TestTransactionRepositoryItemsCarryStandardName(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	mappings := NewProductNameMappingRepository(db)
+	accountID := seedTransactionBase(t, db)
+
+	// One line's raw text has a remembered normalization, the other's does not.
+	if _, err := mappings.Create(ctx, domain.ProductNameMapping{
+		RawName:      "WHL MLK 1L",
+		StandardName: "Whole Milk 1L",
+		Source:       domain.MappingSourceManual,
+	}); err != nil {
+		t.Fatalf("seed mapping: %v", err)
+	}
+
+	created, err := repo.CreateWithItems(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 370,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+	}, []domain.TransactionItem{
+		{Name: "WHL MLK 1L", Quantity: 1, UnitPriceCents: 120, LineTotalCents: 120},
+		{Name: "Bread", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250},
+	})
+	if err != nil {
+		t.Fatalf("create with items: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Items) != 2 {
+		t.Fatalf("items: %d (want 2)", len(got.Items))
+	}
+	// The mapped line carries the standardized name alongside the raw text.
+	if got.Items[0].Name != "WHL MLK 1L" {
+		t.Fatalf("raw name = %q; want the typed text verbatim", got.Items[0].Name)
+	}
+	if got.Items[0].StandardName != "Whole Milk 1L" {
+		t.Fatalf("standard name = %q; want the mapping's %q", got.Items[0].StandardName, "Whole Milk 1L")
+	}
+	// The unmapped line has no standard name to join.
+	if got.Items[1].StandardName != "" {
+		t.Fatalf("unmapped standard name = %q; want empty", got.Items[1].StandardName)
+	}
+}
+
+func TestTransactionRepositoryBillIDRoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	accountID := seedTransactionBase(t, db)
+
+	res, err := db.Exec(`INSERT INTO bills (market_name, date, currency, status, total_cents, created_at, updated_at)
+		VALUES ('REWE', '2026-05-10', 'EUR', 'accepted', 500, 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed bill: %v", err)
+	}
+	billID, _ := res.LastInsertId()
+
+	tx, err := repo.Create(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 500,
+		Currency:    "EUR",
+		Description: "Bill — REWE",
+		Date:        "2026-05-10",
+		BillID:      &billID,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if tx.BillID == nil || *tx.BillID != billID {
+		t.Fatalf("bill id = %v; want %d", tx.BillID, billID)
+	}
+
+	// The bill sync path round-trips bill_id through a plain Update.
+	updated, err := repo.Update(ctx, tx)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.BillID == nil || *updated.BillID != billID {
+		t.Fatalf("bill id after update = %v; want preserved", updated.BillID)
+	}
+}
+
+// TestTransactionRepositoryUnitValueRoundTrip covers the printed size
+// magnitude on manual item lines: stored with the line, read back through
+// GetByID and UpdateWithItems; NULL for lines without a magnitude.
+func TestTransactionRepositoryUnitValueRoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	accountID := seedTransactionBase(t, db)
+
+	half := 0.5
+	items := []domain.TransactionItem{
+		{Name: "Cola Bottle", Unit: "l", UnitValue: &half, Quantity: 1, UnitPriceCents: 210, LineTotalCents: 210},
+		{Name: "Bananas", Unit: "kg", Quantity: 1, UnitPriceCents: 199, LineTotalCents: 199},
+	}
+	created, err := repo.CreateWithItems(ctx, domain.Transaction{
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 409,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+	}, items)
+	if err != nil {
+		t.Fatalf("create with items: %v", err)
+	}
+
+	got, err := repo.GetByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Items[0].UnitValue == nil || *got.Items[0].UnitValue != 0.5 {
+		t.Errorf("line 1 unit_value = %v; want 0.5", got.Items[0].UnitValue)
+	}
+	if got.Items[1].UnitValue != nil {
+		t.Errorf("line 2 unit_value = %v; want NULL", got.Items[1].UnitValue)
+	}
+
+	// Replacing the lines carries the new magnitudes.
+	replaced := floatPtr2(1.5)
+	items = []domain.TransactionItem{
+		{Name: "Cola Bottle", Unit: "l", UnitValue: replaced, Quantity: 1, UnitPriceCents: 210, LineTotalCents: 210},
+	}
+	updated, err := repo.UpdateWithItems(ctx, domain.Transaction{
+		ID:          created.ID,
+		AccountID:   accountID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 210,
+		Currency:    "EUR",
+		Description: "Groceries",
+		Date:        "2026-05-10",
+	}, items)
+	if err != nil {
+		t.Fatalf("update with items: %v", err)
+	}
+	if updated.Items[0].UnitValue == nil || *updated.Items[0].UnitValue != 1.5 {
+		t.Errorf("replaced line unit_value = %v; want 1.5", updated.Items[0].UnitValue)
+	}
+}
+
+// floatPtr2 avoids colliding with per-file float helpers in other test files
+// of the same package.
+func floatPtr2(v float64) *float64 { return &v }
+
+// TestTransactionTransferRoundTrip pins the transfer kind on the store: the
+// counter account is persisted and joined back with its name, and filtering
+// by either account of the pair returns the row (the sending side through
+// account_id, the receiving side through counter_account_id).
+func TestTransactionTransferRoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	srcID := seedTransactionBase(t, db)
+	res, err := db.Exec(`INSERT INTO accounts (name, type, currency, created_at, updated_at) VALUES ('Savings', 'savings', 'EUR', 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed counter account: %v", err)
+	}
+	dstID, _ := res.LastInsertId()
+
+	created, err := repo.Create(ctx, domain.Transaction{
+		AccountID:   srcID,
+		Kind:        domain.TransactionTransfer,
+		AmountCents: 5000,
+		Currency:    "EUR",
+		Description: "Vacation fund",
+		Date:        "2026-05-10",
+		CounterAccountID: &dstID,
+	})
+	if err != nil {
+		t.Fatalf("create transfer: %v", err)
+	}
+	if created.CounterAccountID == nil || *created.CounterAccountID != dstID {
+		t.Fatalf("counter = %v; want %d", created.CounterAccountID, dstID)
+	}
+	if created.CounterAccountName != "Savings" {
+		t.Fatalf("counter name = %q; want joined Savings", created.CounterAccountName)
+	}
+
+	for _, id := range []int64{srcID, dstID} {
+		rows, err := repo.List(ctx, TransactionFilters{AccountID: id})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("filter by account %d = %d rows, err %v; want 1 (a transfer belongs to both of its accounts)", id, len(rows), err)
+		}
+	}
+	// Income/expense rows stay single-account.
+	income, err := repo.Create(ctx, domain.Transaction{
+		AccountID:   srcID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 100,
+		Currency:    "EUR",
+		Date:        "2026-05-11",
+	})
+	if err != nil {
+		t.Fatalf("create expense: %v", err)
+	}
+	rows, err := repo.List(ctx, TransactionFilters{AccountID: srcID})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("list on source = %d rows, err %v; want 2", len(rows), err)
+	}
+	dstRows, err := repo.List(ctx, TransactionFilters{AccountID: dstID})
+	if err != nil || len(dstRows) != 1 || dstRows[0].ID != created.ID {
+		t.Fatalf("list on destination = %d rows, err %v; want only the transfer", len(dstRows), err)
+	}
+	_ = income
+}

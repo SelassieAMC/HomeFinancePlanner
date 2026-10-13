@@ -133,7 +133,9 @@ export function TransactionsPage() {
   const dayGroups: { date: string; label: string; total: number; currency: string; items: Transaction[] }[] = [];
   for (const t of transactions) {
     const last = dayGroups[dayGroups.length - 1];
-    const signed = t.kind === 'income' ? t.amount_cents : -t.amount_cents;
+    // Transfers are neither income nor spend: they move money between the
+    // user's own accounts, so the day total stays neutral to them.
+    const signed = t.kind === 'income' ? t.amount_cents : t.kind === 'transfer' ? 0 : -t.amount_cents;
     if (last && last.date === t.date) {
       last.total += signed;
       last.items.push(t);
@@ -189,6 +191,7 @@ export function TransactionsPage() {
                 ['', 'All'],
                 ['expense', 'Expenses'],
                 ['income', 'Income'],
+                ['transfer', 'Transfers'],
               ] as [TransactionKind | '', string][]
             ).map(([value, label]) => (
               <button
@@ -241,20 +244,31 @@ export function TransactionsPage() {
                 {group.items.map((t) => {
                   const isBill = t.bill_id != null;
                   const isIncome = t.kind === 'income';
+                  const isTransfer = t.kind === 'transfer';
                   const cat = t.category_id ? categoryNames.get(t.category_id) : undefined;
                   const account = accountNames.get(t.account_id);
+                  const counterAccount = t.counter_account_id ? accountNames.get(t.counter_account_id) : undefined;
                   const items = t.id === expandedId ? (detail?.items ?? null) : null;
                   return (
                     <ItemPanel
                       key={t.id}
                       title={t.description || '(no description)'}
-                      subtitle={[
-                        isBill ? 'Bill' : t.store_name || null,
-                        cat ?? 'Uncategorized',
-                        account,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
+                      subtitle={
+                        isTransfer
+                          ? [
+                              'Transfer',
+                              `${account ?? `#${t.account_id}`} → ${counterAccount ?? `#${t.counter_account_id}`}`,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')
+                          : [
+                              isBill ? 'Bill' : t.store_name || null,
+                              cat ?? 'Uncategorized',
+                              account,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')
+                      }
                       value={formatCents(t.amount_cents, t.currency)}
                       valueClass={isIncome ? 'stat-positive' : ''}
                       onToggle={(open) => {
@@ -308,20 +322,37 @@ export function TransactionsPage() {
                               <strong>{formatCents(t.amount_cents, t.currency)}</strong>
                             </div>
                           </div>
-                          <div className="item-field-grid">
-                            <div className="item-field">
-                              <span>Category</span>
-                              <span>{cat ?? '—'}</span>
+                          {isTransfer ? (
+                            <div className="item-field-grid">
+                              <div className="item-field">
+                                <span>From</span>
+                                <span>{account ?? `#${t.account_id}`}</span>
+                              </div>
+                              <div className="item-field">
+                                <span>To</span>
+                                <span>{counterAccount ?? t.counter_account_name ?? '#' + (t.counter_account_id ?? '?')}</span>
+                              </div>
+                              <div className="item-field">
+                                <span>Amount</span>
+                                <span>{formatCents(t.amount_cents, t.currency)}</span>
+                              </div>
                             </div>
-                            <div className="item-field">
-                              <span>Account</span>
-                              <span>{account ?? `#${t.account_id}`}</span>
+                          ) : (
+                            <div className="item-field-grid">
+                              <div className="item-field">
+                                <span>Category</span>
+                                <span>{cat ?? '—'}</span>
+                              </div>
+                              <div className="item-field">
+                                <span>Account</span>
+                                <span>{account ?? `#${t.account_id}`}</span>
+                              </div>
+                              <div className="item-field">
+                                <span>Store</span>
+                                <span>{t.store_name ?? '—'}</span>
+                              </div>
                             </div>
-                            <div className="item-field">
-                              <span>Store</span>
-                              <span>{t.store_name ?? '—'}</span>
-                            </div>
-                          </div>
+                          )}
 
                           {t.item_count != null && t.item_count > 0 && (
                             <div className="tx-items">

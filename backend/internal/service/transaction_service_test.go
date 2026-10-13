@@ -595,3 +595,76 @@ func TestTransactionCreateDefaultsFromTransaction(t *testing.T) {
 		t.Errorf("explicit category lost: %v", created2.Items[1].CategoryID)
 	}
 }
+
+// TestTransactionCreateTransfer pins the transfer kind: a single row from the
+// source account to a distinct counter account, in the SOURCE account's
+// currency, with no category, store, or items — and the whole set of inputs a
+// transfer must refuse.
+func TestTransactionCreateTransfer(t *testing.T) {
+	ctx := context.Background()
+	svc, txs, _, _ := newTestTransactionService(t)
+	accounts, _ := svc.accounts.(*fakeAccountStore)
+	savings, err := accounts.Create(ctx, domain.Account{Name: "Savings", Type: domain.AccountSavings, Currency: "USD"})
+	if err != nil {
+		t.Fatalf("seed savings: %v", err)
+	}
+
+	in := validTransactionInput()
+	in.Kind = domain.TransactionTransfer
+	in.CounterAccountID = &savings.ID
+	in.Description = "Vacation fund"
+	created, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("create transfer: %v", err)
+	}
+	if created.Currency != "EUR" {
+		t.Errorf("transfer currency = %s; want the SOURCE account's EUR", created.Currency)
+	}
+	if created.CounterAccountID == nil || *created.CounterAccountID != savings.ID {
+		t.Errorf("counter = %v; want %d", created.CounterAccountID, savings.ID)
+	}
+	saved := txs.items[created.ID]
+	if saved.CounterAccountID == nil || *saved.CounterAccountID != savings.ID {
+		t.Errorf("counter not persisted: %+v", saved)
+	}
+
+	// Validation refusals.
+	bad := validTransactionInput()
+	bad.Kind = domain.TransactionTransfer
+	bad.CounterAccountID = nil
+	if _, err := svc.Create(ctx, bad); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("transfer without counter = %v; want ErrValidation", err)
+	}
+	same := in
+	same.CounterAccountID = &created.AccountID
+	if _, err := svc.Create(ctx, same); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("transfer to self = %v; want ErrValidation", err)
+	}
+	withCat := in
+	cat8 := int64(8)
+	withCat.CategoryID = &cat8
+	if _, err := svc.Create(ctx, withCat); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("transfer with category = %v; want ErrValidation", err)
+	}
+	withStore := in
+	withStore.StoreName = "rewe"
+	if _, err := svc.Create(ctx, withStore); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("transfer with store = %v; want ErrValidation", err)
+	}
+	withItems := in
+	withItems.Items = []TransactionItemInput{{Name: "Milk", Quantity: 1, UnitPriceCents: 100}}
+	if _, err := svc.Create(ctx, withItems); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("transfer with items = %v; want ErrValidation", err)
+	}
+	withCounter := validTransactionInput()
+	withCounter.CounterAccountID = &savings.ID
+	if _, err := svc.Create(ctx, withCounter); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("expense with counter = %v; want ErrValidation", err)
+	}
+	// Non-transfer items are still fine.
+	income := validTransactionInput()
+	income.Kind = domain.TransactionIncome
+	if _, err := svc.Create(ctx, income); err != nil {
+		t.Errorf("plain expense with transfer rules live broke: %v", err)
+	}
+}

@@ -17,6 +17,7 @@ const TAB_ITEMS: NavItem[] = [
 
 const MORE_ITEMS: (NavItem & { external?: true; href?: string })[] = [
   { to: '/accounts', label: 'Accounts' },
+  { to: '/goals', label: 'Goals' },
   { to: '/stores', label: 'Stores' },
   { to: '/products', label: 'Products' },
   { to: '/cart', label: 'Purchase cart' },

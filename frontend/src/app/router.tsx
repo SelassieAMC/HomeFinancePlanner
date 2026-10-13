@@ -4,6 +4,7 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { AccountsPage } from '../features/accounts/AccountsPage';
 import { TransactionsPage } from '../features/transactions/TransactionsPage';
 import { BudgetsPage } from '../features/budgets/BudgetsPage';
+import { GoalsPage } from '../features/goals/GoalsPage';
 import { StoresPage } from '../features/stores/StoresPage';
 import { ProductsPage } from '../features/products/ProductsPage';
 import { CartPage } from '../features/cart/CartPage';
@@ -21,6 +22,7 @@ export const router = createBrowserRouter([
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'transactions', element: <TransactionsPage /> },
       { path: 'budgets', element: <BudgetsPage /> },
+      { path: 'goals', element: <GoalsPage /> },
       { path: 'stores', element: <StoresPage /> },
       { path: 'products', element: <ProductsPage /> },
       { path: 'cart', element: <CartPage /> },

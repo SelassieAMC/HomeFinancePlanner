@@ -16,6 +16,7 @@ import { InsightsCard } from './InsightsCard';
 import { PriceCreepCard } from './PriceCreepCard';
 import { AtAGlanceRow } from './AtAGlanceRow';
 import { BudgetProgressCard } from './BudgetProgressCard';
+import { GoalsCard } from './GoalsCard';
 import { TopProductsCard } from './TopProductsCard';
 import { StoreLoyaltyCard } from './StoreLoyaltyCard';
 
@@ -135,6 +136,10 @@ export function DashboardPage() {
       {/* Step-2 budget section: month-scoped caps + open envelopes, from the
           same month summary the stat tiles above fetch. */}
       <BudgetProgressCard summary={monthSummary} />
+
+      {/* Roadmap gap 4: savings goals with live progress — hidden entirely
+          when no goals exist. */}
+      <GoalsCard />
 
       <div className="chart-grid-2">
         <RunRateChart data={runRate.data} loading={runRate.loading} error={runRate.error} />

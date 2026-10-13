@@ -271,3 +271,65 @@ func TestTransactionRepositoryUnitValueRoundTrip(t *testing.T) {
 // floatPtr2 avoids colliding with per-file float helpers in other test files
 // of the same package.
 func floatPtr2(v float64) *float64 { return &v }
+
+// TestTransactionTransferRoundTrip pins the transfer kind on the store: the
+// counter account is persisted and joined back with its name, and filtering
+// by either account of the pair returns the row (the sending side through
+// account_id, the receiving side through counter_account_id).
+func TestTransactionTransferRoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewTransactionRepository(db)
+	srcID := seedTransactionBase(t, db)
+	res, err := db.Exec(`INSERT INTO accounts (name, type, currency, created_at, updated_at) VALUES ('Savings', 'savings', 'EUR', 100, 100)`)
+	if err != nil {
+		t.Fatalf("seed counter account: %v", err)
+	}
+	dstID, _ := res.LastInsertId()
+
+	created, err := repo.Create(ctx, domain.Transaction{
+		AccountID:        srcID,
+		Kind:             domain.TransactionTransfer,
+		AmountCents:      5000,
+		Currency:         "EUR",
+		Description:      "Vacation fund",
+		Date:             "2026-05-10",
+		CounterAccountID: &dstID,
+	})
+	if err != nil {
+		t.Fatalf("create transfer: %v", err)
+	}
+	if created.CounterAccountID == nil || *created.CounterAccountID != dstID {
+		t.Fatalf("counter = %v; want %d", created.CounterAccountID, dstID)
+	}
+	if created.CounterAccountName != "Savings" {
+		t.Fatalf("counter name = %q; want joined Savings", created.CounterAccountName)
+	}
+
+	for _, id := range []int64{srcID, dstID} {
+		rows, err := repo.List(ctx, TransactionFilters{AccountID: id})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("filter by account %d = %d rows, err %v; want 1 (a transfer belongs to both of its accounts)", id, len(rows), err)
+		}
+	}
+	// Income/expense rows stay single-account.
+	income, err := repo.Create(ctx, domain.Transaction{
+		AccountID:   srcID,
+		Kind:        domain.TransactionExpense,
+		AmountCents: 100,
+		Currency:    "EUR",
+		Date:        "2026-05-11",
+	})
+	if err != nil {
+		t.Fatalf("create expense: %v", err)
+	}
+	rows, err := repo.List(ctx, TransactionFilters{AccountID: srcID})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("list on source = %d rows, err %v; want 2", len(rows), err)
+	}
+	dstRows, err := repo.List(ctx, TransactionFilters{AccountID: dstID})
+	if err != nil || len(dstRows) != 1 || dstRows[0].ID != created.ID {
+		t.Fatalf("list on destination = %d rows, err %v; want only the transfer", len(dstRows), err)
+	}
+	_ = income
+}

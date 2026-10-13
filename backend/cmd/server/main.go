@@ -113,7 +113,8 @@ func run() error {
 
 	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, productMappings,
 		transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc,
-		promptSvc, service.NewInsightService(insights))
+		promptSvc, service.NewInsightService(insights),
+		repository.NewGoalRepository(db))
 
 	if jobsMgr != nil {
 		if err := jobsMgr.Start(ctx); err != nil {

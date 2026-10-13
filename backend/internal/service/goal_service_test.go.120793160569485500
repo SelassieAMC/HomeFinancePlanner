@@ -1,0 +1,206 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+
+	"home-finance-planner/backend/internal/domain"
+)
+
+// fakeGoalStore is an in-memory goal store recording writes.
+type fakeGoalStore struct {
+	mu     sync.Mutex
+	items  map[int64]domain.Goal
+	next   int64
+	exists bool
+}
+
+func newFakeGoalStore() *fakeGoalStore {
+	return &fakeGoalStore{items: map[int64]domain.Goal{}, next: 1}
+}
+
+func (f *fakeGoalStore) List(context.Context) ([]domain.Goal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []domain.Goal{}
+	for _, g := range f.items {
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+func (f *fakeGoalStore) GetByID(_ context.Context, id int64) (domain.Goal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.items[id]
+	if !ok {
+		return domain.Goal{}, domain.ErrNotFound
+	}
+	return g, nil
+}
+
+func (f *fakeGoalStore) Create(_ context.Context, g domain.Goal) (domain.Goal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g.ID = f.next
+	f.next++
+	f.items[g.ID] = g
+	return g, nil
+}
+
+func (f *fakeGoalStore) Update(_ context.Context, g domain.Goal) (domain.Goal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[g.ID]; !ok {
+		return domain.Goal{}, domain.ErrNotFound
+	}
+	f.items[g.ID] = g
+	return g, nil
+}
+
+func (f *fakeGoalStore) Delete(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(f.items, id)
+	return nil
+}
+
+func newTestGoalService(t *testing.T) (*GoalService, *fakeGoalStore, *fakeAccountStore) {
+	t.Helper()
+	accounts := newFakeAccountStore()
+	ctx := context.Background()
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Savings", Type: domain.AccountSavings, Currency: "EUR", BalanceCents: 12000}); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Cash", Type: domain.AccountCash, Currency: "USD", BalanceCents: 500}); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	store := newFakeGoalStore()
+	return &GoalService{goals: store, accounts: accounts}, store, accounts
+}
+
+func validGoalInput() GoalInput {
+	return GoalInput{Name: "Vacation", TargetCents: 50000, AccountID: 1}
+}
+
+// TestGoalCreateDerivesCurrencyAndProgress: the goal's currency is the linked
+// account's (never user-chosen) and progress is the account's live balance,
+// with achieved derived from it.
+func TestGoalCreateDerivesCurrencyAndProgress(t *testing.T) {
+	ctx := context.Background()
+	svc, store, accounts := newTestGoalService(t)
+
+	g, err := svc.Create(ctx, validGoalInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if g.Currency != "EUR" || g.AccountID != 1 || g.AccountName != "Savings" {
+		t.Fatalf("currency/account = %s/%d %q; want EUR/1 Savings", g.Currency, g.AccountID, g.AccountName)
+	}
+	if g.ProgressCents != 12000 || g.Achieved {
+		t.Fatalf("progress = %d achieved=%v; want 12000 false", g.ProgressCents, g.Achieved)
+	}
+
+	// Reaching the target flips achieved; the state is derived, not stored.
+	store.mu.Lock()
+	saved := store.items[1]
+	store.mu.Unlock()
+	saved.TargetCents = 10000
+	store.mu.Lock()
+	store.items[1] = saved
+	store.mu.Unlock()
+	view, err := svc.Get(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !view.Achieved {
+		t.Fatalf("achieved with target 10000 and balance 12000 must be true")
+	}
+	store.mu.Lock()
+	saved = store.items[1]
+	store.mu.Unlock()
+	saved.TargetCents = 50000
+	store.mu.Lock()
+	store.items[1] = saved
+	store.mu.Unlock()
+	// A USD goal on the cash account.
+	cash := validGoalInput()
+	cash.Name = "Gadget"
+	cash.TargetCents = 400
+	cash.AccountID = 2
+	cashGoal, err := svc.Create(ctx, cash)
+	if err != nil {
+		t.Fatalf("create cash goal: %v", err)
+	}
+	if cashGoal.Currency != "USD" || !cashGoal.Achieved {
+		t.Fatalf("cash goal = %s achieved=%v; want USD true", cashGoal.Currency, cashGoal.Achieved)
+	}
+
+	// Balance is read live: top up the account and the progress follows.
+	acc, _ := accounts.GetByID(ctx, 1)
+	acc.BalanceCents = 50000
+	if _, err := accounts.Update(ctx, acc); err != nil {
+		t.Fatalf("top up: %v", err)
+	}
+	view, err = svc.Get(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("get after top-up: %v", err)
+	}
+	if view.ProgressCents != 50000 || !view.Achieved {
+		t.Fatalf("progress after top-up = %d/%d achieved=%v; want 50000 true", view.ProgressCents, view.TargetCents, view.Achieved)
+	}
+}
+
+// TestGoalValidation covers the refusals: empty name, non-positive target,
+// a bad or impossible target date, an invalid account, and re-pointing an
+// existing goal at an account in a different currency.
+func TestGoalValidation(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := newTestGoalService(t)
+
+	if _, err := svc.Create(ctx, GoalInput{Name: "  ", TargetCents: 100, AccountID: 1}); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("empty name = %v; want ErrValidation", err)
+	}
+	if _, err := svc.Create(ctx, GoalInput{Name: "X", TargetCents: 0, AccountID: 1}); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("zero target = %v; want ErrValidation", err)
+	}
+	badDate := "2026-02-31"
+	if _, err := svc.Create(ctx, GoalInput{Name: "X", TargetCents: 100, AccountID: 1, TargetDate: &badDate}); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("impossible target date = %v; want ErrValidation", err)
+	}
+	if _, err := svc.Create(ctx, GoalInput{Name: "X", TargetCents: 100, AccountID: 99}); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("unknown account = %v; want ErrNotFound", err)
+	}
+	if _, err := svc.Create(ctx, GoalInput{Name: "X", TargetCents: 100, AccountID: 0}); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("open account = %v; want ErrValidation", err)
+	}
+
+	created, err := svc.Create(ctx, validGoalInput())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// The goal is EUR (its account's); a USD account is refused on update.
+	updated := validGoalInput()
+	updated.Name = "Vacation 2027"
+	updated.TargetDate = &[]string{"2027-06-01"}[0]
+	if _, err := svc.Update(ctx, created.ID, updated); err != nil {
+		t.Fatalf("update on the same-currency account: %v", err)
+	}
+	other := validGoalInput()
+	other.AccountID = 2
+	if _, err := svc.Update(ctx, created.ID, other); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("cross-currency re-point = %v; want ErrValidation", err)
+	}
+	if err := svc.Delete(ctx, created.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := svc.Get(ctx, created.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("get after delete = %v; want ErrNotFound", err)
+	}
+}

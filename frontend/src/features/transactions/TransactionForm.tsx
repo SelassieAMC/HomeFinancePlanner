@@ -105,6 +105,10 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   const [date, setDate] = useState(initial?.date ?? new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState(initial ? (initial.amount_cents / 100).toString() : '');
   const [accountId, setAccountId] = useState(initial ? String(initial.account_id) : '');
+  // Transfers only: the destination account.
+  const [counterAccountId, setCounterAccountId] = useState(
+    initial?.counter_account_id ? String(initial.counter_account_id) : '',
+  );
   const [categoryId, setCategoryId] = useState(initial?.category_id ? String(initial.category_id) : '');
   const [description, setDescription] = useState(initial?.description ?? '');
 
@@ -152,6 +156,10 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   useEffect(() => {
     if (hasLines) setAmount((itemsTotal / 100).toFixed(2));
   }, [hasLines, itemsTotal]);
+
+  const isTransfer = kind === 'transfer';
+  const transferAccount =
+    accounts.find((a) => String(a.id) === counterAccountId) ?? null;
 
   function updateLine(key: number, patch: Partial<LineDraft>) {
     setLines((ls) => ls.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -214,6 +222,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       setFormError('Choose an account.');
       return;
     }
+    if (isTransfer && !counterAccountId) {
+      setFormError('Choose the destination account of the transfer.');
+      return;
+    }
+    if (isTransfer && counterAccountId === accountId) {
+      setFormError('The transfer needs two different accounts.');
+      return;
+    }
     const items = [];
     for (const line of lines) {
       if (line.name.trim() === '') {
@@ -256,13 +272,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
     try {
       await onSubmit({
         account_id: Number(accountId),
-        category_id: categoryId ? Number(categoryId) : null,
+        category_id: isTransfer ? null : (categoryId ? Number(categoryId) : null),
         kind,
         amount_cents: amountCents,
         description,
         date,
-        store_name: customStore ? customStoreName : (pickedStore?.name ?? ''),
-        items: items.length > 0 ? items : undefined,
+        store_name: isTransfer ? '' : (customStore ? customStoreName : (pickedStore?.name ?? '')),
+        counter_account_id: isTransfer ? Number(counterAccountId) : undefined,
+        items: items.length > 0 && !isTransfer ? items : undefined,
       });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to save the transaction.');
@@ -273,8 +290,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
-      {/* The kind toggle replaces the old kind select — expense/income is a
-          two-way switch, and item lines pin it to expense. */}
+      {/* The kind toggle replaces the old kind select — expense/income/transfer
+          is a three-way switch, and item lines pin it to expense. */}
       <div className="segmented" role="group" aria-label="Kind">
         <button
           type="button"
@@ -292,6 +309,15 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           onClick={() => setKind('income')}
         >
           Income{hasLines ? ' (no items)' : ''}
+        </button>
+        <button
+          type="button"
+          className={kind === 'transfer' ? 'active' : ''}
+          aria-pressed={kind === 'transfer'}
+          disabled={hasLines}
+          onClick={() => setKind('transfer')}
+        >
+          Transfer{hasLines ? ' (no items)' : ''}
         </button>
       </div>
       <div className="form-grid">
@@ -318,7 +344,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           />
         </label>
         <label>
-          Account
+          {isTransfer ? 'From account' : 'Account'}
           <select
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
@@ -332,19 +358,39 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             ))}
           </select>
         </label>
-        <label>
-          Category
-          <CategorySelect
-            categories={categories}
-            kind="expense"
-            value={categoryId ? Number(categoryId) : null}
-            onChange={(id) => setCategoryId(id ? String(id) : '')}
-            ariaLabel="Category"
-            emptyLabel="Category…"
-          />
-        </label>
-        <label>
-          Store
+        {isTransfer ? (
+          <label>
+            To account
+            <select
+              value={counterAccountId}
+              onChange={(e) => setCounterAccountId(e.target.value)}
+              aria-label="Destination account"
+              required
+            >
+              <option value="">To account…</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.currency})
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label>
+            Category
+            <CategorySelect
+              categories={categories}
+              kind="expense"
+              value={categoryId ? Number(categoryId) : null}
+              onChange={(id) => setCategoryId(id ? String(id) : '')}
+              ariaLabel="Category"
+              emptyLabel="Category…"
+            />
+          </label>
+        )}
+        {!isTransfer && (
+          <label>
+            Store
           {customStore ? (
             <input
               autoFocus
@@ -384,6 +430,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             </select>
           )}
         </label>
+        )}
         <label>
           Description
           <input
@@ -396,6 +443,16 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         </label>
       </div>
 
+      {isTransfer && transferAccount &&
+        accounts.find((a) => String(a.id) === accountId)?.currency !== transferAccount.currency && (
+          <p className="hint-inline">
+            Cross-currency transfer — the amount is recorded in the source
+            account's currency ({currency}).
+          </p>
+        )}
+
+      {/* Transfers move money, they do not buy anything: no item lines. */}
+      {!isTransfer && (
       <div className="transaction-lines">
         <div className="transaction-lines-header">
           <span>Items {hasLines ? '' : '(optional)'}</span>
@@ -511,6 +568,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           </div>
         )}
       </div>
+      )}
 
       {formError && <ErrorMessage message={formError} />}
 
