@@ -14,6 +14,7 @@ import { SpendSunburst } from './charts/SpendSunburst';
 import { SpendHeatmapChart } from './charts/SpendHeatmap';
 import { InsightsCard } from './InsightsCard';
 import { AtAGlanceRow } from './AtAGlanceRow';
+import { BudgetProgressCard } from './BudgetProgressCard';
 
 export function DashboardPage() {
   const [type, setType] = useState<PeriodType>('month');
@@ -47,7 +48,7 @@ export function DashboardPage() {
   // every chart that hit it.
   const warnings = [
     ...new Set(
-      [glance.data, runRate.data, fixedSplit.data, priceIndex.data, storeIndex.data, sunburst.data, heatmap.data].flatMap(
+      [glance.data, monthSummary.data, runRate.data, fixedSplit.data, priceIndex.data, storeIndex.data, sunburst.data, heatmap.data].flatMap(
         (d) => d?.conversion_warnings ?? [],
       ),
     ),
@@ -120,6 +121,10 @@ export function DashboardPage() {
           <span className="stat-label">{inflationPct === null ? 'no data yet' : '12 months'}</span>
         </Card>
       </div>
+
+      {/* Step-2 budget section: month-scoped caps + open envelopes, from the
+          same month summary the stat tiles above fetch. */}
+      <BudgetProgressCard summary={monthSummary} />
 
       <div className="chart-grid-2">
         <RunRateChart data={runRate.data} loading={runRate.loading} error={runRate.error} />

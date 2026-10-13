@@ -865,7 +865,8 @@ textarea:focus,
 }
 
 /* --- Dashboard insights card ------------------------------------------------ */
-.insights-card {
+.insights-card,
+.budgets-card {
   margin: 0.5rem 0;
 }
 
