@@ -116,6 +116,7 @@ func (r *InsightRepository) GetByID(ctx context.Context, id int64) (domain.Produ
 }
 
 // List returns insights newest first; Unseen lists only unacknowledged rows.
+// Kind ("" = all kinds) narrows the list to one trigger.
 func (r *InsightRepository) List(ctx context.Context, f domain.InsightFilters) ([]domain.ProductInsight, error) {
 	if f.Limit <= 0 || f.Limit > 100 {
 		f.Limit = 30
@@ -124,9 +125,15 @@ func (r *InsightRepository) List(ctx context.Context, f domain.InsightFilters) (
 	if !f.Unseen {
 		where = "1 = 1"
 	}
+	args := []any{f.Limit}
+	kindClause := ""
+	if f.Kind != "" {
+		kindClause = " AND kind = ?"
+		args = append([]any{string(f.Kind)}, args...)
+	}
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT`+insightColumns+` FROM product_insights i WHERE `+where+` ORDER BY created_at DESC, id DESC LIMIT ?`,
-		f.Limit)
+		`SELECT`+insightColumns+` FROM product_insights i WHERE `+where+kindClause+
+			` ORDER BY created_at DESC, id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list insights: %w", err)
 	}

@@ -6,6 +6,8 @@ import type {
   RunRate,
   SpendHeatmap,
   StorePriceIndex,
+  TopProducts,
+  TopStores,
 } from '../types/analytics';
 
 const BASE = '/api/v1/analytics';
@@ -41,4 +43,17 @@ export const analyticsApi = {
     apiClient.get<FixedSplit>(
       `${BASE}/fixed-split?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
     ),
+  /** Products ranked by spend in the window (quantity + average price alongside). */
+  topProducts: (from: string, to: string, limit?: number) =>
+    apiClient.get<TopProducts>(rangeWithLimit(`${BASE}/top-products`, from, to, limit)),
+  /** Stores ranked by spend in the window (visit count alongside). */
+  topStores: (from: string, to: string, limit?: number) =>
+    apiClient.get<TopStores>(rangeWithLimit(`${BASE}/top-stores`, from, to, limit)),
 };
+
+/** Builds a `?from&to[&limit]` query string for the ranged analytics endpoints. */
+function rangeWithLimit(base: string, from: string, to: string, limit?: number): string {
+  const params = new URLSearchParams({ from, to });
+  if (limit !== undefined) params.set('limit', String(limit));
+  return `${base}?${params.toString()}`;
+}

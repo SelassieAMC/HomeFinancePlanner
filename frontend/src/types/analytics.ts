@@ -133,3 +133,42 @@ export interface FixedSplit {
   unclassified_cents: number;
   conversion_warnings: string[];
 }
+
+// --- Consumption Analysis: Top Products & Store Loyalty -----------------------
+
+export interface TopProductRow {
+  product_id: number;
+  name: string;
+  /** Line-quantity sum (can be fractional). */
+  quantity: number;
+  total_cents: number;
+  /** Spend ÷ quantity per piece; 0 when quantity is 0. */
+  avg_price_cents: number;
+}
+
+export interface TopProducts {
+  from: string;
+  to: string;
+  currency: string;
+  /** Every qualifying product's spend, not just the ranked rows. */
+  total_spend_cents: number;
+  rows: TopProductRow[];
+  conversion_warnings: string[];
+}
+
+export interface TopStoreRow {
+  store_id: number;
+  name: string;
+  visit_count: number;
+  total_cents: number;
+}
+
+export interface TopStores {
+  from: string;
+  to: string;
+  currency: string;
+  /** Every qualifying store's spend, not just the ranked rows. */
+  total_spend_cents: number;
+  rows: TopStoreRow[];
+  conversion_warnings: string[];
+}

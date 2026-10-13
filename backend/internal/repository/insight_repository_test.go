@@ -101,3 +101,44 @@ func TestInsightRepositoryCRUD(t *testing.T) {
 		t.Fatalf("a cutoff after the row must not be in cooldown (%v, %v)", oldHit, err)
 	}
 }
+
+// TestInsightRepositoryKindFilter covers the ?kind= narrowing behind the
+// dashboard's price-creep warning list: an empty kind lists every trigger, a
+// known kind keeps only matching rows.
+func TestInsightRepositoryKindFilter(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	repo := NewInsightRepository(db)
+
+	kinds := []domain.ProductInsightKind{domain.ProductInsightShrinkflation, domain.ProductInsightPriceCreep, domain.ProductInsightBulkBuy}
+	for _, k := range kinds {
+		if _, err := repo.Create(ctx, domain.ProductInsight{
+			Kind:        k,
+			ProductName: "row " + string(k),
+			Currency:    "EUR",
+			Message:     "wording",
+			Source:      "auto",
+			Data:        domain.ProductInsightData{Unit: "kg"},
+		}); err != nil {
+			t.Fatalf("create %s: %v", k, err)
+		}
+	}
+
+	all, err := repo.List(ctx, domain.InsightFilters{Unseen: true})
+	if err != nil || len(all) != 3 {
+		t.Fatalf("unfiltered list = %d rows (%v); want 3", len(all), err)
+	}
+	creep, err := repo.List(ctx, domain.InsightFilters{Unseen: true, Kind: domain.ProductInsightPriceCreep})
+	if err != nil {
+		t.Fatalf("price_creep list: %v", err)
+	}
+	if len(creep) != 1 || creep[0].Kind != domain.ProductInsightPriceCreep || creep[0].ProductName != "row price_creep" {
+		t.Fatalf("price_creep list: %+v", creep)
+	}
+	// A kind filter composes with the unseen flag: this one lists all rows
+	// (no Unseen) but still narrows to bulk_buy.
+	seenAll, err := repo.List(ctx, domain.InsightFilters{Kind: domain.ProductInsightBulkBuy})
+	if err != nil || len(seenAll) != 1 {
+		t.Fatalf("bulk_buy list = %d rows (%v); want 1", len(seenAll), err)
+	}
+}

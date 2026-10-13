@@ -77,6 +77,8 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("GET /api/v1/analytics/price-index", analyticsH.PriceIndex)
 	mux.HandleFunc("GET /api/v1/analytics/spend-heatmap", analyticsH.SpendHeatmap)
 	mux.HandleFunc("GET /api/v1/analytics/fixed-split", analyticsH.FixedSplit)
+	mux.HandleFunc("GET /api/v1/analytics/top-products", analyticsH.TopProducts)
+	mux.HandleFunc("GET /api/v1/analytics/top-stores", analyticsH.TopStores)
 
 	// Scan flow: drafts live in bill_scans until the user confirms or discards.
 	// POST /scan returns immediately with status "analyzing"; the client polls

@@ -19,12 +19,20 @@ func NewInsightService(insights InsightStore) *InsightService {
 }
 
 // List returns saved insights newest first. Unseen=true limits to the
-// unread rows the dashboard shows; limit 0 uses the store's default.
-func (s *InsightService) List(ctx context.Context, unseen bool, limit int) ([]domain.ProductInsight, error) {
+// unread rows the dashboard shows; limit 0 uses the store's default; kind
+// ("" = all kinds) narrows to one trigger, e.g. the price-creep warning list.
+func (s *InsightService) List(ctx context.Context, unseen bool, limit int, kind string) ([]domain.ProductInsight, error) {
 	if limit < 0 {
 		return nil, validationError("limit %d must be >= 0", limit)
 	}
-	return s.insights.List(ctx, domain.InsightFilters{Unseen: unseen, Limit: limit})
+	filters := domain.InsightFilters{Unseen: unseen, Limit: limit}
+	if kind != "" {
+		filters.Kind = domain.ProductInsightKind(kind)
+		if !filters.Kind.Valid() {
+			return nil, validationError("unknown insight kind %q", kind)
+		}
+	}
+	return s.insights.List(ctx, filters)
 }
 
 // Dismiss acknowledges one insight (removes it from the unread list).

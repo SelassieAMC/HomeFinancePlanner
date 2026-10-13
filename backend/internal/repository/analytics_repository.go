@@ -181,6 +181,98 @@ func (r *AnalyticsRepository) SpendByMonthAndFixed(ctx context.Context, months [
 	return out, rows.Err()
 }
 
+// TopProducts sums quantity and spend per linked product over accepted,
+// non-return bill lines UNION the item lines of manual expense transactions,
+// grouped per product and native currency. Deposit/return lines never carry a
+// product_id, so deposit artifacts drop out on their own; the GROUP BY lives
+// inside each branch because the two sources don't share line-level columns.
+func (r *AnalyticsRepository) TopProducts(ctx context.Context, from, to string) ([]domain.ProductSpendRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT bi.product_id, p.name, b.currency, SUM(COALESCE(bi.quantity, 0)), SUM(bi.line_total_cents)
+		FROM bill_items bi
+		JOIN bills b ON b.id = bi.bill_id
+		JOIN products p ON p.id = bi.product_id
+		WHERE b.status = 'accepted' AND b.date >= ? AND b.date <= ?
+		  AND COALESCE(bi.is_return, 0) = 0
+		GROUP BY bi.product_id, p.name, b.currency
+		UNION ALL
+		SELECT ti.product_id, p.name, t.currency, SUM(ti.quantity), SUM(ti.line_total_cents)
+		FROM transaction_items ti
+		JOIN transactions t ON t.id = ti.transaction_id
+		JOIN products p ON p.id = ti.product_id
+		WHERE t.kind = 'expense'
+		GROUP BY ti.product_id, p.name, t.currency`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("analytics top products %s..%s: %w", from, to, err)
+	}
+	defer rows.Close()
+
+	out := []domain.ProductSpendRow{}
+	for rows.Next() {
+		var p domain.ProductSpendRow
+		if err := rows.Scan(&p.ProductID, &p.Name, &p.Currency, &p.Quantity, &p.TotalCents); err != nil {
+			return nil, fmt.Errorf("scan top product row: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// TopStores counts visits and sums spend per store over accepted bills with a
+// store and manual expense transactions with a store, grouped per store and
+// native currency. Bill transactions carry no store (bills keep store_id),
+// and the LEFT JOIN on items keeps itemless bills counted as visits, so the
+// two sources never double-count.
+func (r *AnalyticsRepository) TopStores(ctx context.Context, from, to string) ([]domain.StoreSpendRow, error) {
+	billRows, err := r.db.QueryContext(ctx, `
+		SELECT b.store_id, COALESCE(st.name, ''), b.currency,
+		       COUNT(DISTINCT b.id), SUM(COALESCE(bi.line_total_cents, 0))
+		FROM bills b
+		LEFT JOIN bill_items bi ON bi.bill_id = b.id
+		LEFT JOIN stores st ON st.id = b.store_id
+		WHERE b.status = 'accepted' AND b.date >= ? AND b.date <= ?
+		  AND b.store_id IS NOT NULL
+		GROUP BY b.store_id, st.name, b.currency`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("analytics top stores bills %s..%s: %w", from, to, err)
+	}
+	defer billRows.Close()
+
+	out := []domain.StoreSpendRow{}
+	for billRows.Next() {
+		var s domain.StoreSpendRow
+		if err := billRows.Scan(&s.StoreID, &s.Name, &s.Currency, &s.VisitCount, &s.TotalCents); err != nil {
+			return nil, fmt.Errorf("scan top store row: %w", err)
+		}
+		out = append(out, s)
+	}
+	if err := billRows.Err(); err != nil {
+		return nil, fmt.Errorf("scan top store row: %w", err)
+	}
+
+	txRows, err := r.db.QueryContext(ctx, `
+		SELECT t.store_id, COALESCE(st.name, ''), t.currency,
+		       COUNT(DISTINCT t.id), SUM(t.amount_cents)
+		FROM transactions t
+		LEFT JOIN stores st ON st.id = t.store_id
+		WHERE t.kind = 'expense' AND t.date >= ? AND t.date <= ?
+		  AND t.store_id IS NOT NULL
+		GROUP BY t.store_id, st.name, t.currency`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("analytics top stores transactions %s..%s: %w", from, to, err)
+	}
+	defer txRows.Close()
+
+	for txRows.Next() {
+		var s domain.StoreSpendRow
+		if err := txRows.Scan(&s.StoreID, &s.Name, &s.Currency, &s.VisitCount, &s.TotalCents); err != nil {
+			return nil, fmt.Errorf("scan top store row: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, txRows.Err()
+}
+
 // OpenBudgetTotal sums the amounts of all open budget envelopes. Budgets are
 // lifetime envelopes (0015), so this powers a target pace line rather than a
 // true monthly budget.

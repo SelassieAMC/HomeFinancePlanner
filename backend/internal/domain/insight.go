@@ -111,8 +111,10 @@ func (e ProductHistoryEntry) IsSource(source string, id int64) bool {
 }
 
 // InsightFilters narrow the listed insights. Unseen lists only rows the user
-// has not acknowledged yet.
+// has not acknowledged yet; Kind ("" = all kinds) narrows to one trigger,
+// e.g. the dashboard's price-creep warning list.
 type InsightFilters struct {
 	Unseen bool
 	Limit  int
+	Kind   ProductInsightKind
 }

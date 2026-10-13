@@ -19,6 +19,8 @@ type AnalyticsStore interface {
 	Heatmap(ctx context.Context, from, to string) ([]domain.SectionDayRow, error)
 	SpendByMonthAndFixed(ctx context.Context, months []string) ([]domain.MonthFixedRow, error)
 	OpenBudgetTotal(ctx context.Context) (int64, error)
+	TopProducts(ctx context.Context, from, to string) ([]domain.ProductSpendRow, error)
+	TopStores(ctx context.Context, from, to string) ([]domain.StoreSpendRow, error)
 }
 
 // ValidateRange checks an inclusive YYYY-MM-DD from/to pair. Exported for
@@ -41,7 +43,8 @@ type StoreNameSource interface {
 	List(ctx context.Context) ([]domain.Store, error)
 }
 
-// AnalyticsService computes the six dashboard chart payloads.
+// AnalyticsService computes the six dashboard chart payloads plus the two
+// consumption rankings (top products / top stores).
 type AnalyticsService struct {
 	store    AnalyticsStore
 	settings *SettingsService
@@ -61,6 +64,8 @@ const (
 	topSeriesCount      = 8    // staples shown in the personal price index
 	sunburstFoldShare   = 0.02 // slices under 2% of the total fold into "Other"
 	sunburstMaxSegments = 12
+	defaultTopRows      = 10 // ranked rows a consumption card shows by default
+	maxTopRows          = 50 // hard cap so a ?limit= can't blow up the payload
 )
 
 // baseCurrencyAndConverter is the shared preamble of every analytics method:
@@ -642,6 +647,155 @@ func (s *AnalyticsService) SpendHeatmap(ctx context.Context, from, to string) (d
 		}
 		out.Rows = append(out.Rows, row)
 	}
+	out.ConversionWarnings = conv.warnings()
+	return out, nil
+}
+
+// --- Consumption Analysis: Top Products & Store Loyalty ----------------------
+
+// clampTopRows applies the shared ?limit= contract: 0 or negative falls back
+// to the default, anything above the cap is clamped.
+func clampTopRows(limit int) int {
+	if limit <= 0 {
+		return defaultTopRows
+	}
+	if limit > maxTopRows {
+		return maxTopRows
+	}
+	return limit
+}
+
+// validateTopRange is the shared from/to preamble of the two consumption
+// methods (same contract as the charts, minus the chart-specific defaulting).
+func validateTopRange(from, to string) error {
+	if err := validateDate(from, "from"); err != nil {
+		return err
+	}
+	if err := validateDate(to, "to"); err != nil {
+		return err
+	}
+	if to < from {
+		return validationError("to %q must not be before from %q", to, from)
+	}
+	return nil
+}
+
+// TopProducts ranks the products bought in the range by converted spend.
+// Quantity is the raw line-quantity sum; the average price is spend ÷
+// quantity (per piece) reported for convenience. TotalSpendCents covers every
+// qualifying product, so the card can show the ranked rows' share of the
+// period's product spend even after the ?limit= cut.
+func (s *AnalyticsService) TopProducts(ctx context.Context, from, to string, limit int) (domain.TopProducts, error) {
+	out := domain.TopProducts{From: from, To: to, Rows: []domain.TopProductRow{}}
+	if err := validateTopRange(from, to); err != nil {
+		return out, err
+	}
+	base, conv, err := s.baseCurrencyAndConverter(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Currency = base
+
+	rows, err := s.store.TopProducts(ctx, from, to)
+	if err != nil {
+		return out, err
+	}
+
+	type prodAgg struct {
+		name     string
+		quantity float64
+		cents    int64
+	}
+	byProduct := map[int64]*prodAgg{}
+	var grand int64
+	for _, r := range rows {
+		cents := conv.add(r.Currency, r.TotalCents)
+		agg := byProduct[r.ProductID]
+		if agg == nil {
+			agg = &prodAgg{name: r.Name}
+			byProduct[r.ProductID] = agg
+		}
+		agg.quantity += r.Quantity
+		agg.cents += cents
+		grand += cents
+	}
+	out.TotalSpendCents = grand
+
+	ranked := make([]domain.TopProductRow, 0, len(byProduct))
+	for id, agg := range byProduct {
+		row := domain.TopProductRow{ProductID: id, Name: agg.name, Quantity: agg.quantity, TotalCents: agg.cents}
+		if agg.quantity > 0 {
+			row.AvgPriceCents = int64(float64(agg.cents)/agg.quantity + 0.5)
+		}
+		ranked = append(ranked, row)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].TotalCents != ranked[j].TotalCents {
+			return ranked[i].TotalCents > ranked[j].TotalCents
+		}
+		return ranked[i].Name < ranked[j].Name
+	})
+	if cut := clampTopRows(limit); len(ranked) > cut {
+		ranked = ranked[:cut]
+	}
+	out.Rows = ranked
+	out.ConversionWarnings = conv.warnings()
+	return out, nil
+}
+
+// TopStores ranks the stores shopped in the range by converted spend, pairing
+// each store's spend with its visit count (distinct accepted bills + manual
+// expense transactions naming the store).
+func (s *AnalyticsService) TopStores(ctx context.Context, from, to string, limit int) (domain.TopStores, error) {
+	out := domain.TopStores{From: from, To: to, Rows: []domain.TopStoreRow{}}
+	if err := validateTopRange(from, to); err != nil {
+		return out, err
+	}
+	base, conv, err := s.baseCurrencyAndConverter(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Currency = base
+
+	rows, err := s.store.TopStores(ctx, from, to)
+	if err != nil {
+		return out, err
+	}
+
+	type storeAgg struct {
+		name   string
+		visits int64
+		cents  int64
+	}
+	byStore := map[int64]*storeAgg{}
+	var grand int64
+	for _, r := range rows {
+		cents := conv.add(r.Currency, r.TotalCents)
+		agg := byStore[r.StoreID]
+		if agg == nil {
+			agg = &storeAgg{name: r.Name}
+			byStore[r.StoreID] = agg
+		}
+		agg.visits += r.VisitCount
+		agg.cents += cents
+		grand += cents
+	}
+	out.TotalSpendCents = grand
+
+	ranked := make([]domain.TopStoreRow, 0, len(byStore))
+	for id, agg := range byStore {
+		ranked = append(ranked, domain.TopStoreRow{StoreID: id, Name: agg.name, VisitCount: agg.visits, TotalCents: agg.cents})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].TotalCents != ranked[j].TotalCents {
+			return ranked[i].TotalCents > ranked[j].TotalCents
+		}
+		return ranked[i].Name < ranked[j].Name
+	})
+	if cut := clampTopRows(limit); len(ranked) > cut {
+		ranked = ranked[:cut]
+	}
+	out.Rows = ranked
 	out.ConversionWarnings = conv.warnings()
 	return out, nil
 }

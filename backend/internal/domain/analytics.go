@@ -184,6 +184,72 @@ type SpendHeatmap struct {
 	ConversionWarnings []string     `json:"conversion_warnings"`
 }
 
+// --- Consumption Analysis: Top Products & Store Loyalty ----------------------
+
+// ProductSpendRow is a repository-facing intermediate row: one product's
+// summed quantity and spend in its native currency, aggregated over accepted
+// non-return bill lines plus manual-transaction item lines. Conversion into
+// the base currency happens in the service.
+type ProductSpendRow struct {
+	ProductID  int64
+	Name       string
+	Currency   string
+	Quantity   float64
+	TotalCents int64
+}
+
+// TopProductRow is one ranked product of the top-products response. Quantity
+// is the line-quantity sum; AvgPriceCents is spend ÷ quantity per piece
+// (meaningless when Quantity is 0 — then it is 0).
+type TopProductRow struct {
+	ProductID     int64   `json:"product_id"`
+	Name          string  `json:"name"`
+	Quantity      float64 `json:"quantity"`
+	TotalCents    int64   `json:"total_cents"`
+	AvgPriceCents int64   `json:"avg_price_cents"`
+}
+
+// TopProducts ranks the products the user bought in the range by converted
+// spend (quantity and totals reported alongside).
+type TopProducts struct {
+	From               string          `json:"from"`
+	To                 string          `json:"to"`
+	Currency           string          `json:"currency"`
+	TotalSpendCents    int64           `json:"total_spend_cents"` // all qualifying products, not just the ranked rows
+	Rows               []TopProductRow `json:"rows"`              // biggest spend first
+	ConversionWarnings []string        `json:"conversion_warnings"`
+}
+
+// StoreSpendRow is a repository-facing intermediate row: one store's visit
+// count and spend in its native currency, aggregated over accepted bills and
+// manual expense transactions that name the store.
+type StoreSpendRow struct {
+	StoreID    int64
+	Name       string
+	Currency   string
+	VisitCount int64
+	TotalCents int64
+}
+
+// TopStoreRow is one ranked store of the store-loyalty response.
+type TopStoreRow struct {
+	StoreID    int64  `json:"store_id"`
+	Name       string `json:"name"`
+	VisitCount int64  `json:"visit_count"`
+	TotalCents int64  `json:"total_cents"`
+}
+
+// TopStores ranks the stores the user shopped in the range by converted spend.
+// Visits are the distinct bills + manual expense transactions per store.
+type TopStores struct {
+	From               string        `json:"from"`
+	To                 string        `json:"to"`
+	Currency           string        `json:"currency"`
+	TotalSpendCents    int64         `json:"total_spend_cents"` // all qualifying stores, not just the ranked rows
+	Rows               []TopStoreRow `json:"rows"`              // biggest spend first
+	ConversionWarnings []string      `json:"conversion_warnings"`
+}
+
 // --- Chart 6: Fixed vs. Discretionary Cash Flow Split ------------------------
 
 type FixedSplitMonth struct {

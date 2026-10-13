@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"home-finance-planner/backend/internal/service"
 )
 
-// AnalyticsHandler serves the six dashboard chart payloads.
+// AnalyticsHandler serves the dashboard chart payloads and the consumption
+// rankings (top products, top stores).
 type AnalyticsHandler struct{ Svc *service.AnalyticsService }
 
 // StorePriceIndex serves GET /api/v1/analytics/store-price-index?from&to.
@@ -87,6 +89,57 @@ func (h *AnalyticsHandler) FixedSplit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, r, http.StatusOK, out)
+}
+
+// TopProducts serves GET /api/v1/analytics/top-products?from&to&limit.
+func (h *AnalyticsHandler) TopProducts(w http.ResponseWriter, r *http.Request) {
+	from, to, ok := rangeParams(w, r)
+	if !ok {
+		return
+	}
+	limit, ok := limitParam(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.Svc.TopProducts(r.Context(), from, to, limit)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, out)
+}
+
+// TopStores serves GET /api/v1/analytics/top-stores?from&to&limit.
+func (h *AnalyticsHandler) TopStores(w http.ResponseWriter, r *http.Request) {
+	from, to, ok := rangeParams(w, r)
+	if !ok {
+		return
+	}
+	limit, ok := limitParam(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.Svc.TopStores(r.Context(), from, to, limit)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, out)
+}
+
+// limitParam decodes the shared ?limit= query param (0 = service default),
+// responding 400 itself when the value is not a non-negative integer.
+func limitParam(w http.ResponseWriter, r *http.Request) (limit int, ok bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		respondError(w, r, http.StatusBadRequest, "limit must be a non-negative integer")
+		return 0, false
+	}
+	return n, true
 }
 
 // rangeParams decodes the shared from/to query params, responding 400 itself

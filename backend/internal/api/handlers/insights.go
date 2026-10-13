@@ -12,7 +12,8 @@ import (
 type InsightHandler struct{ Svc *service.InsightService }
 
 // List returns saved insights (newest first). ?unseen=true limits to the
-// unread rows the dashboard shows; ?limit= caps the page.
+// unread rows the dashboard shows; ?limit= caps the page; ?kind= narrows to
+// one trigger (e.g. the price-creep warning list) — unknown kinds are 400.
 func (h *InsightHandler) List(w http.ResponseWriter, r *http.Request) {
 	unseen := r.URL.Query().Get("unseen") == "true"
 	limit := 0
@@ -24,7 +25,7 @@ func (h *InsightHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	insights, err := h.Svc.List(r.Context(), unseen, limit)
+	insights, err := h.Svc.List(r.Context(), unseen, limit, r.URL.Query().Get("kind"))
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

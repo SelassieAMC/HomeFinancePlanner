@@ -905,6 +905,15 @@ textarea:focus,
   padding-top: 0.1rem;
 }
 
+/* Rank number of a consumption card's ranked list (top products, stores). */
+.toplist-rank {
+  min-width: 1.4rem;
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 0.1rem;
+}
+
 @media (max-width: 640px) {
   .insight-row {
     flex-wrap: wrap;

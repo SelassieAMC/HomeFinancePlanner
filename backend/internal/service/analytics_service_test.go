@@ -17,6 +17,8 @@ type fakeAnalyticsStore struct {
 	heatmap       []domain.SectionDayRow
 	monthFixed    []domain.MonthFixedRow
 	openBudgets   int64
+	products      []domain.ProductSpendRow
+	storeSpend    []domain.StoreSpendRow
 
 	gotMonths []string
 }
@@ -40,6 +42,12 @@ func (f *fakeAnalyticsStore) SpendByMonthAndFixed(_ context.Context, months []st
 }
 func (f *fakeAnalyticsStore) OpenBudgetTotal(_ context.Context) (int64, error) {
 	return f.openBudgets, nil
+}
+func (f *fakeAnalyticsStore) TopProducts(_ context.Context, _, _ string) ([]domain.ProductSpendRow, error) {
+	return f.products, nil
+}
+func (f *fakeAnalyticsStore) TopStores(_ context.Context, _, _ string) ([]domain.StoreSpendRow, error) {
+	return f.storeSpend, nil
 }
 
 // fakeStoreNames lists stores for index name resolution.
@@ -421,4 +429,102 @@ func TestMonthHelpers(t *testing.T) {
 		t.Fatalf("monthRangeList = %v", got)
 	}
 	_ = time.Now // keep the time import anchored if helpers change
+}
+
+// --- Consumption Analysis: top products & store loyalty ----------------------
+
+// TestTopProductsRankConvertLimit mixes currencies (USD 330 @ EUR 1.1 → 300)
+// and exercises the ?limit= contract: ranked by spend, the total still counts
+// every qualifying product, and the average price is spend ÷ quantity.
+func TestTopProductsRankConvertLimit(t *testing.T) {
+	store := &fakeAnalyticsStore{products: []domain.ProductSpendRow{
+		{ProductID: 2, Name: "Yoghurt", Currency: "USD", Quantity: 3, TotalCents: 330},
+		{ProductID: 1, Name: "Milk", Currency: "EUR", Quantity: 2, TotalCents: 500},
+	}}
+	svc, _ := newTestAnalyticsService(store, domain.RateSnapshot{Pivot: "EUR", Rates: map[string]float64{"USD": 1.1}}, nil)
+
+	out, err := svc.TopProducts(context.Background(), "2026-08-01", "2026-08-31", 0)
+	if err != nil {
+		t.Fatalf("TopProducts: %v", err)
+	}
+	if out.Currency != "EUR" || out.TotalSpendCents != 800 {
+		t.Fatalf("currency=%s total=%d; want EUR, 800", out.Currency, out.TotalSpendCents)
+	}
+	if len(out.Rows) != 2 || out.Rows[0].Name != "Milk" || out.Rows[1].Name != "Yoghurt" {
+		t.Fatalf("ranked rows: %+v", out.Rows)
+	}
+	if out.Rows[0].TotalCents != 500 || out.Rows[0].Quantity != 2 || out.Rows[0].AvgPriceCents != 250 {
+		t.Fatalf("milk row: %+v", out.Rows[0])
+	}
+	if out.Rows[1].TotalCents != 300 || out.Rows[1].AvgPriceCents != 100 {
+		t.Fatalf("yoghurt row (converted): %+v", out.Rows[1])
+	}
+	// ?limit=1 cuts the ranked list but leaves the grand total intact.
+	limited, err := svc.TopProducts(context.Background(), "2026-08-01", "2026-08-31", 1)
+	if err != nil {
+		t.Fatalf("TopProducts limit: %v", err)
+	}
+	if len(limited.Rows) != 1 || limited.TotalSpendCents != 800 {
+		t.Fatalf("limited: rows=%d total=%d; want 1, 800", len(limited.Rows), limited.TotalSpendCents)
+	}
+}
+
+// TestTopProductsZeroQuantityDropsAvgPrice guards the divide-by-zero on
+// quantity-less aggregate rows.
+func TestTopProductsZeroQuantityDropsAvgPrice(t *testing.T) {
+	store := &fakeAnalyticsStore{products: []domain.ProductSpendRow{
+		{ProductID: 1, Name: "Deposit bucket", Currency: "EUR", Quantity: 0, TotalCents: 300},
+	}}
+	svc, _ := newTestAnalyticsService(store, domain.RateSnapshot{}, nil)
+
+	out, err := svc.TopProducts(context.Background(), "2026-08-01", "2026-08-31", 0)
+	if err != nil {
+		t.Fatalf("TopProducts: %v", err)
+	}
+	if out.Rows[0].AvgPriceCents != 0 || out.Rows[0].TotalCents != 300 {
+		t.Fatalf("row: %+v", out.Rows[0])
+	}
+}
+
+// TestTopStoresAggregatesAndRanks unions the fake's row sources (as the
+// repository does), converts across currencies, ranks by spend and counts
+// visits once per store.
+func TestTopStoresAggregatesAndRanks(t *testing.T) {
+	store := &fakeAnalyticsStore{storeSpend: []domain.StoreSpendRow{
+		{StoreID: 2, Name: "Lidl", Currency: "USD", VisitCount: 1, TotalCents: 440},
+		{StoreID: 1, Name: "Rewe", Currency: "EUR", VisitCount: 3, TotalCents: 420},
+	}}
+	svc, _ := newTestAnalyticsService(store, domain.RateSnapshot{Pivot: "EUR", Rates: map[string]float64{"USD": 1.1}}, nil)
+
+	out, err := svc.TopStores(context.Background(), "2026-08-01", "2026-08-31", 0)
+	if err != nil {
+		t.Fatalf("TopStores: %v", err)
+	}
+	if out.TotalSpendCents != 820 {
+		t.Fatalf("total = %d; want 820 (440 USD → 400 EUR)", out.TotalSpendCents)
+	}
+	if len(out.Rows) != 2 || out.Rows[0].Name != "Rewe" || out.Rows[1].Name != "Lidl" {
+		t.Fatalf("ranked rows: %+v", out.Rows)
+	}
+	if out.Rows[0].VisitCount != 3 || out.Rows[0].TotalCents != 420 {
+		t.Fatalf("rewe row: %+v", out.Rows[0])
+	}
+	if out.Rows[1].VisitCount != 1 || out.Rows[1].TotalCents != 400 {
+		t.Fatalf("lidl row (converted): %+v", out.Rows[1])
+	}
+}
+
+// TestTopConsumptionValidation pins the shared from/to contract.
+func TestTopConsumptionValidation(t *testing.T) {
+	svc, _ := newTestAnalyticsService(&fakeAnalyticsStore{}, domain.RateSnapshot{}, nil)
+	ctx := context.Background()
+	if _, err := svc.TopProducts(ctx, "2026-08-01", "2026-07-01", 0); err == nil {
+		t.Fatal("TopProducts: expected inverted range error")
+	}
+	if _, err := svc.TopProducts(ctx, "not-a-date", "2026-08-31", 0); err == nil {
+		t.Fatal("TopProducts: expected invalid from error")
+	}
+	if _, err := svc.TopStores(ctx, "2026-08-01", "", 0); err == nil {
+		t.Fatal("TopStores: expected missing to error")
+	}
 }

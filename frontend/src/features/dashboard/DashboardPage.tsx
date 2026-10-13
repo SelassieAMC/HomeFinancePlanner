@@ -13,8 +13,11 @@ import { PersonalPriceIndexChart } from './charts/PersonalPriceIndexChart';
 import { SpendSunburst } from './charts/SpendSunburst';
 import { SpendHeatmapChart } from './charts/SpendHeatmap';
 import { InsightsCard } from './InsightsCard';
+import { PriceCreepCard } from './PriceCreepCard';
 import { AtAGlanceRow } from './AtAGlanceRow';
 import { BudgetProgressCard } from './BudgetProgressCard';
+import { TopProductsCard } from './TopProductsCard';
+import { StoreLoyaltyCard } from './StoreLoyaltyCard';
 
 export function DashboardPage() {
   const [type, setType] = useState<PeriodType>('month');
@@ -43,12 +46,15 @@ export function DashboardPage() {
   const storeIndex = useAsync(() => analyticsApi.storePriceIndex(period.start, period.end), [period.start, period.end]);
   const sunburst = useAsync(() => analyticsApi.categorySunburst(period.start, period.end), [period.start, period.end]);
   const heatmap = useAsync(() => analyticsApi.spendHeatmap(period.start, period.end), [period.start, period.end]);
+  // Step-3 consumption analysis: period-scoped product/store rankings.
+  const topProducts = useAsync(() => analyticsApi.topProducts(period.start, period.end), [period.start, period.end]);
+  const topStores = useAsync(() => analyticsApi.topStores(period.start, period.end), [period.start, period.end]);
 
   // Currencies with no exchange rate are shown 1:1 — surface that once for
   // every chart that hit it.
   const warnings = [
     ...new Set(
-      [glance.data, monthSummary.data, runRate.data, fixedSplit.data, priceIndex.data, storeIndex.data, sunburst.data, heatmap.data].flatMap(
+      [glance.data, monthSummary.data, runRate.data, fixedSplit.data, priceIndex.data, storeIndex.data, sunburst.data, heatmap.data, topProducts.data, topStores.data].flatMap(
         (d) => d?.conversion_warnings ?? [],
       ),
     ),
@@ -100,6 +106,10 @@ export function DashboardPage() {
           wrote after recent purchases. Hidden entirely when none are unread. */}
       <InsightsCard />
 
+      {/* Step-3 price-creep tracker: unread creep warnings, latest per product.
+          Hidden entirely when nothing qualifies. */}
+      <PriceCreepCard />
+
       <div className="stat-grid">
         <Card className="stat-tile">
           <span className="stat-label">Month-to-Date</span>
@@ -133,6 +143,12 @@ export function DashboardPage() {
         <SpendSunburst data={sunburst.data} loading={sunburst.loading} error={sunburst.error} />
         <StorePriceIndexChart data={storeIndex.data} loading={storeIndex.loading} error={storeIndex.error} />
         <PersonalPriceIndexChart data={priceIndex.data} loading={priceIndex.loading} error={priceIndex.error} />
+      </div>
+
+      {/* Step-3 consumption section: what was bought, where it was bought. */}
+      <div className="chart-grid-2">
+        <TopProductsCard data={topProducts.data} loading={topProducts.loading} error={topProducts.error} />
+        <StoreLoyaltyCard data={topStores.data} loading={topStores.loading} error={topStores.error} />
       </div>
     </div>
   );

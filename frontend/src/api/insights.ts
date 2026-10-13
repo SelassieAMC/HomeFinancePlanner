@@ -1,14 +1,16 @@
 import { apiClient } from './client';
-import type { ProductInsight } from '../types/domain';
+import type { ProductInsight, ProductInsightKind } from '../types/domain';
 
 const BASE = '/api/v1/insights';
 
 export const insightsApi = {
-  /** Saved insights, newest first. unseen=true is the dashboard's unread list. */
-  list: (opts?: { unseen?: boolean; limit?: number }) => {
+  /** Saved insights, newest first. unseen=true is the dashboard's unread list;
+   *  kind narrows to one trigger (e.g. 'price_creep' for the warning list). */
+  list: (opts?: { unseen?: boolean; limit?: number; kind?: ProductInsightKind }) => {
     const params = new URLSearchParams();
     if (opts?.unseen) params.set('unseen', 'true');
     if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+    if (opts?.kind) params.set('kind', opts.kind);
     const qs = params.toString();
     return apiClient.get<ProductInsight[]>(qs ? `${BASE}?${qs}` : BASE);
   },
