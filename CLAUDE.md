@@ -120,6 +120,7 @@ All configuration is env-driven (`internal/config`):
 | `BILLS_PATH` | `./data/bills` | uploaded receipt image storage |
 | `STORES_PATH` | `./data/stores` | uploaded store logo storage |
 | `PRODUCTS_PATH` | `./data/products` | uploaded product photo storage |
+| `AVATARS_PATH` | `./data/avatars` | user avatar storage (auth) |
 | `CORS_ALLOWED_ORIGINS` | *(empty)* | comma-separated; empty = same-origin only |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `LOG_FILE` | `./data/server.log` | log append target (records also go to stdout); `none` = stdout only |
@@ -544,4 +545,30 @@ deletes with its runs cascading. `BagService.Delete` refuses while a
 non-archived virtual-kind schedule targets the bag
 (`ActiveActionsTargetingBag`). The service takes `today` from the handler
 (server-clock, like `Glance`) and tests live in
-`internal/service/scheduled_action_service_test.go`.
+`internal/service/scheduled_action_service_test.go`. **Multi-user login**
+(migration 0038, `users` + `sessions`) is a thin identity layer over the still
+shared household dataset — one planner, not one per person. Boot seeds an
+initial **admin** (`admin`/`admin`, `UserService.EnsureSeedAdmin` only on an
+empty users table, hash computed at runtime, Warn log reminding to change the
+password). Login is a **dropdown, not a username field** (`GET
+/api/v1/auth/login-users`, pre-login-safe DTO without roles) + password →
+`POST /api/v1/auth/login`; bcrypt hashes; DB-backed sessions hold a random
+32-byte hex token served as HttpOnly `SameSite=Lax` cookie `hfp_session` —
+unchecked "keep me logged in" is a browser-session cookie with a 12h server
+TTL, checked is a 30d persistent cookie with a 30d session. `middleware.Auth`
+guards every `/api` route (public allowlist: login-users, login, health;
+non-API paths pass through), resolves the user per request (session lookup
+JOINs users, so role/name changes take effect immediately) and clears an
+expired cookie with a 401; the frontend's global 401 hook
+(`onUnauthorized` in `api/client.ts`) flips `AuthContext` to logged-out and
+`AppLayout` redirects to `/login`. `respondServiceError` maps
+`ErrCredentials`/`ErrUnauthorized`→401, `ErrForbidden`→403. Own-account
+endpoints under `/api/v1/me` (full name, password change — verify current +
+min 4 chars + revokes every *other* session of that user, photo up to 10 MB
+normalized by `imageproc` to a 256 px JPEG under `AVATARS_PATH`, replacing the
+old file on disk). Admin-only `GET|POST /api/v1/users` (create family members
+that appear in the login dropdown immediately) and `GET /api/v1/users/{id}/photo`
+(serves any avatar to any logged-in user); `requireAdmin` → 403. There is no
+user edit/delete endpoint yet and no per-user data isolation — every account,
+bill, budget is visible to everyone. `/riverui` remains unauthenticated by
+design (LAN-host posture, same as before multi-user).

@@ -43,6 +43,13 @@ func respondServiceError(w http.ResponseWriter, r *http.Request, err error) {
 		respondError(w, r, http.StatusBadRequest, err.Error())
 	case errors.Is(err, domain.ErrConflict):
 		respondError(w, r, http.StatusConflict, err.Error())
+	case errors.Is(err, domain.ErrCredentials):
+		// Deliberately generic — wrong password and unknown user look alike.
+		respondError(w, r, http.StatusUnauthorized, "invalid user or password")
+	case errors.Is(err, domain.ErrUnauthorized):
+		respondError(w, r, http.StatusUnauthorized, err.Error())
+	case errors.Is(err, domain.ErrForbidden):
+		respondError(w, r, http.StatusForbidden, err.Error())
 	default:
 		middleware.LoggerFromContext(r.Context()).
 			Error("internal error", "error", err)

@@ -42,9 +42,33 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	goalH := &handlers.GoalHandler{Svc: svc.Goals}
 	bagH := &handlers.BagHandler{Svc: svc.Bags}
 	scheduleH := &handlers.ScheduleHandler{Svc: svc.Schedules}
+	authH := &handlers.AuthHandler{Svc: svc.Users}
+	meH := &handlers.MeHandler{Svc: svc.Users}
+	adminUserH := &handlers.AdminUserHandler{Svc: svc.Users}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
+
+	// Auth: the login page (public — the user dropdown plus the login
+	// attempt) and the session lifecycle. Everything else under /api sits
+	// behind middleware.Auth below.
+	mux.HandleFunc("GET  /api/v1/auth/login-users", authH.LoginUsers)
+	mux.HandleFunc("POST /api/v1/auth/login", authH.Login)
+	mux.HandleFunc("POST /api/v1/auth/logout", authH.Logout)
+	mux.HandleFunc("GET  /api/v1/auth/me", authH.Me)
+
+	// Own-account profile (settings page): display name, password, avatar.
+	mux.HandleFunc("PUT    /api/v1/me", meH.Update)
+	mux.HandleFunc("PUT    /api/v1/me/password", meH.ChangePassword)
+	mux.HandleFunc("POST   /api/v1/me/photo", meH.UploadPhoto)
+	mux.HandleFunc("GET    /api/v1/me/photo", meH.Photo)
+	mux.HandleFunc("DELETE /api/v1/me/photo", meH.RemovePhoto)
+
+	// Admin user management: /users/{id}/photo is a 4-segment literal-free
+	// route next to nothing — /api/v1/users has no other {id} wildcards.
+	mux.HandleFunc("GET  /api/v1/users", adminUserH.List)
+	mux.HandleFunc("POST /api/v1/users", adminUserH.Create)
+	mux.HandleFunc("GET  /api/v1/users/{id}/photo", adminUserH.Photo)
 
 	mux.HandleFunc("GET /api/v1/accounts", accountH.List)
 	mux.HandleFunc("POST /api/v1/accounts", accountH.Create)
@@ -199,12 +223,16 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("GET /api/v1/settings/currency", settingsH.GetBaseCurrency)
 	mux.HandleFunc("PUT /api/v1/settings/currency", settingsH.SaveBaseCurrency)
 
-	// Middleware chain, outermost first.
+	// Middleware chain, outermost first. Auth sits inside CORS (preflight
+	// answers never need a session) and around every route: /api requires a
+	// login cookie except the public login/health routes above; /riverui and
+	// anything outside /api pass through.
 	return middleware.RequestID(
 		middleware.Logger(log,
 			middleware.Recover(
 				middleware.AccessLog(
-					middleware.CORS(cfg.CORSAllowedOrigins, mux),
+					middleware.CORS(cfg.CORSAllowedOrigins,
+						middleware.Auth(svc.Users.Current, mux)),
 				),
 			),
 		),

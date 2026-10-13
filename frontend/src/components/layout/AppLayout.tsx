@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Spinner } from '../ui';
+import { useAuth } from '../../features/auth/AuthContext';
+import { UserAvatar } from './UserAvatar';
 
 // Mobile bottom tab bar: the three destinations that matter daily get tabs;
 // the rest live behind "More". The center button opens a speed dial with the
@@ -44,6 +47,7 @@ const ALL_ITEMS: (NavItem & { external?: true; href?: string })[] = [
 ];
 
 export function AppLayout() {
+  const { user, loading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -73,8 +77,15 @@ export function AppLayout() {
     !TAB_ITEMS.some((item) => item.to === location.pathname) &&
     MORE_ITEMS.some((item) => location.pathname.startsWith(item.to));
 
+  // The session check gates the shell: no user means the login page, and a
+  // mid-session sign-out (any 401) lands here on the next render.
+  if (loading) return <div className="app-layout"><Spinner /></div>;
+  if (!user) return <Navigate to="/login" replace />;
+
   return (
     <div className="app-layout">
+      {/* Top-right profile chip (fixed; visible on desktop and mobile). */}
+      <UserAvatar />
       {/* Desktop navigation — hidden behind the tab bar on mobile. */}
       <aside className="sidebar">
         <div className="sidebar-brand">Home Finance Planner</div>

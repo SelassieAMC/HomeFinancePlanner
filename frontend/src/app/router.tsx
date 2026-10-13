@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
+import { LoginPage } from '../features/auth/LoginPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { AccountsPage } from '../features/accounts/AccountsPage';
 import { TransactionsPage } from '../features/transactions/TransactionsPage';
@@ -13,6 +14,8 @@ import { SettingsPage } from '../features/settings/SettingsPage';
 import { PromptsPage } from '../features/prompts/PromptsPage';
 
 export const router = createBrowserRouter([
+  // The login gate lives outside the app shell (no sidebar, no avatar).
+  { path: '/login', element: <LoginPage /> },
   {
     path: '/',
     element: <AppLayout />,

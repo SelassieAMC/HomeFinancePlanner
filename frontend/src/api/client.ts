@@ -15,6 +15,16 @@ interface ErrorEnvelope {
   error: string;
 }
 
+// Signed-out hook: the auth context registers a callback that flips the
+// session state back to "logged out" when any API call returns 401 (expired
+// or revoked session, wrong login attempt).
+type UnauthorizedHandler = () => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+export function onUnauthorized(handler: UnauthorizedHandler | null) {
+  unauthorizedHandler = handler;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // JSON bodies declare their type; FormData bodies must not — the browser
   // sets multipart/form-data with the boundary itself.
@@ -31,6 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
+    if (res.status === 401) unauthorizedHandler?.();
     let message = `request failed with status ${res.status}`;
     try {
       const body = (await res.json()) as ErrorEnvelope;

@@ -11,6 +11,9 @@ import { productsApi } from '../../api/products';
 import type { AIProvider, AIProviderType, NormalizationJob } from '../../types/domain';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { Button, Card, Tabs, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
+import { useAuth } from '../auth/AuthContext';
+import { ProfileTab } from './ProfileTab';
+import { UsersTab } from './UsersTab';
 
 const providerTypes: { value: AIProviderType; label: string }[] = [
   { value: 'ollama', label: 'Ollama (local, no key)' },
@@ -70,12 +73,14 @@ function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
   };
 }
 
-// The page's three sections are independent settings domains; tabs keep each
-// one readable (currency/general, AI connector drafts, the normalization job).
-type SettingsTab = 'general' | 'connectors' | 'normalization';
+// The page's sections are independent settings domains; tabs keep each one
+// readable (own profile, currency/general, AI connector drafts, the
+// normalization job, and — admins only — the household user management).
+type SettingsTab = 'profile' | 'general' | 'connectors' | 'normalization' | 'users';
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<SettingsTab>('general');
+  const { user } = useAuth();
+  const [tab, setTab] = useState<SettingsTab>('profile');
   const saved = useAsync(() => settingsApi.listAIProviders(), []);
 
   // --- Display currency ------------------------------------------------------
@@ -254,13 +259,19 @@ export function SettingsPage() {
       <Tabs
         ariaLabel="Settings sections"
         tabs={[
+          { key: 'profile', label: 'Profile' },
           { key: 'general', label: 'General' },
           { key: 'connectors', label: 'AI connectors' },
           { key: 'normalization', label: 'Product normalization' },
+          ...(user?.is_admin ? [{ key: 'users' as const, label: 'Users' }] : []),
         ]}
         active={tab}
         onChange={setTab}
       />
+
+      {tab === 'profile' && <ProfileTab key="profile" />}
+
+      {tab === 'users' && <UsersTab key="users" />}
 
       {tab === 'general' && (
         <Card title="Display currency">

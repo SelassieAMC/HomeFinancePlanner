@@ -290,6 +290,7 @@ type Services struct {
 	Goals         *GoalService
 	Bags          *BagService
 	Schedules     *ScheduledActionService
+	Users         *UserService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -317,6 +318,7 @@ func New(
 	goals GoalStore,
 	bags BagStore,
 	schedules ScheduledActionStore,
+	users *UserService,
 ) *Services {
 	budgetSvc := &BudgetService{budgets: budgets, categories: categories}
 	bagSvc := &BagService{bags: bags, accounts: accounts, fx: fx, log: slog.Default()}
@@ -352,5 +354,6 @@ func New(
 		Goals:         &GoalService{goals: goals, accounts: accounts},
 		Bags:          bagSvc,
 		Schedules:     scheduleSvc,
+		Users:         users,
 	}
 }

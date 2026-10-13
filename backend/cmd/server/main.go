@@ -76,6 +76,8 @@ func run() error {
 	settingsRepo := repository.NewSettingsRepository(db)
 	productMappings := repository.NewProductNameMappingRepository(db)
 	insights := repository.NewInsightRepository(db)
+	userSessions := repository.NewSessionRepository(db)
+	userSvc := service.NewUserService(repository.NewUserRepository(db), userSessions, cfg.AvatarsPath)
 
 	box, err := newEncryptionBox(cfg, log)
 	if err != nil {
@@ -116,7 +118,11 @@ func run() error {
 		transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc,
 		promptSvc, service.NewInsightService(insights),
 		repository.NewGoalRepository(db), repository.NewBagRepository(db),
-		repository.NewScheduledActionRepository(db))
+		repository.NewScheduledActionRepository(db), userSvc)
+
+	// The one-time admin seed: the first boot on an empty users table creates
+	// admin/admin (a boot warning names it — change the password afterwards).
+	userSvc.EnsureSeedAdmin(ctx)
 
 	if jobsMgr != nil {
 		if err := jobsMgr.Start(ctx); err != nil {

@@ -878,3 +878,34 @@ export interface ScheduleRunView {
   kind: ScheduleKind;
   schedule: SchedulePayload;
 }
+
+// --- Users & sessions -------------------------------------------------------
+// One shared household dataset: a user is login identity + header avatar,
+// not a data owner (backend/internal/domain/user.go).
+
+/** The authenticated user (GET /api/v1/auth/me and login response). */
+export interface User {
+  id: number;
+  username: string;
+  full_name: string;
+  has_photo: boolean;
+  is_admin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A public identity in the login dropdown (no roles, no password fields). */
+export interface LoginUser {
+  id: number;
+  username: string;
+  full_name: string;
+  has_photo: boolean;
+}
+
+/** Admin user list row (full User shape). */
+export interface UserInput {
+  username: string;
+  full_name: string;
+  password: string;
+  is_admin?: boolean;
+}

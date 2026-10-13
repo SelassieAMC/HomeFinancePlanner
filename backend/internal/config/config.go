@@ -20,6 +20,7 @@ type Config struct {
 	BillsPath           string     // directory for uploaded receipt images
 	StoresPath          string     // directory for uploaded store logos
 	ProductsPath        string     // directory for uploaded product photos
+	AvatarsPath         string     // directory for user profile photos
 	CORSAllowedOrigins  []string   // allowed CORS origins (empty = same-origin only)
 	LogLevel            slog.Level // debug | info | warn | error
 	LogFile             string     // append target for logs; "none" = stdout only
@@ -100,6 +101,7 @@ func Load() (Config, error) {
 		BillsPath:           envString("BILLS_PATH", "./data/bills"),
 		StoresPath:          envString("STORES_PATH", "./data/stores"),
 		ProductsPath:        envString("PRODUCTS_PATH", "./data/products"),
+		AvatarsPath:         envString("AVATARS_PATH", "./data/avatars"),
 		CORSAllowedOrigins:  envList("CORS_ALLOWED_ORIGINS", ""),
 		LogLevel:            logLevel,
 		LogFile:             envString("LOG_FILE", "./data/server.log"),

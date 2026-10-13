@@ -2919,3 +2919,284 @@ textarea:focus,
 .planning-pane .empty-state:first-child {
   margin-top: 0.25rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Auth & users: login screen, top-right avatar chip, profile/user admin tabs.
+   --------------------------------------------------------------------------- */
+.login-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(1200px 500px at 50% -10%,
+      color-mix(in srgb, var(--accent) 9%, var(--bg)) 0%, var(--bg) 60%);
+}
+
+.login-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 0.85rem;
+  padding: 1.5rem 1.6rem;
+}
+
+.login-title {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+
+.login-subtitle {
+  margin: -0.4rem 0 0.1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Labels inside the login card keep the form-grid label look (grid helper,
+   muted caption above the control) rather than the form-row inline look. */
+.login-card > label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.login-card > label input,
+.login-card > label select {
+  font-weight: 400;
+  color: var(--text);
+}
+
+.login-keep {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text) !important;
+  font-weight: 400 !important;
+  cursor: pointer;
+}
+
+.login-error {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--negative) 12%, var(--surface));
+  color: var(--negative);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.login-submit {
+  width: 100%;
+}
+
+/* Top-right profile chip. Fixed so it hugs the viewport corner over the page
+   content on both layouts; mobile pulls it inside the safe area. */
+.user-avatar-slot {
+  position: fixed;
+  top: 1rem;
+  right: 2rem;
+  z-index: 80;
+}
+
+.user-avatar-btn,
+.user-avatar-img {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+}
+
+.user-avatar-btn {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .user-avatar-btn:hover {
+    border-color: var(--border-strong);
+  }
+}
+
+.user-avatar-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.user-avatar-img,
+.user-menu-img,
+.user-row-photo {
+  object-fit: cover;
+}
+
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  padding: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+}
+
+.user-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0.25rem;
+}
+
+.user-menu-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+}
+
+.user-menu-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.user-menu-role {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.user-menu button {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .user-menu button:hover {
+    background: var(--bg-raised);
+  }
+}
+
+/* Settings: profile + admin users sections. */
+.profile-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.profile-photo {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--hairline);
+}
+
+.profile-photo-empty {
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.profile-pw-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.profile-pw-form label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.profile-pw-form label input {
+  font-weight: 400;
+  color: var(--text);
+}
+
+.profile-pw-form label.default-radio,
+.profile-pw-form label.login-keep {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.form-error-inline {
+  color: var(--negative);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.user-row-photo {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+}
+
+.user-photo-empty {
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* The avatar floats over the page content — give headings room. */
+.page-title {
+  padding-right: 3rem;
+}
+
+@media (max-width: 768px) {
+  .user-avatar-slot {
+    top: 0.65rem;
+    right: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  .page-title {
+    padding-right: 2.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .user-avatar-btn,
+  .user-avatar-img,
+  .user-avatar-initials {
+    width: 32px;
+    height: 32px;
+  }
+}
