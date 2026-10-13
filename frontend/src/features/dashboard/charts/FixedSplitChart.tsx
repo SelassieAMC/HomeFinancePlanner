@@ -88,7 +88,7 @@ export function FixedSplitChart({ data, loading, error }: Props) {
               stackId="1"
               stroke="var(--surface)"
               strokeWidth={2}
-              fill="var(--gold)"
+              fill="var(--accent)"
               isAnimationActive={false}
             />
           </AreaChart>
@@ -96,7 +96,7 @@ export function FixedSplitChart({ data, loading, error }: Props) {
       </div>
       <div className="chart-legend">
         <span><span className="chart-legend-swatch" style={{ background: 'var(--violet)' }} />Fixed</span>
-        <span><span className="chart-legend-swatch" style={{ background: 'var(--gold)' }} />Discretionary</span>
+        <span><span className="chart-legend-swatch" style={{ background: 'var(--accent)' }} />Discretionary</span>
         {latestPct !== null && <span>{latestPct}% fixed this month</span>}
         {data !== null && data.unclassified_cents > 0 && (
           <span>

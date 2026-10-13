@@ -119,10 +119,10 @@ export function buildConfirmInput(
   };
 }
 
-/** Emoji for an item's category; a generic cart when unclassified. */
+/** Emoji for an item's category; blank when unclassified. */
 function itemIcon(categoryId: number | null | undefined, categories: Category[]): string {
   const cat = categoryId ? categories.find((c) => c.id === categoryId) : undefined;
-  return cat?.icon || '🛒';
+  return cat?.icon ?? '';
 }
 
 /**
@@ -489,7 +489,7 @@ export function BillDraftEditor({
     <div className="bill-draft">
       <div className="stat-cards">
         <div className="stat-card stat-market">
-          <span className="stat-card-label">🏪 Market</span>
+          <span className="stat-card-label">Market</span>
           {stores.length === 0 && !customMarket ? (
             // No stores loaded yet — keep the plain input behavior.
             <input
@@ -552,7 +552,7 @@ export function BillDraftEditor({
           )}
         </div>
         <div className="stat-card stat-date">
-          <span className="stat-card-label">📅 Date</span>
+          <span className="stat-card-label">Date</span>
           <input
             type="date"
             className="stat-card-input"
@@ -564,14 +564,14 @@ export function BillDraftEditor({
         </div>
         {accounts && accountChoice !== null && (
         <div className="stat-card stat-account">
-          <span className="stat-card-label">💳 Account</span>
+          <span className="stat-card-label">Account</span>
           <select
             value={accountChoice}
             aria-label="Account to record the expense (wallet by default)"
             onChange={(e) => handleAccountChange(e.target.value)}
             disabled={isBusy}
           >
-            <option value="">👛 Wallet (default)</option>
+            <option value="">Wallet (default)</option>
             {!isSaved && draft.card_last_digits && (
               <option value="__new_card__">New card (•{draft.card_last_digits})</option>
             )}
@@ -590,7 +590,7 @@ export function BillDraftEditor({
         </div>
         )}
         <div className="stat-card stat-currency">
-          <span className="stat-card-label">💱 Currency</span>
+          <span className="stat-card-label">Currency</span>
           <select
             className="stat-card-input"
             value={currency}
@@ -611,13 +611,13 @@ export function BillDraftEditor({
           <span className="stat-card-sub">as printed on the receipt</span>
         </div>
         <div className="stat-card stat-savings">
-          <span className="stat-card-label">🏷️ Total savings</span>
+          <span className="stat-card-label">Total savings</span>
           <span className="stat-card-value">{formatCents(savings, currency)}</span>
           <span className="stat-card-sub">all discounts</span>
         </div>
         <div className="stat-card stat-total">
           <span className="stat-card-label">
-            🧾 Total{' '}
+            Total{' '}
             {mismatch && (
               <span
                 className="warn-icon"
@@ -633,7 +633,7 @@ export function BillDraftEditor({
           </span>
         </div>
         <div className="stat-card stat-budget">
-          <span className="stat-card-label">🎯 Budget</span>
+          <span className="stat-card-label">Budget</span>
           <select
             className="stat-card-input"
             value={draft.budget_id ?? ''}
@@ -694,18 +694,20 @@ export function BillDraftEditor({
               open={addedItemId === it.id ? true : undefined}
             >
               <summary>
-                <span
-                  className="item-icon"
-                  title={
-                    it.is_return
-                      ? 'Deposit return (money back)'
-                      : categories.find((c) => c.id === it.category_id)?.name ||
-                        it.category_name ||
-                        'Unclassified'
-                  }
-                >
-                  {it.is_return ? '♻️' : itemIcon(it.category_id, categories)}
-                </span>
+                {(it.is_return || itemIcon(it.category_id, categories)) && (
+                  <span
+                    className="item-icon"
+                    title={
+                      it.is_return
+                        ? 'Deposit return (money back)'
+                        : categories.find((c) => c.id === it.category_id)?.name ||
+                          it.category_name ||
+                          'Unclassified'
+                    }
+                  >
+                    {it.is_return ? '♻️' : itemIcon(it.category_id, categories)}
+                  </span>
+                )}
                 <span className="item-title">
                   <span className="item-name">{it.name || 'New article'}</span>
                   {it.is_return ? (

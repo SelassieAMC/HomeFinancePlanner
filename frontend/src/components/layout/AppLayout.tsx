@@ -3,37 +3,37 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 // Mobile bottom tab bar: the three destinations that matter daily get tabs;
 // the rest live behind "More". The center button opens a speed dial with the
-// two quick-entry actions. The desktop sidebar is unchanged.
+// two quick-entry actions. The desktop sidebar is unchanged — plain text
+// navigation, no icons.
 // External items are plain anchors outside the SPA router (the backend serves
 // them directly — e.g. the River job-queue UI), never NavLink routes.
-type NavItem = { to: string; label: string; icon: string; end?: boolean };
+type NavItem = { to: string; label: string; end?: boolean };
 
 const TAB_ITEMS: NavItem[] = [
-  { to: '/', label: 'Home', icon: '🏠', end: true },
-  { to: '/transactions', label: 'Activity', icon: '🧾' },
-  { to: '/budgets', label: 'Budgets', icon: '🎯' },
+  { to: '/', label: 'Home', end: true },
+  { to: '/transactions', label: 'Activity' },
+  { to: '/budgets', label: 'Budgets' },
 ];
 
 const MORE_ITEMS: (NavItem & { external?: true; href?: string })[] = [
-  { to: '/accounts', label: 'Accounts', icon: '🏦' },
-  { to: '/stores', label: 'Stores', icon: '🏪' },
-  { to: '/products', label: 'Products', icon: '📦' },
-  { to: '/cart', label: 'Purchase cart', icon: '🛒' },
-  { to: '/bills', label: 'Bills', icon: '🗂️' },
-  { to: '/scan', label: 'Scan bill', icon: '📷' },
-  { to: '/settings', label: 'Settings', icon: '⚙️' },
+  { to: '/accounts', label: 'Accounts' },
+  { to: '/stores', label: 'Stores' },
+  { to: '/products', label: 'Products' },
+  { to: '/cart', label: 'Purchase cart' },
+  { to: '/bills', label: 'Bills' },
+  { to: '/scan', label: 'Scan bill' },
+  { to: '/settings', label: 'Settings' },
   {
     to: '/riverui',
     label: 'Job queue',
-    icon: '🐇',
     external: true,
     href: '/riverui',
   },
 ];
 
 const FAB_ITEMS = [
-  { to: '/scan', label: 'Scan bill', icon: '📷' },
-  { to: '/transactions', label: 'Add transaction', icon: '➕' },
+  { to: '/scan', label: 'Scan bill' },
+  { to: '/transactions', label: 'Add transaction' },
 ];
 
 // Every destination in one list for the desktop sidebar; the union keeps
@@ -77,10 +77,7 @@ export function AppLayout() {
     <div className="app-layout">
       {/* Desktop navigation — hidden behind the tab bar on mobile. */}
       <aside className="sidebar">
-        <div className="sidebar-brand">
-          <span className="sidebar-logo" aria-hidden="true">💰</span>
-          <span>Home Finance Planner</span>
-        </div>
+        <div className="sidebar-brand">Home Finance Planner</div>
         <nav aria-label="Main navigation">
           <ul className="sidebar-nav">
             {ALL_ITEMS.map((item) =>
@@ -116,14 +113,12 @@ export function AppLayout() {
           end
           className={({ isActive }) => (isActive ? 'tab-link active' : 'tab-link')}
         >
-          <span className="tab-icon" aria-hidden="true">🏠</span>
           Home
         </NavLink>
         <NavLink
           to="/transactions"
           className={({ isActive }) => (isActive ? 'tab-link active' : 'tab-link')}
         >
-          <span className="tab-icon" aria-hidden="true">🧾</span>
           Activity
         </NavLink>
         <span className="tab-fab-slot">
@@ -143,7 +138,6 @@ export function AppLayout() {
                     className="fab-item"
                     onClick={() => navigate(item.to)}
                   >
-                    <span aria-hidden="true">{item.icon}</span>
                     {item.label}
                   </button>
                 ))}
@@ -164,7 +158,6 @@ export function AppLayout() {
           to="/budgets"
           className={({ isActive }) => (isActive ? 'tab-link active' : 'tab-link')}
         >
-          <span className="tab-icon" aria-hidden="true">🎯</span>
           Budgets
         </NavLink>
         <button
@@ -174,7 +167,6 @@ export function AppLayout() {
           aria-expanded={moreOpen}
           onClick={() => setMoreOpen(true)}
         >
-          <span className="tab-icon" aria-hidden="true">☰</span>
           More
         </button>
       </nav>
@@ -194,7 +186,6 @@ export function AppLayout() {
                   <li key={item.to}>
                     {item.external ? (
                       <a href={item.href} className="more-link">
-                        <span className="more-icon" aria-hidden="true">{item.icon}</span>
                         {item.label}
                       </a>
                     ) : (
@@ -204,7 +195,6 @@ export function AppLayout() {
                           isActive ? 'more-link active' : 'more-link'
                         }
                       >
-                        <span className="more-icon" aria-hidden="true">{item.icon}</span>
                         {item.label}
                       </NavLink>
                     )}

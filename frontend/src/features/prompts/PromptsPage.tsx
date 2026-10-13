@@ -182,7 +182,6 @@ export function PromptsPage() {
             return (
               <ItemPanel
                 key={p.id}
-                icon="📝"
                 title={draft.name || p.name}
                 subtitle={
                   <>

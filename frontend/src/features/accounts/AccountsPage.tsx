@@ -9,14 +9,6 @@ import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels 
 
 const ACCOUNT_TYPES: AccountType[] = ['checking', 'savings', 'credit', 'cash', 'other'];
 
-const accountIcons: Record<AccountType, string> = {
-  checking: '🏦',
-  savings: '🐷',
-  credit: '💳',
-  cash: '💵',
-  other: '📦',
-};
-
 // The backend accepts any 3-letter ISO currency, which can be wider than the
 // picklist — always include the account's current currency so it stays
 // selectable instead of rendering as a blank option.
@@ -181,7 +173,6 @@ export function AccountsPage() {
           {accounts.map((a) => (
             <ItemPanel
               key={a.id}
-              icon={accountIcons[a.type] ?? '📦'}
               title={a.name}
               subtitle={a.type}
               value={formatCents(a.balance_cents, a.currency)}

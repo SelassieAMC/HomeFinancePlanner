@@ -26,9 +26,6 @@ export function OfferResultView({ result }: { result: OfferResult }) {
             return (
             <details className="item-panel" key={product.product_id} open>
               <summary>
-                <span className="item-icon" aria-hidden="true">
-                  🛒
-                </span>
                 <span className="item-title">
                   <span className="item-name">{product.name}</span>
                   {product.brand && <span className="item-brand">{product.brand}</span>}

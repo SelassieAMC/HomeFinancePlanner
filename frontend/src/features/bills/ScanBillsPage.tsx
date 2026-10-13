@@ -450,14 +450,14 @@ export function ScanBillsPage() {
           />
           <div className="camera-row">
             <Button onClick={() => cameraInputRef.current?.click()} disabled={busy !== null}>
-              📷 Take photo
+              Take photo
             </Button>
             <Button
               variant="secondary"
               onClick={() => fileInputRef.current?.click()}
               disabled={busy !== null}
             >
-              📁 Choose files
+              Choose files
             </Button>
           </div>
           <label className="default-radio">
@@ -495,9 +495,7 @@ export function ScanBillsPage() {
                       alt={`Preview of ${file.name}`}
                     />
                   ) : (
-                    <span className="picked-thumb picked-thumb-blank" aria-hidden="true">
-                      📄
-                    </span>
+                    <span className="picked-thumb picked-thumb-blank" aria-hidden="true" />
                   )}
                   <span className="picked-meta">
                     {file.name}
@@ -540,7 +538,7 @@ export function ScanBillsPage() {
                   : undefined
               }
             >
-              ✅ Confirm &amp; scan{picked.length > 0 ? ` (${picked.length})` : ''}
+              Confirm &amp; scan{picked.length > 0 ? ` (${picked.length})` : ''}
             </Button>
             <Button
               variant="ghost"
@@ -559,7 +557,7 @@ export function ScanBillsPage() {
               <ul className="upload-results">
                 {uploadResults.map((r) => (
                   <li key={r.name}>
-                    <span aria-hidden="true">{r.ok ? '✅' : '❌'}</span> {r.name}
+                    <span aria-hidden="true">{r.ok ? '✓' : '✕'}</span> {r.name}
                     {r.message && <span className="hint-inline"> — {r.message}</span>}
                   </li>
                 ))}
@@ -589,7 +587,7 @@ export function ScanBillsPage() {
               <ErrorMessage message={scan.error || 'Analysis failed.'} />
               <div className="camera-row">
                 <Button onClick={handleRetry} disabled={busy !== null}>
-                  🔁 Try again
+                  Try again
                 </Button>
                 <Button variant="secondary" onClick={handleDiscard} disabled={busy !== null}>
                   Discard
@@ -605,10 +603,10 @@ export function ScanBillsPage() {
               </div>
               <div className="camera-row">
                 <Button onClick={handleRetry} disabled={busy !== null}>
-                  🔁 Try again
+                  Try again
                 </Button>
                 <Button variant="danger" onClick={handleDiscard} disabled={busy !== null}>
-                  🗑️ Delete request
+                  Delete request
                 </Button>
               </div>
             </>
@@ -621,7 +619,7 @@ export function ScanBillsPage() {
               </div>
               <div className="camera-row">
                 <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
-                  ✕ Cancel analysis
+                  Cancel analysis
                 </Button>
               </div>
             </>
@@ -630,7 +628,7 @@ export function ScanBillsPage() {
               <Spinner label="Reading the receipt — you can leave this page; the scan is kept in the Bills view." />
               <div className="camera-row">
                 <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
-                  ✕ Cancel analysis
+                  Cancel analysis
                 </Button>
               </div>
             </>

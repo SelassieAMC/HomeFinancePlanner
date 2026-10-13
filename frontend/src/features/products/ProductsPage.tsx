@@ -205,12 +205,12 @@ export function ProductsPage() {
                         <div className="row-actions">
                           <button
                             type="button"
-                            className="icon-btn"
+                            className="btn btn-ghost btn-sm"
                             title="Edit the generic product name of this family"
                             aria-label={`Edit the generic product name of ${group.generic_name}`}
                             onClick={() => setEditingGroup(group)}
                           >
-                            ✏️
+                            Rename
                           </button>
                         </div>
                       </td>
@@ -259,33 +259,33 @@ export function ProductsPage() {
                                     <div className="row-actions">
                                       <button
                                         type="button"
-                                        className="icon-btn"
+                                        className="btn btn-ghost btn-sm"
                                         title="View details"
                                         aria-label={`View details of ${product.name}`}
                                         onClick={() => setDetailsProduct(product)}
                                       >
-                                        🔍
+                                        Details
                                       </button>
                                       <button
                                         type="button"
-                                        className="icon-btn"
-                                        title={cart.has(product.id) ? 'Already in the cart' : 'Add to the purchase cart'}
+                                        className="btn btn-ghost btn-sm"
+                                        title={cart.has(product.id) ? 'Already in the cart — tap to add another' : 'Add to the purchase cart'}
                                         aria-label={`Add ${product.name} to the purchase cart`}
                                         onClick={() => {
                                           cart.add(product);
                                           setJustAdded(product.id);
                                         }}
                                       >
-                                        {justAdded === product.id ? '✅' : '🛒'}
+                                        {justAdded === product.id ? 'In cart' : cart.has(product.id) ? 'Add' : 'Add to cart'}
                                       </button>
                                       <button
                                         type="button"
-                                        className="icon-btn"
+                                        className="btn btn-ghost btn-sm"
                                         title="Edit product"
                                         aria-label={`Edit ${product.name}`}
                                         onClick={() => setEditingId(product.id)}
                                       >
-                                        ✏️
+                                        Edit
                                       </button>
                                     </div>
                                   </td>

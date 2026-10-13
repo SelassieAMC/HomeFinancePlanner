@@ -272,98 +272,134 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   }
 
   return (
-    <form className="form-grid" onSubmit={handleSubmit}>
-      <div className="form-row">
-        <select
-          value={kind}
-          onChange={(e) => setKind(e.target.value as TransactionKind)}
-          aria-label="Kind"
+    <form className="form-stack" onSubmit={handleSubmit}>
+      {/* The kind toggle replaces the old kind select — expense/income is a
+          two-way switch, and item lines pin it to expense. */}
+      <div className="segmented" role="group" aria-label="Kind">
+        <button
+          type="button"
+          className={kind === 'expense' ? 'active' : ''}
+          aria-pressed={kind === 'expense'}
+          onClick={() => setKind('expense')}
         >
-          <option value="expense">Expense</option>
-          <option value="income" disabled={hasLines}>
-            Income {hasLines ? '(no items on income)' : ''}
-          </option>
-        </select>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required aria-label="Date" />
-        <input
-          placeholder="Amount ($)"
-          inputMode="decimal"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          required
-          readOnly={hasLines}
-          title={hasLines ? 'Calculated from the item lines' : undefined}
-          aria-label={hasLines ? 'Amount (calculated from items)' : 'Amount'}
-        />
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required aria-label="Account">
-          <option value="">Account…</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name} ({a.currency})
-            </option>
-          ))}
-        </select>
-        <CategorySelect
-          categories={categories}
-          kind="expense"
-          value={categoryId ? Number(categoryId) : null}
-          onChange={(id) => setCategoryId(id ? String(id) : '')}
-          ariaLabel="Category"
-          emptyLabel="Category…"
-        />
+          Expense
+        </button>
+        <button
+          type="button"
+          className={kind === 'income' ? 'active' : ''}
+          aria-pressed={kind === 'income'}
+          disabled={hasLines}
+          onClick={() => setKind('income')}
+        >
+          Income{hasLines ? ' (no items)' : ''}
+        </button>
       </div>
-      <div className="form-row">
-        <input
-          placeholder="Description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          maxLength={500}
-          aria-label="Description"
-        />
-        {customStore ? (
+      <div className="form-grid">
+        <label>
+          Date
           <input
-            autoFocus
-            placeholder="New market…"
-            value={customStoreName}
-            onChange={(e) => setCustomStoreName(e.target.value)}
-            aria-label="New market name"
-            onBlur={() => {
-              // Nothing typed → back to the store list.
-              if (customStoreName.trim() === '') setCustomStore(false);
-            }}
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            required
           />
-        ) : (
+        </label>
+        <label>
+          Amount
+          <input
+            placeholder={hasLines ? 'From items' : '0.00'}
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            required
+            readOnly={hasLines}
+            title={hasLines ? 'Calculated from the item lines' : undefined}
+            aria-label={hasLines ? 'Amount (calculated from items)' : 'Amount'}
+          />
+        </label>
+        <label>
+          Account
           <select
-            value={storeId}
-            onChange={(e) => {
-              if (e.target.value === '__custom__') {
-                setCustomStore(true);
-                return;
-              }
-              setStoreId(e.target.value);
-            }}
-            aria-label="Store (optional)"
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            required
           >
-            <option value="">No store</option>
-            {sortedStores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
+            <option value="">Account…</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.currency})
               </option>
             ))}
-            {/* Keep the stored (unmatched) name selectable when editing —
-                the backend find-or-creates unknown names on save. */}
-            {initial?.store_name && !pickedStore && (
-              <option value={initial.store_name}>{initial.store_name}</option>
-            )}
-            <option value="__custom__">+ Add market…</option>
           </select>
-        )}
+        </label>
+        <label>
+          Category
+          <CategorySelect
+            categories={categories}
+            kind="expense"
+            value={categoryId ? Number(categoryId) : null}
+            onChange={(id) => setCategoryId(id ? String(id) : '')}
+            ariaLabel="Category"
+            emptyLabel="Category…"
+          />
+        </label>
+        <label>
+          Store
+          {customStore ? (
+            <input
+              autoFocus
+              placeholder="New market…"
+              value={customStoreName}
+              onChange={(e) => setCustomStoreName(e.target.value)}
+              aria-label="New market name"
+              onBlur={() => {
+                // Nothing typed → back to the store list.
+                if (customStoreName.trim() === '') setCustomStore(false);
+              }}
+            />
+          ) : (
+            <select
+              value={storeId}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') {
+                  setCustomStore(true);
+                  return;
+                }
+                setStoreId(e.target.value);
+              }}
+              aria-label="Store (optional)"
+            >
+              <option value="">No store</option>
+              {sortedStores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+              {/* Keep the stored (unmatched) name selectable when editing —
+                  the backend find-or-creates unknown names on save. */}
+              {initial?.store_name && !pickedStore && (
+                <option value={initial.store_name}>{initial.store_name}</option>
+              )}
+              <option value="__custom__">+ Add market…</option>
+            </select>
+          )}
+        </label>
+        <label>
+          Description
+          <input
+            placeholder="Optional note"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            maxLength={500}
+            aria-label="Description"
+          />
+        </label>
       </div>
 
       <div className="transaction-lines">
         <div className="transaction-lines-header">
           <span>Items {hasLines ? '' : '(optional)'}</span>
-          <Button type="button" variant="secondary" onClick={() => setLines((ls) => [...ls, newLine()])}>
+          <Button type="button" variant="secondary" className="btn-sm" onClick={() => setLines((ls) => [...ls, newLine()])}>
             + Add item
           </Button>
         </div>
@@ -478,15 +514,15 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
 
       {formError && <ErrorMessage message={formError} />}
 
-      <div className="camera-row">
-        <Button type="submit" disabled={busy}>
-          {busy ? 'Saving…' : mode === 'create' ? 'Add transaction' : 'Save changes'}
-        </Button>
+      <div className="form-actions">
         {onCancel && (
           <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
         )}
+        <Button type="submit" disabled={busy}>
+          {busy ? 'Saving…' : mode === 'create' ? 'Add transaction' : 'Save changes'}
+        </Button>
       </div>
     </form>
   );

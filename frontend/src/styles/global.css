@@ -1,23 +1,69 @@
-/* Design tokens — GitHub-dark style single theme (dark-native palette).
-   Canvas #0d1117, card slate #161b22, borders #30363d; primary metric blue,
-   emerald/coral status, violet for fixed costs, amber for flexible spend. */
+/* Design tokens — light minimal system: a near-white canvas, pure-white
+   surfaces, one blue brand accent, slate-gray text. Everything else stays
+   semantic (green/red/violet are state colors only). Money figures keep
+   Spline Sans Mono (`--font-money`) with tabular figures. The page shell and
+   the white document surfaces use the same ink, so the historic paper remap
+   rule (--ink/--text) is now effectively an identity — kept so components
+   never need to know which surface they sit on. */
 :root {
-  color-scheme: dark;
-  --bg: #0d1117; /* base canvas */
-  --surface: #161b22; /* card container */
-  --text: #f0f6fc; /* primary text */
-  --text-muted: #8b949e; /* secondary text */
-  --border: #30363d; /* borders & dividers */
-  --accent: #58a6ff; /* primary metric blue — buttons, active pills, focus */
-  --accent-hover: #79c0ff;
-  --accent-contrast: #0d1117;
-  --gold: #d29922; /* warm amber — progress, FAB, bars, flexible spend */
-  --gold-hover: #e3b341;
-  --positive: #3fb950; /* emerald — safety, savings, underspending */
-  --negative: #f85149; /* coral — over budget, warnings */
-  --violet: #8957e5; /* fixed expenses, recurring bills */
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.35);
-  --radius: 16px;
+  color-scheme: light;
+
+  /* Surfaces. */
+  --bg: #f5f6f8; /* app canvas */
+  --bg-raised: #eceef2; /* recessed chrome (tab bar blur, wells on canvas) */
+  --surface: #ffffff; /* cards, tables, dialogs, inputs */
+
+  /* Text. */
+  --text: #17233a; /* primary */
+  --text-muted: #66738c; /* secondary */
+  --ink: var(--text); /* alias for surface-context rules */
+  --ink-muted: var(--text-muted);
+  --border: #dfe3ea; /* borders & dividers */
+  --border-strong: #cfd4dd; /* control borders, one step up */
+  --hairline: #e8ebf0; /* finer dividers inside surfaces */
+
+  /* Brand + semantics. */
+  --accent: #2f6bff; /* blue — buttons, active states, progress, focus */
+  --accent-hover: #1e56e0;
+  --accent-contrast: #ffffff; /* text on accent fills */
+  --accent-text: #1e56e0; /* accent as text on white */
+  --focus: var(--accent);
+  --positive: #0b8a4b; /* savings, underspending, accepted */
+  --negative: #d33a2c; /* over budget, warnings */
+  --violet: #6c49c9; /* fixed expenses, recurring bills */
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 2px 10px rgb(16 24 40 / 0.06);
+  --shadow-raised:
+    0 4px 8px -2px rgb(16 24 40 / 0.08), 0 2px 4px rgb(16 24 40 / 0.05);
+
+  --radius: 10px;
+
+  --font-body: 'Instrument Sans Variable', system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-body);
+  --font-money: 'Spline Sans Mono', ui-monospace, 'SF Mono', monospace;
+}
+
+/* Money is set in print type. One rule carries the whole list; add a selector
+   here when a new money-bearing surface appears. */
+.stat-value,
+.stat-card-value,
+.item-price,
+.item-line-total,
+.budget-amounts,
+.budget-status,
+.day-header,
+.num,
+.money-input-row input,
+.cell-input-num,
+.transaction-line-num,
+.transaction-line-total,
+.tx-item-meta,
+.tx-item-total,
+.cart-last-price,
+.product-autocomplete-meta,
+.category-select-meta,
+.chart-tooltip {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
 }
 
 * {
@@ -32,12 +78,7 @@ html {
 
 body {
   margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
+  font-family: var(--font-body);
   background: var(--bg);
   color: var(--text);
   font-size: 15px;
@@ -47,9 +88,12 @@ body {
 /* --- Page primitives ------------------------------------------------------- */
 /* Vertical rhythm for every feature page; replaces ad-hoc margin stacks.
    Direct children surrender their own block margins so the gap is the only
-   source of spacing. */
+   source of spacing. The column is minmax(0, 1fr): without it the implicit
+   track sizes to the widest child's min-content (a chart's intrinsic pixel
+   width) and the whole page overflows horizontally on phones. */
 .page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   align-content: start;
 }
@@ -65,6 +109,22 @@ body {
   min-height: 100dvh;
 }
 
+/* Document surfaces inherit body ink; the historic two-context remap is
+   identity under the light token set — the selector list is kept so any
+   future dark mode only needs new values here. */
+.card,
+.data-table,
+.dialog,
+.item-panel,
+.item-detail,
+.stat-card,
+.more-sheet,
+.fab-item,
+.product-autocomplete-list,
+.category-select-panel {
+  color: var(--text);
+}
+
 .sidebar {
   width: 220px;
   flex-shrink: 0;
@@ -77,8 +137,11 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-weight: 700;
   padding: 0.5rem 0.75rem 1.25rem;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .sidebar-nav {
@@ -105,8 +168,8 @@ body {
 }
 
 .nav-link.active {
-  background: var(--bg);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -119,14 +182,15 @@ body {
 /* --- Page primitives ------------------------------------------------------- */
 .page-title {
   margin: 0;
+  font-family: var(--font-display);
   font-size: clamp(1.45rem, 5vw, 1.7rem);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
 
 .card {
   background: var(--surface);
-  border: none;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius);
   padding: 1rem 1.25rem;
   box-shadow: var(--shadow);
@@ -134,10 +198,9 @@ body {
 
 .card-title {
   margin: 0 0 0.75rem;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  font-weight: 650;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .stat-grid {
@@ -158,9 +221,8 @@ body {
 }
 
 .stat-value {
-  font-size: 1.3rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  font-size: 1.35rem;
+  font-weight: 600;
 }
 
 .stat-positive {
@@ -171,9 +233,55 @@ body {
   color: var(--negative);
 }
 
-/* Currency-tile tint (amber family, matching the 4-card dashboard rhythm). */
+/* The at-a-glance row: four measures fused into one strip, separated by
+   dashed rules instead of card gaps. */
+.stat-grid.glance {
+  gap: 0;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.glance > .stat-tile {
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
+  padding: 1rem 1.25rem 1.1rem;
+}
+
+.glance > .stat-tile + .stat-tile {
+  border-left: 1px dashed var(--hairline);
+}
+
+.glance .stat-value {
+  font-size: 1.5rem;
+}
+
+@media (min-width: 900px) {
+  .stat-grid.glance {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 899px) {
+  .glance > .stat-tile:nth-child(n + 3) {
+    border-top: 1px dashed var(--hairline);
+  }
+}
+
+@media (max-width: 480px) {
+  .glance > .stat-tile {
+    padding: 0.9rem 0.85rem;
+  }
+}
+
+/* Currency-tile tint (accent family, matching the tile rhythm). */
 .stat-currency {
-  background: rgba(210, 153, 34, 0.12);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
 .two-col {
@@ -216,20 +324,65 @@ body {
   min-width: 150px;
 }
 
-/* 16px (1rem — body's 15px lives on body, not html) so iOS never auto-zooms
-   a focused control. The category combobox's trigger rides along so it looks
-   exactly like the selects it replaces. */
+/* --- Tabs (page-level view switcher) ---------------------------------------- */
+/* Underline tabs: quiet gray labels, the active one claims the accent
+   underline. Content switching stays with the caller. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.4rem 0.5rem 0.55rem;
+  margin-bottom: -1px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  .tab-btn {
+    min-height: 44px;
+    padding-inline: 0.75rem;
+  }
+}
+
+@media (hover: hover) {
+  .tab-btn:hover {
+    color: var(--text);
+  }
+}
+
+.tab-btn.active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+}
+
+/* Controls: white fill, one border gray, a focus ring in the accent. 16px
+   (1rem — body's 15px lives on body, not html) on inputs so iOS never
+   auto-zooms a focused control; the category combobox's trigger rides along
+   so it looks exactly like the selects it replaces. */
 input,
 select,
 textarea,
 .category-select-trigger {
-  padding: 0.6rem 0.7rem;
-  border: 1px solid var(--border);
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--surface);
-  color: var(--text);
+  color: var(--ink);
   font: inherit;
   font-size: 1rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 /* 44px touch targets on touch devices and narrow viewports only — desktop
@@ -245,21 +398,51 @@ textarea,
 
 input:focus,
 select:focus,
-.category-select-trigger:focus,
+textarea:focus,
+.category-select-trigger:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 .btn:focus-visible {
-  outline: 2px solid var(--gold);
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 
 /* --- Buttons --------------------------------------------------------------- */
+/* No icons on buttons, ever — type only. Desktop is compact (a row of buttons
+   reads as a toolbar, not a lineup of slabs); touch keeps 44px targets. */
 .btn {
-  padding: 0.6rem 1.1rem;
-  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
   border-radius: 8px;
   border: 1px solid transparent;
   font: inherit;
+  font-size: 0.875rem;
   font-weight: 600;
+  letter-spacing: 0.005em;
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  .btn {
+    min-height: 44px;
+  }
+}
+
+/* A compact size for tables/rows/toolbars. */
+.btn-sm {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 7px;
 }
 
 /* Pressed feedback for every tappable control (no transform jump). */
@@ -277,32 +460,49 @@ select:focus,
 }
 
 .btn-primary {
-  background: var(--accent);
+  background: linear-gradient(180deg, #4079ff, var(--accent));
   color: var(--accent-contrast);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.22),
+    0 1px 2px rgb(16 24 40 / 0.16);
 }
 
 @media (hover: hover) {
   .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
+    background: linear-gradient(180deg, #2f6bf1, var(--accent-hover));
   }
+}
+
+.btn-primary:active:not(:disabled) {
+  box-shadow:
+    inset 0 1px 2px rgb(16 24 40 / 0.25),
+    0 0 0 1px var(--accent);
 }
 
 .btn-secondary {
   background: var(--surface);
-  border-color: var(--border);
-  color: var(--text);
+  border-color: var(--border-strong);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
+}
+
+@media (hover: hover) {
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--bg);
+  }
 }
 
 .btn-danger {
   background: transparent;
   color: var(--negative);
-  border-color: var(--negative);
+  border-color: color-mix(in srgb, var(--negative) 40%, transparent);
 }
 
 @media (hover: hover) {
   .btn-danger:hover:not(:disabled) {
     background: var(--negative);
     color: #fff;
+    border-color: var(--negative);
   }
 }
 
@@ -325,9 +525,8 @@ select:focus,
 
 .data-table th {
   font-size: 0.8rem;
+  font-weight: 650;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .data-table tbody tr:last-child td {
@@ -371,12 +570,9 @@ select:focus,
   align-items: baseline;
   gap: 0.75rem;
   padding: 0.25rem 0.35rem 0.4rem;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.78rem;
+  font-weight: 600;
   color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
 }
 
 /* --- Budget progress ------------------------------------------------------- */
@@ -414,7 +610,7 @@ select:focus,
 .progress-fill {
   height: 100%;
   border-radius: 4px;
-  background: var(--gold);
+  background: var(--accent);
 }
 
 .progress-fill.over {
@@ -441,7 +637,7 @@ select:focus,
   width: 10px;
   height: 10px;
   border-radius: 3px;
-  background: var(--gold);
+  background: var(--accent);
 }
 
 .budget-dot.over {
@@ -549,7 +745,7 @@ select:focus,
 @media (hover: hover) {
   .btn-ghost:hover:not(:disabled) {
     color: var(--text);
-    background: var(--bg);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
   }
 }
 
@@ -566,15 +762,25 @@ select:focus,
 }
 
 .segmented button {
-  padding: 0.45rem 1rem;
-  min-height: 44px;
-  border: 1px solid var(--border);
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--surface);
-  color: var(--text);
+  color: var(--text-muted);
   font: inherit;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+/* 44px touch targets on touch devices and narrow viewports only. */
+@media (pointer: coarse), (max-width: 768px) {
+  .segmented button {
+    min-height: 44px;
+    padding: 0.4rem 1rem;
+    font-size: 0.9rem;
+  }
 }
 
 @media (hover: hover) {
@@ -585,9 +791,9 @@ select:focus,
 }
 
 .segmented button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent-text);
 }
 
 .period-nav {
@@ -612,7 +818,7 @@ select:focus,
   font-weight: 600;
   border: 1px solid var(--border);
   color: var(--text-muted);
-  background: var(--bg);
+  background: var(--surface-2);
 }
 
 .badge-draft {
@@ -1064,7 +1270,7 @@ select:focus,
   object-fit: cover;
   border-radius: 0.375rem;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
 }
 
 .picked-thumb-blank {
@@ -1103,8 +1309,8 @@ select:focus,
   padding: 0.6rem 0.9rem;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--ink);
 }
 
 /* Default-connector marker in the settings list. */
@@ -1153,7 +1359,7 @@ select:focus,
 .form-grid label {
   display: grid;
   gap: 0.25rem;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
   font-weight: 600;
 }
@@ -1163,6 +1369,15 @@ select:focus,
 .form-grid .category-select-trigger {
   font-weight: 400;
   color: var(--text);
+}
+
+/* Primary actions of forms sit right-aligned at the form's end; on phones
+   they stretch full-width (handled in the 480px block near the bill rules). */
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 /* --- Mobile: bottom tab bar + speed-dial FAB + More sheet ------------------- */
@@ -1209,36 +1424,30 @@ select:focus,
     bottom: 0;
     z-index: 60;
     padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
     border-top: 1px solid var(--border);
   }
 
+  /* Text-only tabs (no icons): the active label carries the accent. */
   .tab-link {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
+    display: grid;
+    place-items: center;
     padding: 0.3rem 0 0.2rem;
     border: none;
     background: none;
     border-radius: 12px;
     font: inherit;
-    font-size: 0.68rem;
+    font-size: 0.8rem;
     font-weight: 600;
     color: var(--text-muted);
     text-decoration: none;
     cursor: pointer;
   }
 
-  .tab-icon {
-    font-size: 1.3rem;
-    line-height: 1.2;
-  }
-
   .tab-link.active {
-    color: var(--accent);
+    color: var(--accent-text);
   }
 
   /* Center quick-action button, lifted over the bar's top edge. */
@@ -1262,7 +1471,7 @@ select:focus,
     font-size: 1.8rem;
     font-weight: 400;
     line-height: 1;
-    box-shadow: 0 6px 16px rgb(56 139 253 / 0.35);
+    box-shadow: 0 6px 16px rgb(16 24 40 / 0.2);
     cursor: pointer;
     transition: transform 0.15s ease;
   }
@@ -1322,7 +1531,7 @@ select:focus,
     position: fixed;
     inset: 0;
     z-index: 75;
-    background: rgb(1 4 9 / 0.6);
+    background: rgb(16 24 40 / 0.45);
   }
 
   .more-sheet {
@@ -1335,7 +1544,7 @@ select:focus,
     border-radius: 20px 20px 0 0;
     background: var(--surface);
     padding: 1rem 0.75rem calc(1rem + env(safe-area-inset-bottom));
-    box-shadow: 0 -8px 30px rgb(0 0 0 / 0.25);
+    box-shadow: 0 -8px 30px rgb(16 24 40 / 0.16);
   }
 
   .more-sheet ul {
@@ -1362,13 +1571,8 @@ select:focus,
   }
 
   .more-link.active {
-    background: rgba(88, 166, 255, 0.12);
-    color: var(--accent);
-  }
-
-  .more-icon {
-    font-size: 1.25rem;
-    line-height: 1;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent-text);
   }
 }
 
@@ -1473,18 +1677,18 @@ select:focus,
   grid-column: span 2;
 }
 
-.stat-market  { background: rgba(88, 166, 255, 0.14); }
-.stat-date    { background: rgba(63, 185, 190, 0.14); }
-.stat-total   { background: rgba(46, 160, 67, 0.16); }
-.stat-account { background: rgba(137, 87, 229, 0.16); }
-.stat-savings { background: rgba(210, 153, 34, 0.16); }
-.stat-budget  { background: rgba(219, 106, 152, 0.14); }
+/* Bill stat slips mix their semantic tint directly into paper so they stay
+   legible over whichever surface they land on (they are not card-wrapped). */
+.stat-market  { background: color-mix(in srgb, #2f6bff 13%, var(--surface)); }
+.stat-date    { background: color-mix(in srgb, #0b7f9f 13%, var(--surface)); }
+.stat-total   { background: color-mix(in srgb, #0b8a4b 15%, var(--surface)); }
+.stat-account { background: color-mix(in srgb, #6c49c9 15%, var(--surface)); }
+.stat-savings { background: color-mix(in srgb, #b45309 12%, var(--surface)); }
+.stat-budget  { background: color-mix(in srgb, #c1458e 12%, var(--surface)); }
 
 .stat-card-label {
   font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 650;
   color: var(--text-muted);
 }
 
@@ -1517,17 +1721,12 @@ select:focus,
   background: var(--surface);
 }
 
-.stat-card-input:focus,
-.stat-card select:focus {
-  outline: 2px solid var(--gold);
-}
-
 /* --- Mismatch warning -------------------------------------------------------- */
 .bill-warning {
   padding: 0.6rem 0.75rem;
   border-radius: var(--radius);
-  background: rgba(248, 81, 73, 0.12);
-  border: 1px solid rgba(248, 81, 73, 0.45);
+  background: rgba(211, 58, 44, 0.08);
+  border: 1px solid rgba(211, 58, 44, 0.4);
   color: var(--negative);
   font-size: 0.88rem;
   margin-bottom: 0.75rem;
@@ -1562,7 +1761,7 @@ select:focus,
 }
 
 .item-panel[open] {
-  box-shadow: 0 0 0 2px var(--gold), var(--shadow);
+  box-shadow: 0 0 0 2px var(--accent-text), var(--shadow);
 }
 
 .item-panel summary {
@@ -1658,10 +1857,8 @@ select:focus,
 }
 
 .item-field > span:first-child {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--text-muted);
 }
 
@@ -1669,8 +1866,6 @@ select:focus,
    next to the standardized-name override). */
 .item-field-note {
   font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
 }
 
 .item-field-grid {
@@ -1770,8 +1965,6 @@ select:focus,
 .legend-title {
   font-size: 0.75rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--text-muted);
 }
 
@@ -1884,13 +2077,13 @@ select:focus,
   max-width: 22px;
   min-height: 2px;
   border-radius: 3px 3px 0 0;
-  background: var(--gold);
+  background: var(--accent);
   transition: height 0.2s ease;
 }
 
 @media (hover: hover) {
   .bar-chart-bar:hover {
-    background: var(--gold-hover);
+    background: var(--accent-hover);
   }
 }
 
@@ -1913,7 +2106,7 @@ select:focus,
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgb(1 4 9 / 0.6);
+  background: rgb(16 24 40 / 0.45);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1949,28 +2142,30 @@ select:focus,
 }
 
 /* --- Analytics charts -------------------------------------------------------- */
-/* Categorical ramp for chart series + the 4-step green heatmap scale from the
-   palette spec (no-activity → #39d353). Single dark theme: the primary metric
-   accents lead the ramp — blue (run rate), violet (fixed), green (positive),
-   amber (discretionary) — then color-blind-safe extensions. Series color is
-   never the only cue (legend + tooltips). */
+/* Categorical ramp validated with the dataviz six-checks script against the
+   white chart surface (lightness band, chroma floor, adjacent CVD ΔE,
+   normal-vision floor, 3:1 mark contrast — all pass; the one 6–8 CVD band
+   pair is covered by legends + tooltips). Order is fixed and never cycled per
+   rank: brand blue leads, then rust, green, violet, magenta, cyan, bronze,
+   navy. Series color is never the only cue (legend + tooltips). Heatmap is a
+   light-gray → spruce sequential ramp. */
 :root {
-  --chart-1: #58a6ff;
-  --chart-2: #d29922;
-  --chart-3: #3fb950;
-  --chart-4: #8957e5;
-  --chart-5: #db61a2;
-  --chart-6: #39c5cf;
-  --chart-7: #f0883e;
-  --chart-8: #a371f7;
-  --seq-0: #161b22;
-  --seq-1: #033a16;
-  --seq-2: #0e4429;
-  --seq-3: #006d32;
-  --seq-4: #26a148;
-  --seq-5: #39d353;
-  --chart-grid: var(--border);
-  --chart-axis: var(--text-muted);
+  --chart-1: #2f6bff;
+  --chart-2: #a34210;
+  --chart-3: #43924a;
+  --chart-4: #6c49c9;
+  --chart-5: #c1458e;
+  --chart-6: #0b7f9f;
+  --chart-7: #8f6c16;
+  --chart-8: #2b62a0;
+  --seq-0: #eef0f3;
+  --seq-1: #c7e5b0;
+  --seq-2: #97cc7f;
+  --seq-3: #63ab57;
+  --seq-4: #3d8b3f;
+  --seq-5: #1f6b2c;
+  --chart-grid: var(--hairline);
+  --chart-axis: #66738c;
 }
 
 /* Chart layout. Two large charts, then a row of four cards (single column
@@ -2171,7 +2366,7 @@ select:focus,
 }
 
 .product-autocomplete-option.is-active {
-  background: rgba(255, 176, 32, 0.14);
+  background: rgba(47, 107, 255, 0.1);
 }
 
 .product-autocomplete-name {
@@ -2270,7 +2465,7 @@ select:focus,
 }
 
 .category-select-option.is-active {
-  background: rgba(255, 176, 32, 0.14);
+  background: rgba(47, 107, 255, 0.1);
 }
 
 .category-select-option.is-selected {
@@ -2312,9 +2507,7 @@ select:focus,
   align-items: center;
   justify-content: space-between;
   font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 650;
   color: var(--text-muted);
 }
 
@@ -2501,12 +2694,12 @@ select:focus,
 }
 
 .offer-best {
-  background: rgba(34, 160, 96, 0.16);
+  background: rgba(11, 138, 75, 0.12);
   font-weight: 600;
 }
 
 .offer-worst {
-  background: rgba(220, 70, 70, 0.14);
+  background: rgba(211, 58, 44, 0.1);
 }
 
 /* Pinned-scope rows without a price: store does not carry / publish the
@@ -2530,7 +2723,7 @@ select:focus,
   gap: 0.6rem;
   margin-top: 0.4rem;
   padding: 0.7rem;
-  border: 1px solid rgba(128, 128, 128, 0.25);
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 
@@ -2566,7 +2759,7 @@ select:focus,
   padding: 0.05rem 0.4rem;
   border-radius: 999px;
   font-size: 0.75rem;
-  background: rgba(230, 150, 30, 0.18);
+  background: rgba(47, 107, 255, 0.12);
 }
 
 .offer-table-scroll {
@@ -2620,9 +2813,9 @@ select:focus,
 }
 
 .offer-status-done {
-  background: rgba(34, 160, 96, 0.16);
+  background: rgba(11, 138, 75, 0.12);
 }
 
 .offer-status-failed {
-  background: rgba(220, 70, 70, 0.14);
+  background: rgba(211, 58, 44, 0.1);
 }

@@ -297,7 +297,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
                 void handleUploadPhoto(e.dataTransfer.files?.[0]);
               }}
             >
-              <span aria-hidden="true">⬆️</span>
+              
               <span>Or drag &amp; drop a photo here</span>
             </div>
           </section>

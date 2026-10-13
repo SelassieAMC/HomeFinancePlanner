@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
 import { transactionsApi, type TransactionFilters } from '../../api/transactions';
@@ -7,12 +7,35 @@ import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
 import type { Transaction, TransactionInput, TransactionKind } from '../../types/domain';
 import { formatCents, formatSignedCents, currentMonth } from '../../lib/money';
-import { Button, Card, Spinner, ErrorMessage, EmptyState, Dialog, ItemPanel, ItemPanels } from '../../components/ui';
+import {
+  Button,
+  Card,
+  Tabs,
+  Spinner,
+  ErrorMessage,
+  EmptyState,
+  Dialog,
+  ItemPanel,
+  ItemPanels,
+} from '../../components/ui';
 import { TransactionForm } from './TransactionForm';
+
+// The page's two jobs are parallel: reading the month's activity and entering
+// a new transaction. Tabs keep the list clean; the form lives one click away.
+type ViewTab = 'activity' | 'add';
 
 export function TransactionsPage() {
   const [month, setMonth] = useState(currentMonth());
   const [kind, setKind] = useState<TransactionKind | ''>('');
+  const [tab, setTab] = useState<ViewTab>('activity');
+  const [savedNotice, setSavedNotice] = useState(false);
+
+  // The saved notice self-clears after a few seconds.
+  useEffect(() => {
+    if (!savedNotice) return;
+    const timer = setTimeout(() => setSavedNotice(false), 5000);
+    return () => clearTimeout(timer);
+  }, [savedNotice]);
 
   const filters: TransactionFilters = { month, limit: 100 };
   if (kind) filters.kind = kind;
@@ -129,49 +152,78 @@ export function TransactionsPage() {
     <div className="page">
       <h2 className="page-title">Transactions</h2>
 
-      <Card title="Add transaction">
-        <TransactionForm
-          // Remount on success so the next entry starts empty.
-          key={createFormKey}
-          mode="create"
-          accounts={accounts.data ?? []}
-          categories={categories.data ?? []}
-          stores={stores.data ?? []}
-          onSubmit={async (input) => {
-            await transactionsApi.create(input);
-            setCreateFormKey((k) => k + 1);
-            reload();
-          }}
-        />
-      </Card>
+      <Tabs
+        ariaLabel="Transaction views"
+        tabs={[
+          { key: 'activity', label: 'Activity' },
+          { key: 'add', label: 'Add transaction' },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
 
-      <div className="filter-row">
-        <input
-          type="month"
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
-          aria-label="Filter by month"
-        />
-      </div>
-      <div className="segmented" role="group" aria-label="Filter by kind">
-        {(
-          [
-            ['', 'All'],
-            ['expense', 'Expenses'],
-            ['income', 'Income'],
-          ] as [TransactionKind | '', string][]
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={kind === value ? 'active' : ''}
-            aria-pressed={kind === value}
-            onClick={() => setKind(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {savedNotice && tab === 'activity' && (
+        <div className="hint-banner">Transaction saved.</div>
+      )}
+
+      {tab === 'activity' && (
+        <>
+          <div className="filter-row">
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              aria-label="Filter by month"
+            />
+            <Button
+              variant="primary"
+              className="btn-sm"
+              onClick={() => setTab('add')}
+            >
+              Add transaction
+            </Button>
+          </div>
+          <div className="segmented" role="group" aria-label="Filter by kind">
+            {(
+              [
+                ['', 'All'],
+                ['expense', 'Expenses'],
+                ['income', 'Income'],
+              ] as [TransactionKind | '', string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={kind === value ? 'active' : ''}
+                aria-pressed={kind === value}
+                onClick={() => setKind(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tab === 'add' && (
+        <Card title="New transaction">
+          <TransactionForm
+            // Remount on success so the next entry starts empty.
+            key={createFormKey}
+            mode="create"
+            accounts={accounts.data ?? []}
+            categories={categories.data ?? []}
+            stores={stores.data ?? []}
+            onSubmit={async (input) => {
+              await transactionsApi.create(input);
+              setCreateFormKey((k) => k + 1);
+              setSavedNotice(true);
+              setTab('activity');
+              reload();
+            }}
+          />
+        </Card>
+      )}
 
       {pageError && <ErrorMessage message={pageError} />}
 
@@ -195,7 +247,6 @@ export function TransactionsPage() {
                   return (
                     <ItemPanel
                       key={t.id}
-                      icon={isBill ? '🧾' : isIncome ? '💰' : '🛒'}
                       title={t.description || '(no description)'}
                       subtitle={[
                         isBill ? 'Bill' : t.store_name || null,
@@ -330,17 +381,18 @@ export function TransactionsPage() {
                           )}
 
                           <div className="camera-row">
-                            <Button variant="secondary" onClick={() => openEdit(t)}>
-                              ✏️ Edit
+                            <Button variant="secondary" className="btn-sm" onClick={() => openEdit(t)}>
+                              Edit
                             </Button>
                             <Button
                               variant="danger"
+                              className="btn-sm"
                               onClick={() => {
                                 setPageError(null);
                                 setConfirmDelete(t);
                               }}
                             >
-                              🗑️ Delete
+                              Delete
                             </Button>
                           </div>
                         </>

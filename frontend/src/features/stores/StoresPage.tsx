@@ -132,7 +132,6 @@ export function StoresPage() {
           {stores.map((store) => (
             <ItemPanel
               key={store.id}
-              icon="🏪"
               title={store.name}
               subtitle={store.location || store.description || ''}
               value={`${store.bill_count} ${store.bill_count === 1 ? 'bill' : 'bills'}`}
@@ -170,7 +169,7 @@ export function StoresPage() {
                 </form>
               ) : (
                 <>
-                  {store.has_logo && (
+                {store.has_logo && (
                     <img
                       className="store-logo"
                       src={storesApi.logoUrl(store)}
@@ -193,7 +192,7 @@ export function StoresPage() {
                   </div>
                   <div className="camera-row">
                     <Button variant="secondary" onClick={() => startEdit(store)}>
-                      ✏️ Edit
+                      Edit
                     </Button>
                     <Button
                       variant="secondary"
@@ -202,9 +201,9 @@ export function StoresPage() {
                         logoInputRef.current?.click();
                       }}
                     >
-                      🖼️ {store.has_logo ? 'Replace logo' : 'Upload logo'}
+                    {store.has_logo ? 'Replace logo' : 'Upload logo'}
                     </Button>
-                    {store.has_logo && (
+                  {store.has_logo && (
                       <Button variant="secondary" onClick={() => handleRemoveLogo(store.id)}>
                         Remove logo
                       </Button>

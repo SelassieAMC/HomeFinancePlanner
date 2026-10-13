@@ -273,7 +273,6 @@ export function BillsPage() {
             {(scans.data ?? []).map((scan) => (
               <details key={scan.scan_token} className="item-panel">
                 <summary>
-                  <span className="item-icon">🧾</span>
                   <span className="item-title">
                     <span className="item-name">
                       Receipt scan
@@ -337,14 +336,14 @@ export function BillsPage() {
                           disabled={scanBusyToken !== null}
                           onClick={() => retryScan(scan.scan_token)}
                         >
-                          🔁 Try again
+                          Try again
                         </Button>
                         <Button
                           variant="danger"
                           disabled={scanBusyToken !== null}
                           onClick={() => discardScan(scan.scan_token)}
                         >
-                          🗑️ Delete request
+                          Delete request
                         </Button>
                       </div>
                     </>
@@ -362,7 +361,7 @@ export function BillsPage() {
                         disabled={scanBusyToken !== null}
                         onClick={() => discardScan(scan.scan_token)}
                       >
-                        🗑️ Delete request
+                        Delete request
                       </Button>
                     </div>
                   )}
@@ -406,7 +405,6 @@ export function BillsPage() {
               }}
             >
               <summary>
-                <span className="item-icon">🧾</span>
                 <span className="item-title">
                   <span className="item-name">{bill.market_name || 'Unknown market'}</span>
                   <span className="item-brand">{bill.date || 'no date'}</span>
@@ -465,7 +463,7 @@ export function BillsPage() {
                               setConfirmDeleteId(bill.id);
                             }}
                           >
-                            🗑️ Delete bill
+                            Delete bill
                           </Button>
                         </div>
                       </>
@@ -504,7 +502,7 @@ export function BillsPage() {
               Cancel
             </Button>
             <Button variant="danger" disabled={deleting} onClick={confirmDeleteBill}>
-              {deleting ? 'Deleting…' : '🗑️ Delete'}
+              {deleting ? 'Deleting…' : 'Delete'}
             </Button>
           </div>
         </Dialog>

@@ -10,7 +10,7 @@ import {
 import { productsApi } from '../../api/products';
 import type { AIProvider, AIProviderType, NormalizationJob } from '../../types/domain';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
-import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
+import { Button, Card, Tabs, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
 const providerTypes: { value: AIProviderType; label: string }[] = [
   { value: 'ollama', label: 'Ollama (local, no key)' },
@@ -70,7 +70,12 @@ function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
   };
 }
 
+// The page's three sections are independent settings domains; tabs keep each
+// one readable (currency/general, AI connector drafts, the normalization job).
+type SettingsTab = 'general' | 'connectors' | 'normalization';
+
 export function SettingsPage() {
+  const [tab, setTab] = useState<SettingsTab>('general');
   const saved = useAsync(() => settingsApi.listAIProviders(), []);
 
   // --- Display currency ------------------------------------------------------
@@ -246,7 +251,19 @@ export function SettingsPage() {
     <div className="page">
       <h2 className="page-title">Settings</h2>
 
-      <Card title="Display currency">
+      <Tabs
+        ariaLabel="Settings sections"
+        tabs={[
+          { key: 'general', label: 'General' },
+          { key: 'connectors', label: 'AI connectors' },
+          { key: 'normalization', label: 'Product normalization' },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
+
+      {tab === 'general' && (
+        <Card title="Display currency">
         <form
           className="form-row"
           onSubmit={(e) => {
@@ -281,9 +298,11 @@ export function SettingsPage() {
         </p>
         {currencyError && <ErrorMessage message={currencyError} />}
         {currencySaved && <div className="hint-banner">Saved ✓</div>}
-      </Card>
+        </Card>
+      )}
 
-      <h2 className="page-title">AI connectors</h2>
+      {tab === 'connectors' && (
+        <>
 
       <p className="hint-text">
         These connectors read receipt photos during bill scanning and search
@@ -303,7 +322,6 @@ export function SettingsPage() {
           {current.map((d) => (
             <ItemPanel
               key={d.id ?? d.key}
-              icon="🔌"
               title={providerTypes.find((t) => t.value === d.type)?.label ?? d.type}
               subtitle={
                 <>
@@ -423,8 +441,11 @@ export function SettingsPage() {
           {saving ? 'Saving…' : 'Save all'}
         </Button>
       </div>
+        </>
+      )}
 
-      <h2 className="page-title">Product normalization</h2>
+      {tab === 'normalization' && (
+        <>
 
       <Card title="Analyze existing products">
         <p className="hint-text">
@@ -439,7 +460,7 @@ export function SettingsPage() {
         </p>
         {job?.status === 'running' ? (
           <p className="hint-text">
-            ⏳ Standardizing… {job.processed_names} of {job.total_names} raw
+            Standardizing… {job.processed_names} of {job.total_names} raw
             names ({job.mapped_names} mapped so far)
           </p>
         ) : job?.status === 'done' ? (
@@ -466,6 +487,8 @@ export function SettingsPage() {
           </Button>
         </div>
       </Card>
+        </>
+      )}
     </div>
   );
 }

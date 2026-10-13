@@ -7,11 +7,12 @@ import type { OfferResult } from '../../types/domain';
 import { useAsync } from '../../hooks/useAsync';
 import { usePolling } from '../../hooks/usePolling';
 import { formatCents } from '../../lib/money';
-import { Button, Card, EmptyState, ErrorMessage, ProductAutocomplete, Spinner } from '../../components/ui';
+import { Button, Card, Tabs, EmptyState, ErrorMessage, ProductAutocomplete, Spinner } from '../../components/ui';
 import { useCart } from './CartContext';
 import { OfferResultView } from './OfferResultView';
 
 type Phase = 'cart' | 'searching' | 'result' | 'failed';
+type CartTab = 'cart' | 'searches';
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_MAX_MS = 10 * 60_000; // grounded searches can take minutes
@@ -24,6 +25,7 @@ export function CartPage() {
   // The active search (created here or deep-linked via ?token=…).
   const [token, setToken] = useState<string | null>(() => searchParams.get('token'));
   const [phase, setPhase] = useState<Phase>(token ? 'searching' : 'cart');
+  const [tab, setTab] = useState<CartTab>(token ? 'searches' : 'cart');
   const [result, setResult] = useState<OfferResult | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +125,7 @@ export function CartPage() {
     if (cart.items.length === 0) return;
     if (pinStores && pickedStores.length === 0) return;
     setBusy(true);
+    setTab('cart');
     setError(null);
     setConfirmed(false);
     try {
@@ -216,10 +219,22 @@ export function CartPage() {
         </div>
       )}
 
+      <Tabs
+        ariaLabel="Purchase cart views"
+        tabs={[
+          { key: 'cart', label: 'Cart' },
+          { key: 'searches', label: 'Searches' },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
+
+      {tab === 'cart' && (
+      <>
       {phase === 'cart' && (
         <Card title="Cart">
           {cart.items.length === 0 ? (
-            <EmptyState message="The cart is empty — add products from the products overview (🛒)." />
+            <EmptyState message="The cart is empty — add products from the products overview." />
           ) : (
             <ul className="cart-items">
               {cart.items.map((it) => (
@@ -284,7 +299,7 @@ export function CartPage() {
               onClick={() => setOptionsOpen((open) => !open)}
               disabled={busy || cart.items.length === 0}
             >
-              🔎 Search offers
+              Search offers
             </Button>
             <Button variant="secondary" onClick={() => cart.clear()} disabled={busy || cart.items.length === 0}>
               Clear all
@@ -397,7 +412,7 @@ export function CartPage() {
           </div>
           <div className="camera-row">
             <Button onClick={handleRetry} disabled={busy}>
-              🔁 Try again
+              Try again
             </Button>
             <Button variant="secondary" onClick={backToCart} disabled={busy}>
               Back to cart
@@ -411,7 +426,7 @@ export function CartPage() {
         <Card title="Offers found">
           <OfferResultView result={result} />
           <div className="camera-row">
-            <Button onClick={handleConfirmPurchase}>✅ Confirm purchase</Button>
+            <Button onClick={handleConfirmPurchase}>Confirm purchase</Button>
             <Button variant="secondary" onClick={backToCart}>
               Back to cart
             </Button>
@@ -419,7 +434,10 @@ export function CartPage() {
           {error && <ErrorMessage message={error} />}
         </Card>
       )}
+      </>
+      )}
 
+      {tab === 'searches' && (
       <Card title="Past searches">
         {history.loading && !history.data ? (
           <Spinner />
@@ -435,6 +453,7 @@ export function CartPage() {
                   onClick={() => {
                     setToken(s.search_token);
                     setResult(null);
+                    setTab('cart');
                     setSearchParams({ token: s.search_token });
                   }}
                 >
@@ -444,22 +463,22 @@ export function CartPage() {
                   {s.name_match === 'loose' && ' · loose'}
                 </button>
                 <span className={`offer-status offer-status-${s.status}`}>{s.status}</span>
-                <button
+                <Button
                   type="button"
-                  className="icon-btn"
-                  title="Discard this search"
-                  aria-label="Discard this search"
+                  variant="ghost"
+                  className="btn-sm"
                   disabled={busy || s.status === 'searching'}
                   onClick={() => discardSearch(s.search_token)}
                 >
-                  🗑️
-                </button>
+                  Discard
+                </Button>
               </li>
             ))}
           </ul>
         )}
         {history.error && <ErrorMessage message={history.error.message} />}
       </Card>
+      )}
     </div>
   );
 }

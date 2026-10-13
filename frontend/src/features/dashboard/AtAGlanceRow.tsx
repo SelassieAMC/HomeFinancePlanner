@@ -21,7 +21,7 @@ export function AtAGlanceRow({ glance }: { glance: AsyncState<Glance> }) {
   }
   if (glance.loading || !d) {
     return (
-      <div className="stat-grid">
+      <div className="stat-grid glance">
         {['Net Worth', 'Cash Flow', 'Burn Rate', 'Receipts to review'].map((label) => (
           <Card className="stat-tile" key={label}>
             <span className="stat-label">{label}</span>
@@ -34,23 +34,23 @@ export function AtAGlanceRow({ glance }: { glance: AsyncState<Glance> }) {
 
   const netTone = d.net_cents >= 0 ? 'stat-positive' : 'stat-negative';
   return (
-    <div className="stat-grid">
+    <div className="stat-grid glance">
       <Card className="stat-tile">
-        <span className="stat-label">Net Worth</span>
+        <span className="stat-label">Net worth, all accounts</span>
         <span className="stat-value">{formatCents(d.net_worth_cents, cur)}</span>
-        <span className="stat-label">all accounts</span>
+        <span className="stat-label">today</span>
       </Card>
       <Card className="stat-tile">
-        <span className="stat-label">Cash Flow · {monthLabel(d.month)}</span>
+        <span className="stat-label">Cash flow in {monthLabel(d.month)}</span>
         <span className={`stat-value ${netTone}`}>{formatSignedCents(d.net_cents, cur)}</span>
         <span className="stat-label">
           {formatCents(d.income_cents, cur)} in · {formatCents(d.expense_cents, cur)} out
         </span>
       </Card>
       <Card className="stat-tile">
-        <span className="stat-label">Burn Rate</span>
+        <span className="stat-label">Burn rate</span>
         <span className="stat-value">{formatCents(d.burn_rate_cents, cur)}</span>
-        <span className="stat-label">avg. per day · last 30 days</span>
+        <span className="stat-label">avg. spent per day, last 30 days</span>
       </Card>
       <Card className="stat-tile">
         <span className="stat-label">Receipts to review</span>

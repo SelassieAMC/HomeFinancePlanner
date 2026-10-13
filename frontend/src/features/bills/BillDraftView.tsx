@@ -142,16 +142,18 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
             return (
               <details className="item-panel" key={it.id}>
                 <summary>
-                  <span
-                    className="item-icon"
-                    title={
-                      it.is_return
-                        ? 'Deposit return (money back)'
-                        : cat?.name || it.category_name || 'Unclassified'
-                    }
-                  >
-                    {it.is_return ? '♻️' : cat?.icon || '🛒'}
-                  </span>
+                  {(it.is_return || cat?.icon) && (
+                    <span
+                      className="item-icon"
+                      title={
+                        it.is_return
+                          ? 'Deposit return (money back)'
+                          : cat?.name || it.category_name || 'Unclassified'
+                      }
+                    >
+                      {it.is_return ? '♻️' : cat?.icon}
+                    </span>
+                  )}
                   <span className="item-title">
                     <span className="item-name">{it.name}</span>
                     {it.is_return ? (
