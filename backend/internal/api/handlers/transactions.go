@@ -21,6 +21,7 @@ type transactionRequest struct {
 	Date             string                   `json:"date"`
 	StoreName        string                   `json:"store_name"`
 	CounterAccountID *int64                   `json:"counter_account_id"` // transfers only: destination
+	BagID            *int64                   `json:"bag_id,omitempty"`   // expenses only: spent out of this bag
 	Items            []transactionItemRequest `json:"items"`
 }
 
@@ -86,6 +87,14 @@ func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("kind"); v != "" {
 		f.Kind = domain.TransactionKind(v)
 	}
+	if v := q.Get("bag_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			respondError(w, r, http.StatusBadRequest, "invalid bag_id")
+			return
+		}
+		f.BagID = &id
+	}
 
 	transactions, err := h.Svc.List(r.Context(), f)
 	if err != nil {
@@ -125,6 +134,7 @@ func (h *TransactionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Date:             req.Date,
 		StoreName:        req.StoreName,
 		CounterAccountID: req.CounterAccountID,
+		BagID:            req.BagID,
 		Items:            transactionItemInputs(req.Items),
 	})
 	if err != nil {
@@ -154,6 +164,7 @@ func (h *TransactionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Date:             req.Date,
 		StoreName:        req.StoreName,
 		CounterAccountID: req.CounterAccountID,
+		BagID:            req.BagID,
 		Items:            transactionItemInputs(req.Items),
 	})
 	if err != nil {

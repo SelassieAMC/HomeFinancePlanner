@@ -47,6 +47,10 @@ export interface Transaction {
   // Transfers only: destination account (account_id is the source).
   counter_account_id?: number | null;
   counter_account_name?: string; // display-only, joined from accounts
+  // Bag (allocation envelope) tagging. On bill-linked rows this mirrors the
+  // bill-level tag for display only — the bag's spend truth is the bill lines.
+  bag_id?: number | null;
+  bag_name?: string; // display-only, joined from bags
   item_count?: number; // display-only correlated count
   items_total_cents?: number; // display-only Σ line totals
   items?: TransactionItem[]; // loaded by get only, never by list
@@ -93,6 +97,7 @@ export interface TransactionInput {
   date: string;
   store_name?: string; // manual purchases: market, find-or-created server-side
   counter_account_id?: number; // transfers only: destination account
+  bag_id?: number | null; // expenses only: tagged into one reserve
   items?: TransactionItemInput[];
 }
 
@@ -120,6 +125,107 @@ export interface GoalInput {
   target_cents: number;
   account_id: number;
   target_date?: string | null;
+}
+
+// --- Bags: allocation envelopes inside one account ---------------------------
+
+export type BagLifecycle = 'open' | 'closed';
+
+/** A named reserve of one account's balance — virtual partition, no money of
+ *  its own. Balance is derived per read: Σ allocations − tagged spend. */
+export interface Bag {
+  id: number;
+  name: string;
+  account_id: number;
+  target_cents?: number | null; // optional "should hold at least this much"
+  status: BagLifecycle;
+  closed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One signed ledger row of a bag (never a transaction — partitions an
+ *  existing balance, enters no aggregate). kind carries the sign for
+ *  fund/withdraw; rebalance/adjust carry it directly. */
+export interface BagAllocation {
+  id: number;
+  bag_id: number;
+  kind: 'fund' | 'rebalance' | 'withdraw' | 'adjust';
+  amount_cents: number;
+  note?: string;
+  date: string; // YYYY-MM-DD
+  related_allocation_id?: number | null; // counterpart leg of a rebalance
+  created_at: string;
+  updated_at: string;
+}
+
+/** A bag with its computed balance attached (in the account's currency). */
+export interface BagStatus extends Bag {
+  account_name: string;
+  tagged_spend_cents: number;
+  balance_cents: number;
+}
+
+/** One account's bag section of GET /bags. */
+export interface BagAccountView {
+  account_id: number;
+  account_name: string;
+  currency: string;
+  account_balance_cents: number;
+  unbagged_cents: number;
+  oversubscribed: boolean;
+  bags: BagStatus[];
+}
+
+export interface BagOverview {
+  conversion_warnings: string[];
+  accounts: BagAccountView[];
+}
+
+export interface BagInput {
+  name: string;
+  account_id: number;
+  target_cents?: number | null;
+}
+
+/** Manual ledger entry. fund/withdraw take the positive magnitude only (the
+ *  kind carries the sign); adjust takes any non-zero amount. */
+export interface BagAllocationInput {
+  kind: 'fund' | 'withdraw' | 'adjust';
+  amount_cents: number;
+  note?: string;
+  date: string;
+}
+
+export interface BagRebalanceInput {
+  from_bag_id: number;
+  to_bag_id: number;
+  amount_cents: number;
+  note?: string;
+  date: string;
+}
+
+/** One open bag's year-end close preview row. */
+export interface YearCloseBagRow {
+  bag_id: number;
+  bag_name: string;
+  account_id: number;
+  account_name: string;
+  currency: string;
+  balance_cents: number;
+  target_cents: number;
+  shortfall_cents: number;
+}
+
+export interface YearClosePreview {
+  year: string;
+  conversion_warnings: string[];
+  bags: YearCloseBagRow[];
+}
+
+export interface BagRebalancePair {
+  from: BagAllocation;
+  to: BagAllocation;
 }
 
 // 'product' = bill item storage taxonomy; 'expense' = general budget grouping.
@@ -383,6 +489,7 @@ export interface BillItem {
   line_total_cents: number; // may be negative for deposit returns
   is_return: boolean; // deposit/bottle return (e.g. "Leergut")
   budget_id?: number | null; // per-line budget override (null = bill's budget)
+  bag_id?: number | null; // per-line bag override (null = bill's bag)
   product_id?: number | null; // catalogue product resolved from the name (null for returns)
 }
 
@@ -402,6 +509,7 @@ export interface Bill {
   extracted_by: string;
   budget_id?: number | null; // budget the bill counts toward
   budget_name?: string; // display-only, joined from budgets
+  bag_id?: number | null; // bag the bill is tagged into (per-line overrides live on items)
   transaction_id?: number | null; // expense transaction recorded at confirm
   account_id?: number | null; // account of that transaction (display-only, joined)
   account_name?: string; // display-only, joined from accounts
@@ -495,6 +603,7 @@ export interface BillDraftItem {
   line_total_cents: number; // may be negative for deposit returns
   is_return?: boolean; // deposit/bottle return (e.g. "Leergut")
   budget_id?: number | null; // per-line budget override (null = bill's budget)
+  bag_id?: number | null; // per-line bag override (null = bill's bag)
 }
 
 export interface BillDraft {
@@ -510,6 +619,7 @@ export interface BillDraft {
   total_cents: number; // computed: sum of lines − global discount (VAT included in prices)
   printed_total_cents: number; // as printed on the receipt
   budget_id?: number | null; // budget the whole bill counts toward
+  bag_id?: number | null; // bag the whole bill is tagged into
 }
 
 /** Pipeline state of one uploaded receipt (analysis runs in the background).
@@ -598,6 +708,7 @@ export interface BillConfirmInput {
   vat_cents: number;
   printed_total_cents: number; // carried through for the mismatch warning
   budget_id?: number; // optional budget this bill counts toward
+  bag_id?: number | null; // optional bag the whole bill is tagged into
   items: {
     name: string;
     standard_name?: string; // per-line override (empty = raw name)
@@ -610,6 +721,7 @@ export interface BillConfirmInput {
     unit_price_cents: number;
     discount_cents: number;
     budget_id?: number | null; // per-line override (omitted = bill's budget)
+    bag_id?: number | null; // per-line override (omitted = bill's bag)
   }[];
   account_id?: number;
 }

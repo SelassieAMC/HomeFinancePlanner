@@ -18,7 +18,7 @@ import {
 // (Transactions → Transfer), so the balance stays the single source of truth
 // the net-worth math already trusts. The achieved state is derived, never
 // stored.
-export function GoalsPage() {
+export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
   const { data, loading, error, reload } = useAsync(() => goalsApi.list(), []);
   const accounts = useAsync(() => accountsApi.list(), []);
 
@@ -94,10 +94,8 @@ export function GoalsPage() {
     return a.name.localeCompare(b.name);
   });
 
-  return (
-    <div className="page">
-      <h2 className="page-title">Goals</h2>
-
+  const content = (
+    <>
       <Card title="Add goal">
         <form className="form-row" onSubmit={handleCreate}>
           <input
@@ -188,6 +186,15 @@ export function GoalsPage() {
           </div>
         </Dialog>
       )}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <div className="page">
+      <h2 className="page-title">Goals</h2>
+      {content}
     </div>
   );
 }

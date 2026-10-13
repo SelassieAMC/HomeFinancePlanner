@@ -64,12 +64,15 @@ func (k TransactionKind) Valid() bool {
 }
 
 // TransactionFilters narrows transaction list queries. Zero values mean "no
-// filter"; Limit <= 0 uses the store's default limit.
+// filter"; Limit <= 0 uses the store's default limit. BagID matches explicit
+// tagging (the transaction's own bag, and for bill-linked rows the bill's
+// bag mirrored onto the row).
 type TransactionFilters struct {
 	AccountID int64
 	Category  *int64
 	Month     string // YYYY-MM
 	Kind      TransactionKind
+	BagID     *int64
 	Limit     int
 	Offset    int
 }
@@ -97,6 +100,14 @@ type Transaction struct {
 	// expense rows (a NULL on a transfer violates validation).
 	CounterAccountID   *int64 `json:"counter_account_id,omitempty"`
 	CounterAccountName string `json:"counter_account_name,omitempty"` // display-only, joined from accounts
+
+	// BagID tags an expense to a bag: the money was spent out of that
+	// reserve. Never set on income or transfer rows (validated); NULL for
+	// untagged spend. Bag spend that arrives through a scanned bill stays on
+	// the bill row itself (per-line override on bill_items) — the bill's
+	// mirrored transaction carries the bill-level bag for display only.
+	BagID   *int64 `json:"bag_id,omitempty"`
+	BagName string `json:"bag_name,omitempty"` // display-only, joined from bags
 
 	// Display-only. ItemCount is the number of item lines (correlated count,
 	// always present); Items are loaded by Get only, never by List.

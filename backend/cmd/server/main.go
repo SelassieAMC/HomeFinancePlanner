@@ -103,7 +103,8 @@ func run() error {
 	billAnalyzer := riverPurchaseAnalyzer{manager: jobsMgr}
 
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
-		promptSvc, accounts, categories, stores, products, productMappings, budgets, transactions, fxSvc,
+		promptSvc, accounts, categories, stores, products, productMappings, budgets,
+		repository.NewBagRepository(db), transactions, fxSvc,
 		cfg.BillsPath, billAnalyzer, cfg.LLMTimeout, log)
 	offerSearches := repository.NewOfferSearchRepository(db)
 	cartSearchSvc := service.NewOfferSearchService(offerSearches, products, stores, settingsSvc,
@@ -114,7 +115,7 @@ func run() error {
 	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, productMappings,
 		transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc,
 		promptSvc, service.NewInsightService(insights),
-		repository.NewGoalRepository(db))
+		repository.NewGoalRepository(db), repository.NewBagRepository(db))
 
 	if jobsMgr != nil {
 		if err := jobsMgr.Start(ctx); err != nil {

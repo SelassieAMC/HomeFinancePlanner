@@ -12,12 +12,11 @@ type NavItem = { to: string; label: string; end?: boolean };
 const TAB_ITEMS: NavItem[] = [
   { to: '/', label: 'Home', end: true },
   { to: '/transactions', label: 'Activity' },
-  { to: '/budgets', label: 'Budgets' },
+  { to: '/planning', label: 'Planning' },
 ];
 
 const MORE_ITEMS: (NavItem & { external?: true; href?: string })[] = [
   { to: '/accounts', label: 'Accounts' },
-  { to: '/goals', label: 'Goals' },
   { to: '/stores', label: 'Stores' },
   { to: '/products', label: 'Products' },
   { to: '/cart', label: 'Purchase cart' },
@@ -156,10 +155,10 @@ export function AppLayout() {
           </button>
         </span>
         <NavLink
-          to="/budgets"
+          to="/planning"
           className={({ isActive }) => (isActive ? 'tab-link active' : 'tab-link')}
         >
-          Budgets
+          Planning
         </NavLink>
         <button
           type="button"

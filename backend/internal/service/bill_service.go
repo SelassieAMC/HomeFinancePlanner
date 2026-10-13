@@ -109,6 +109,7 @@ type BillService struct {
 	products   ProductStore
 	mappings   ProductMappingStore
 	budgets    BudgetStore
+	bags       BagStore
 	txStore    TransactionStore
 	rates      RateSource
 	billsDir   string
@@ -144,6 +145,7 @@ func NewBillService(
 	products ProductStore,
 	mappings ProductMappingStore,
 	budgets BudgetStore,
+	bags BagStore,
 	txStore TransactionStore,
 	rates RateSource,
 	billsDir string,
@@ -170,6 +172,7 @@ func NewBillService(
 		products:       products,
 		mappings:       mappings,
 		budgets:        budgets,
+		bags:           bags,
 		txStore:        txStore,
 		rates:          rates,
 		billsDir:       billsDir,
@@ -430,6 +433,9 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 	if err != nil {
 		return domain.Bill{}, err
 	}
+	if err := s.checkBillBagAccount(ctx, in, account.ID); err != nil {
+		return domain.Bill{}, err
+	}
 	applyAccountPaymentRules(&in, account)
 
 	bill, err := s.buildBill(ctx, in, &billScanSource{files: billFilesFromScan(scan), providerID: scan.ProviderID})
@@ -479,6 +485,20 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 			return domain.Bill{}, fmt.Errorf("validate account_id: %w", err)
 		}
 		applyAccountPaymentRules(&in, account)
+	}
+
+	// nil account_id = "leave the account as it is": the bag tie is checked
+	// against the expense account the bill's linked transaction was recorded
+	// on. A bill with no account at all cannot be bag-tagged — the ledger tie
+	// would be a guess.
+	bagAccount := int64(0)
+	if account.ID > 0 {
+		bagAccount = account.ID
+	} else if existing.AccountID != nil {
+		bagAccount = *existing.AccountID
+	}
+	if err := s.checkBillBagAccount(ctx, in, bagAccount); err != nil {
+		return domain.Bill{}, err
 	}
 
 	source := &billScanSource{files: billFilesFromBill(existing), providerID: existing.ExtractedBy}
@@ -556,12 +576,62 @@ func applyAccountPaymentRules(in *domain.BillConfirmInput, account domain.Accoun
 	in.CardLastDigits = ""
 }
 
+// checkBillBagAccount ties every bag reference (bill-level and per-line) to
+// the account the bill's expense is recorded on — a bag lives inside one
+// account, so spend tagged into it must leave that same account. accountID <=
+// 0 (a bill with no resolvable expense account) refuses any bag tag.
+func (s *BillService) checkBillBagAccount(ctx context.Context, in domain.BillConfirmInput, accountID int64) error {
+	refs := make([]*int64, 0, len(in.Items)+1)
+	if in.BagID != nil {
+		refs = append(refs, in.BagID)
+	}
+	for i := range in.Items {
+		if in.Items[i].BagID != nil {
+			refs = append(refs, in.Items[i].BagID)
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	if accountID <= 0 {
+		return validationError("tagging a bag needs the bill's expense account — a bag lives on one account")
+	}
+	seen := map[int64]bool{}
+	for _, ref := range refs {
+		if seen[*ref] {
+			continue
+		}
+		seen[*ref] = true
+		bag, err := s.bags.GetBagByID(ctx, *ref)
+		if err != nil {
+			return validationError("validate bag_id: %v", err)
+		}
+		if bag.AccountID != accountID {
+			return validationError("bag %q belongs to another account — record the expense on %q",
+				bag.Name, s.accNameOrID(ctx, bag.AccountID))
+		}
+	}
+	return nil
+}
+
+// accNameOrID names an account for an error message, falling back to its id
+// (the account was already validated, so this is display only).
+func (s *BillService) accNameOrID(ctx context.Context, id int64) string {
+	if a, err := s.accounts.GetByID(ctx, id); err == nil {
+		return a.Name
+	}
+	return fmt.Sprintf("#%d", id)
+}
+
 // recordBillTransaction writes the expense transaction for a bill and links it,
 // so later bill edits keep it in sync.
 func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, bill domain.Bill, accountID int64) error {
 	// BillID marks the row as bill-linked (readonly in the activity view, the
 	// UI links back to the bill); it is round-tripped by every later
-	// transaction Update and never cleared while the bill lives.
+	// transaction Update and never cleared while the bill lives. BagID mirrors
+	// the bill-level tag display-only: the bag spend sums come from the bill
+	// itself (per-line COALESCE), the transaction row is excluded by its
+	// bill_id while bag_name travels on it for the activity list.
 	txRow, err := s.txStore.Create(ctx, domain.Transaction{
 		AccountID:   accountID,
 		Kind:        domain.TransactionExpense,
@@ -570,6 +640,7 @@ func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, b
 		Description: billDescription(bill),
 		Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
 		BillID:      &billID,
+		BagID:       bill.BagID,
 	})
 	if err != nil {
 		return fmt.Errorf("record bill transaction: %w", err)
@@ -612,6 +683,7 @@ func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill 
 	if accountID > 0 {
 		tx.AccountID = accountID
 	}
+	tx.BagID = bill.BagID // display-only mirror; bill lines stay the bag truth
 	if _, err := s.txStore.Update(ctx, tx); err != nil {
 		return fmt.Errorf("sync bill transaction: %w", err)
 	}
@@ -931,7 +1003,9 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 	cardDigits := normalizeDigits(in.CardLastDigits)
 	// The bill-level budget is the default attribution for every line; items
 	// may override it per line (nil = inherit). Closed envelopes no longer
-	// accept spend.
+	// accept spend. The same rule applies to bag tagging (existence + open
+	// state here; the account tie is checked by the caller, which knows the
+	// bill's expense account).
 	if in.BudgetID != nil {
 		b, err := s.budgets.GetByID(ctx, *in.BudgetID)
 		if err != nil {
@@ -939,6 +1013,18 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		}
 		if b.Status == domain.BudgetClosed {
 			return domain.Bill{}, validationError("budget %d is closed and no longer accepts spend", b.ID)
+		}
+	}
+	if in.BagID != nil {
+		if s.bags == nil {
+			return domain.Bill{}, validationError("bag tagging is unavailable")
+		}
+		bag, err := s.bags.GetBagByID(ctx, *in.BagID)
+		if err != nil {
+			return domain.Bill{}, fmt.Errorf("validate bag_id: %w", err)
+		}
+		if bag.Status == domain.BagClosed {
+			return domain.Bill{}, validationError("bag %q is closed and no longer accepts spend", bag.Name)
 		}
 	}
 	items := make([]domain.BillItem, 0, len(in.Items))
@@ -976,6 +1062,19 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 				return domain.Bill{}, validationError("budget %d is closed and no longer accepts spend", b.ID)
 			}
 		}
+		// Per-line bag override (nil = the bill's bag): existence + open state.
+		if it.BagID != nil && (in.BagID == nil || *it.BagID != *in.BagID) {
+			if s.bags == nil {
+				return domain.Bill{}, validationError("bag tagging is unavailable")
+			}
+			bag, err := s.bags.GetBagByID(ctx, *it.BagID)
+			if err != nil {
+				return domain.Bill{}, fmt.Errorf("validate bag for %q: %w", name, err)
+			}
+			if bag.Status == domain.BagClosed {
+				return domain.Bill{}, validationError("bag %q is closed and no longer accepts spend", bag.Name)
+			}
+		}
 		line := it.Quantity*float64(it.UnitPriceCents) - float64(it.DiscountCents)
 		lineCents := int64(math.Round(line))
 		if lineCents < 0 && !allowsNegative {
@@ -994,6 +1093,7 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 			LineTotalCents: lineCents,
 			IsReturn:       isReturn,
 			BudgetID:       it.BudgetID,
+			BagID:          it.BagID,
 		})
 	}
 
@@ -1047,6 +1147,7 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		Files:              source.files,
 		ExtractedBy:        source.providerID,
 		BudgetID:           in.BudgetID,
+		BagID:              in.BagID,
 		StoreID:            storeID,
 		Items:              items,
 	}, nil

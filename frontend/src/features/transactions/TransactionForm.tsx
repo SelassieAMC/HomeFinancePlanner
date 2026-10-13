@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Account, Category, Store, Transaction, TransactionInput, TransactionKind } from '../../types/domain';
 import { productsApi } from '../../api/products';
+import { bagsApi } from '../../api/bags';
 import { dollarsToCents, formatCents, parseDecimalInput } from '../../lib/money';
+import { useAsync } from '../../hooks/useAsync';
 import {
   Button,
   CategorySelect,
@@ -111,6 +113,12 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   );
   const [categoryId, setCategoryId] = useState(initial?.category_id ? String(initial.category_id) : '');
   const [description, setDescription] = useState(initial?.description ?? '');
+  // Expenses only: the bag (allocation envelope) the spend draws from. Income
+  // and transfers write no reserve — the select hides and the field clears.
+  const [bagId, setBagId] = useState(
+    initial?.bag_id && initial.kind === 'expense' ? String(initial.bag_id) : '',
+  );
+  const bags = useAsync(() => bagsApi.overview(), []);
 
   // Store picker: a select of known stores with an escape hatch for a new
   // market (the backend find-or-creates it on save), like the bill editor.
@@ -160,6 +168,21 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   const isTransfer = kind === 'transfer';
   const transferAccount =
     accounts.find((a) => String(a.id) === counterAccountId) ?? null;
+
+  // Open bags of the chosen account (a bag lives inside one account — the
+  // backend refuses a cross-account tag, so the select filters up front).
+  const accountBags = useMemo(
+    () =>
+      (bags.data?.accounts ?? [])
+        .find((v) => String(v.account_id) === accountId)
+        ?.bags.filter((b) => b.status === 'open') ?? [],
+    [bags.data, accountId],
+  );
+  // A bag belonging to a different account than the newly picked one silently
+  // unselects — the submit would otherwise be refused.
+  useEffect(() => {
+    if (bagId && !accountBags.some((b) => String(b.id) === bagId)) setBagId('');
+  }, [bagId, accountBags]);
 
   function updateLine(key: number, patch: Partial<LineDraft>) {
     setLines((ls) => ls.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -279,6 +302,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         date,
         store_name: isTransfer ? '' : (customStore ? customStoreName : (pickedStore?.name ?? '')),
         counter_account_id: isTransfer ? Number(counterAccountId) : undefined,
+        bag_id: kind === 'expense' && bagId ? Number(bagId) : undefined,
         items: items.length > 0 && !isTransfer ? items : undefined,
       });
     } catch (err) {
@@ -386,6 +410,23 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               ariaLabel="Category"
               emptyLabel="Category…"
             />
+          </label>
+        )}
+        {kind === 'expense' && accountBags.length > 0 && (
+          <label>
+            From bag
+            <select
+              value={bagId}
+              onChange={(e) => setBagId(e.target.value)}
+              aria-label="From bag (optional)"
+            >
+              <option value="">No bag</option>
+              {accountBags.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
           </label>
         )}
         {!isTransfer && (

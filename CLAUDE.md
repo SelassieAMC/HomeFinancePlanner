@@ -38,7 +38,7 @@ frontend/
     components/
       layout/            # AppLayout, Sidebar, Header
       ui/                # reusable presentational primitives (Button, Card, …)
-    features/            # feature folders: dashboard, transactions, budgets, accounts, bills, settings
+    features/            # feature folders: dashboard, transactions, planning, budgets, bags, goals, accounts, bills, settings
     hooks/               # reusable React hooks
     types/               # shared domain types mirrored from backend DTOs
 ```
@@ -448,5 +448,53 @@ When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.
-migration → domain model → repository → service → handler → route → frontend
-api module → feature page.
+**Bags** (migration 0035) are **allocation envelopes — virtual partitions of one
+account's balance**: the money never moves or is copied into the ledger; a bag's
+balance is always derived per read as Σ `bag_allocations` − tagged spend.
+Bags are plan-level rows, deliberately excluded from all aggregates (transaction
+sums, dashboard totals); deleting a bag is a plain `CASCADE` delete that erases
+its allocation ledger with it (an active-schedule delete guard arrives with the
+unified scheduler, not before). Tagged spend is attributed with a `COALESCE`
+per-line override (`bill_items.bag_id` → `bills.bag_id`); bill-linked expense
+transactions stay out of the spend sums (`t.bill_id IS NULL` guard in
+`TaggedSpend`) and carry the bill's bag only as a display-only mirror
+(`bag_name` joined for the activity list). The lifecycle is
+`open`/`closed`: a closed bag refuses allocations, rebalances and new spend
+tags but keeps reading (reopen flips it back); closing takes nothing from the
+balance — refusals come from the *spend* tag paths. Allocations are signed
+ledger rows with 4 kinds — `fund` (positive), `withdraw` (negative), `adjust`
+(any non-zero), and `rebalance` allowed only through the dedicated endpoint,
+which posts two linked halves (`related_allocation_id` both ways, same account,
+positive amount ≤ source balance) and refuses everything else. Targets are
+optional and never enforced (only displayed + a year-close shortfall):
+`GET /bags?year=YYYY` previews open bags' shortfalls against their targets as
+of Dec 31 of that year, and the close-out is executed purely through the
+regular rebalance/withdraw endpoints dated `YYYY-12-31` (posting into the
+budgeted year shows the posted rows in a re-run preview — no bespoke state).
+Names are unique among OPEN bags of one account. The API surface under
+`/api/v1/bags` (literals `/year-close` and `/rebalance` before the `{id}`
+wildcards): overview / CRUD / `PUT {id}/status` / allocations; a bag cannot be
+re-pointed to another account. Expenses tag into a bag in three places — the
+manual transaction form ("From bag", filtered to the chosen account's open
+bags, refused on income/transfers), the bill review editor (a bill-level Bag
+card next to Budget plus a per-line override next to the per-line Budget,
+filtered to the chosen account's open bags; the backend refusal message names
+the bag's home account), and `?bag_id=` on the activity list filter. The
+backend validates cross-account bag tagging in `BagService`/`BillService`
+(`checkBillBagAccount` on both confirm and update — the bill's expense account
+must exist first, since a bag lives on one account). Frontend: `BagsPage`
+(per-account sections with balance + unbagged/oversubscribed line,
+create/edit/allocate dialogs, rebalance form, ledger list, year-close panel)
+and the dashboard's `BagsBody` inside the tabbed `PlanningCard` (hidden when no
+bags), both built
+on the `.budget-card` budget styling; open-bag selects read
+`bagsApi.overview()`. The unallocated remainder of an account is shown as
+"Unbagged" and flags oversubscription (allocations > balance) inline.
+**Budgets, Goals and Bags share one tabbed view** (`PlanningPage` at
+`/planning`, sidebar/more item "Planning" + mobile bottom tab "Planning";
+`/budgets` / `/goals` / `/bags` are `Navigate` redirects, tab chosen via
+`?tab=`); each sub-page renders embedded (no `page` wrapper/title) inside the
+tabs. On the dashboard the three cards collapsed into one `PlanningCard`
+(tabbed; a section's body renders only with content — `BudgetsBody`,
+`GoalsBody`, `BagsBody` — the card disappears when no layer qualifies, and the
+first section with content wins the active tab).

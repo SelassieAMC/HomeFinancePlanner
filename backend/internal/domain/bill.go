@@ -73,6 +73,7 @@ type Bill struct {
 	ExtractedBy        string     `json:"extracted_by"`           // provider id that produced the draft
 	BudgetID           *int64     `json:"budget_id"`              // optional budget this bill counts toward
 	BudgetName         string     `json:"budget_name,omitempty"`  // display-only, joined from budgets
+	BagID              *int64     `json:"bag_id"`                 // optional reserve this bill was spent out of
 	TransactionID      *int64     `json:"transaction_id"`         // expense transaction recorded at confirm
 	AccountID          *int64     `json:"account_id"`             // account of that transaction (display-only, joined; nil when unlinked)
 	AccountName        string     `json:"account_name,omitempty"` // display-only, joined from accounts
@@ -100,6 +101,7 @@ type BillItem struct {
 	LineTotalCents int64    `json:"line_total_cents"` // may be negative for deposit returns
 	IsReturn       bool     `json:"is_return"`        // deposit/bottle return (e.g. "Leergut")
 	BudgetID       *int64   `json:"budget_id"`        // per-line budget override (nil = bill's budget)
+	BagID          *int64   `json:"bag_id"`           // per-line bag override (nil = bill's bag)
 	ProductID      *int64   `json:"product_id"`       // catalogue product resolved from the name (nil for returns)
 }
 
@@ -123,6 +125,7 @@ type BillItemDraft struct {
 	LineTotalCents int64    `json:"line_total_cents"` // may be negative for deposit returns
 	IsReturn       bool     `json:"is_return,omitempty"`
 	BudgetID       *int64   `json:"budget_id,omitempty"` // per-line budget override (nil = bill's budget)
+	BagID          *int64   `json:"bag_id,omitempty"`    // per-line bag override (nil = bill's bag)
 }
 
 // BillDraft is the normalized extraction result, held in memory until the user
@@ -213,6 +216,7 @@ type BillConfirmInput struct {
 	VATCents          int64           `json:"vat_cents"`
 	PrintedTotalCents int64           `json:"printed_total_cents"`
 	BudgetID          *int64          `json:"budget_id,omitempty"` // optional budget this bill counts toward
+	BagID             *int64          `json:"bag_id,omitempty"`    // optional reserve the bill was spent out of
 	Items             []BillItemDraft `json:"items"`
 	AccountID         *int64          `json:"account_id,omitempty"` // optional expense target
 }

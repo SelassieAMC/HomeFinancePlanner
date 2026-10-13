@@ -6,6 +6,7 @@ const BASE = '/api/v1';
 export interface TransactionFilters {
   account_id?: number;
   category_id?: number;
+  bag_id?: number;
   month?: string;
   kind?: string;
   limit?: number;
@@ -16,6 +17,7 @@ function toQuery(filters: TransactionFilters): string {
   const params = new URLSearchParams();
   if (filters.account_id) params.set('account_id', String(filters.account_id));
   if (filters.category_id) params.set('category_id', String(filters.category_id));
+  if (filters.bag_id) params.set('bag_id', String(filters.bag_id));
   if (filters.month) params.set('month', filters.month);
   if (filters.kind) params.set('kind', filters.kind);
   if (filters.limit) params.set('limit', String(filters.limit));

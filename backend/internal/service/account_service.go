@@ -131,6 +131,9 @@ type TransactionService struct {
 	categories   CategoryStore
 	stores       StoreStore
 	products     ProductStore
+	// bags validates expense tagging into allocation envelopes. nil disables
+	// the layer (tests).
+	bags BagStore
 	// mappings is the product-name normalization memory: a typed name that is
 	// already mapped fills its category from the mapping, and an unmapped
 	// name records an identity mapping so the next entry normalizes without
@@ -162,6 +165,10 @@ type TransactionInput struct {
 	// AccountID is the source). Must be nil for income/expense and a distinct
 	// account for transfers.
 	CounterAccountID *int64
+	// BagID tags an expense as spent out of a reserve. Refused on income and
+	// transfer; expense-only, and the bag must belong to the transaction's
+	// own account and stay open.
+	BagID *int64
 	// Items are the article lines of a manually entered purchase; empty for a
 	// plain amount-only transaction. Only expenses may carry them.
 	Items []TransactionItemInput
@@ -286,6 +293,11 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	} else if in.CounterAccountID != nil {
 		return domain.Transaction{}, validationError("counter_account_id is only valid on transfers")
 	}
+	// Bag tagging is a spending concept: income cannot spend a reserve and a
+	// transfer moves money, it does not spend it.
+	if in.BagID != nil && in.Kind != domain.TransactionExpense {
+		return domain.Transaction{}, validationError("bag_id is only valid on expenses — income and transfers write no reserve")
+	}
 	if len(in.Items) > maxTransactionItems {
 		return domain.Transaction{}, validationError("at most %d items are supported", maxTransactionItems)
 	}
@@ -319,6 +331,22 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		if _, err := s.categories.GetByID(ctx, *in.CategoryID); err != nil {
 			return domain.Transaction{}, fmt.Errorf("validate category_id: %w", err)
 		}
+	}
+
+	// Bag tagging: the bag must exist, be open, and belong to the account the
+	// transaction is recorded on — a bag partitions exactly one account.
+	var bagID *int64
+	if in.BagID != nil {
+		bag, err := s.validateBag(ctx, *in.BagID)
+		if err != nil {
+			return domain.Transaction{}, err
+		}
+		if bag.AccountID != acc.ID {
+			return domain.Transaction{}, validationError(
+				"bag %q lives on another account — tag expenses on %q too",
+				bag.Name, acc.Name)
+		}
+		bagID = in.BagID
 	}
 
 	// Transfer destination: a real account distinct from the source. The
@@ -471,9 +499,26 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		Date:             in.Date,
 		StoreID:          storeID,
 		CounterAccountID: counterID,
+		BagID:            bagID,
 		ItemsTotalCents:  itemsTotal,
 		Items:            items,
 	}, nil
+}
+
+// validateBag loads a bag for tagging and refuses closed ones (their reserve
+// no longer accepts spend, like closed budgets).
+func (s *TransactionService) validateBag(ctx context.Context, id int64) (domain.Bag, error) {
+	if s.bags == nil {
+		return domain.Bag{}, validationError("bag_id tagging is unavailable")
+	}
+	bag, err := s.bags.GetBagByID(ctx, id)
+	if err != nil {
+		return domain.Bag{}, fmt.Errorf("validate bag_id: %w", err)
+	}
+	if bag.Status == domain.BagClosed {
+		return domain.Bag{}, validationError("bag %q is closed and no longer accepts spend", bag.Name)
+	}
+	return bag, nil
 }
 
 // resolveTransactionStore find-or-creates the store for a manual purchase,

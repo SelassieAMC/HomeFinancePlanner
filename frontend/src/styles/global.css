@@ -2838,3 +2838,79 @@ textarea:focus,
 .offer-status-failed {
   background: rgba(211, 58, 44, 0.1);
 }
+
+/* Bags: allocation envelopes inside one account. Reuses the budget card
+   language (.budget-card/.budget-*) plus these section bits. */
+.bag-account-section {
+  margin-top: 1.5rem;
+}
+
+.bag-account-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.bag-account-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.bag-unbagged {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.bag-section {
+  display: contents;
+}
+
+.ledger-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.ledger-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ledger-kind {
+  flex-shrink: 0;
+  min-width: 5.5rem;
+  font-size: 0.75rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.ledger-amounts {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* Tabbed Planning card on the dashboard: the tab strip sits directly under
+   the card title, the active section's pane gets breathing room below it. */
+.planning-card .tabs {
+  margin-bottom: 0.9rem;
+}
+
+.planning-pane .budget-list:first-child,
+.planning-pane .empty-state:first-child {
+  margin-top: 0.25rem;
+}

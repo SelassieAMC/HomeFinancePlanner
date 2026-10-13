@@ -30,7 +30,7 @@ function monthTag(month: string): string {
 // closes the stale monthly row once its month has passed and opens the
 // current month's successor with the same amount (leftovers never roll
 // over), so the list doubles as the Jan-vs-Feb history.
-export function BudgetsPage() {
+export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   const { data, loading, error, reload } = useAsync(() => budgetsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
   // Lifetime spend per budget (month-bounded for monthly rows). The
@@ -111,10 +111,8 @@ export function BudgetsPage() {
     return (b.month ?? '').localeCompare(a.month ?? '');
   });
 
-  return (
-    <div className="page">
-      <h2 className="page-title">Budgets</h2>
-
+  const content = (
+    <>
       <Card title="Add budget">
         <form className="form-row" onSubmit={handleCreate}>
           <CategorySelect
@@ -168,6 +166,15 @@ export function BudgetsPage() {
           })}
         </div>
       )}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <div className="page">
+      <h2 className="page-title">Budgets</h2>
+      {content}
     </div>
   );
 }

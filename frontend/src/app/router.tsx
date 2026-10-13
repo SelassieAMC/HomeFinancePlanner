@@ -1,10 +1,9 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { AccountsPage } from '../features/accounts/AccountsPage';
 import { TransactionsPage } from '../features/transactions/TransactionsPage';
-import { BudgetsPage } from '../features/budgets/BudgetsPage';
-import { GoalsPage } from '../features/goals/GoalsPage';
+import { PlanningPage } from '../features/planning/PlanningPage';
 import { StoresPage } from '../features/stores/StoresPage';
 import { ProductsPage } from '../features/products/ProductsPage';
 import { CartPage } from '../features/cart/CartPage';
@@ -21,8 +20,12 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'transactions', element: <TransactionsPage /> },
-      { path: 'budgets', element: <BudgetsPage /> },
-      { path: 'goals', element: <GoalsPage /> },
+      // One Planning view with tabs; the old per-layer routes redirect so
+      // existing links (bookmarks, old navigation targets) keep landing right.
+      { path: 'budgets', element: <Navigate to="/planning" replace /> },
+      { path: 'goals', element: <Navigate to="/planning?tab=goals" replace /> },
+      { path: 'bags', element: <Navigate to="/planning?tab=bags" replace /> },
+      { path: 'planning', element: <PlanningPage /> },
       { path: 'stores', element: <StoresPage /> },
       { path: 'products', element: <ProductsPage /> },
       { path: 'cart', element: <CartPage /> },

@@ -20,12 +20,14 @@ const transactionColumns = `
 	t.created_at, t.updated_at,
 	t.bill_id, t.store_id, st.name AS store_name,
 	t.counter_account_id, ca.name AS counter_account_name,
+	t.bag_id, bg.name AS bag_name,
 	(SELECT COUNT(*) FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count`
 
 const transactionFrom = `
 	FROM transactions t
 	LEFT JOIN stores st ON st.id = t.store_id
-	LEFT JOIN accounts ca ON ca.id = t.counter_account_id`
+	LEFT JOIN accounts ca ON ca.id = t.counter_account_id
+	LEFT JOIN bags bg ON bg.id = t.bag_id`
 
 const transactionItemColumns = `
 	ti.id, ti.transaction_id, ti.product_id, p.name AS product_name, ti.name,
@@ -68,6 +70,10 @@ func (r *TransactionRepository) List(ctx context.Context, f TransactionFilters) 
 	if f.Kind != "" {
 		where = append(where, "t.kind = ?")
 		args = append(args, string(f.Kind))
+	}
+	if f.BagID != nil && *f.BagID > 0 {
+		where = append(where, "t.bag_id = ?")
+		args = append(args, *f.BagID)
 	}
 
 	limit := f.Limit
@@ -129,10 +135,10 @@ func (r *TransactionRepository) Create(ctx context.Context, t domain.Transaction
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO transactions
-			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, bill_id, store_id, counter_account_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, bill_id, store_id, counter_account_id, bag_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, now, now, nullableID(t.BillID), nullableID(t.StoreID), nullableID(t.CounterAccountID))
+		t.Currency, t.Description, t.Date, now, now, nullableID(t.BillID), nullableID(t.StoreID), nullableID(t.CounterAccountID), nullableID(t.BagID))
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("create transaction", err)
 	}
@@ -156,10 +162,10 @@ func (r *TransactionRepository) CreateWithItems(ctx context.Context, t domain.Tr
 
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO transactions
-			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, store_id, counter_account_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, store_id, counter_account_id, bag_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, now, now, nullableID(t.StoreID), nullableID(t.CounterAccountID))
+		t.Currency, t.Description, t.Date, now, now, nullableID(t.StoreID), nullableID(t.CounterAccountID), nullableID(t.BagID))
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("create transaction", err)
 	}
@@ -180,10 +186,10 @@ func (r *TransactionRepository) Update(ctx context.Context, t domain.Transaction
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE transactions
 		SET account_id = ?, category_id = ?, kind = ?, amount_cents = ?, currency = ?,
-		    description = ?, date = ?, updated_at = ?, counter_account_id = ?
+		    description = ?, date = ?, updated_at = ?, counter_account_id = ?, bag_id = ?
 		WHERE id = ?`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, time.Now().Unix(), nullableID(t.CounterAccountID), t.ID)
+		t.Currency, t.Description, t.Date, time.Now().Unix(), nullableID(t.CounterAccountID), nullableID(t.BagID), t.ID)
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("update transaction", err)
 	}
@@ -208,10 +214,10 @@ func (r *TransactionRepository) UpdateWithItems(ctx context.Context, t domain.Tr
 	res, err := tx.ExecContext(ctx, `
 		UPDATE transactions
 		SET account_id = ?, category_id = ?, kind = ?, amount_cents = ?, currency = ?,
-		    description = ?, date = ?, updated_at = ?, store_id = ?, counter_account_id = ?
+		    description = ?, date = ?, updated_at = ?, store_id = ?, counter_account_id = ?, bag_id = ?
 		WHERE id = ?`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, now, nullableID(t.StoreID), nullableID(t.CounterAccountID), t.ID)
+		t.Currency, t.Description, t.Date, now, nullableID(t.StoreID), nullableID(t.CounterAccountID), nullableID(t.BagID), t.ID)
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("update transaction", err)
 	}
@@ -308,11 +314,14 @@ func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transacti
 		storeName      sql.NullString
 		counterID      sql.NullInt64
 		counterName    sql.NullString
+		bagID          sql.NullInt64
+		bagName        sql.NullString
 		itemCount      int
 	)
 	if err := row.Scan(&t.ID, &t.AccountID, &category, &kind, &t.AmountCents,
 		&t.Currency, &t.Description, &t.Date, &createdAt, &upd,
-		&billID, &storeID, &storeName, &counterID, &counterName, &itemCount); err != nil {
+		&billID, &storeID, &storeName, &counterID, &counterName,
+		&bagID, &bagName, &itemCount); err != nil {
 		return domain.Transaction{}, err
 	}
 	if category.Valid {
@@ -331,7 +340,12 @@ func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transacti
 		v := counterID.Int64
 		t.CounterAccountID = &v
 	}
+	if bagID.Valid {
+		v := bagID.Int64
+		t.BagID = &v
+	}
 	t.StoreName = storeName.String
+	t.BagName = bagName.String
 	t.CounterAccountName = counterName.String
 	t.ItemCount = itemCount
 	t.Kind = domain.TransactionKind(kind)

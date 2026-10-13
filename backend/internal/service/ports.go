@@ -71,6 +71,36 @@ type GoalStore interface {
 // SummaryStore is the persistence contract for dashboard aggregates. It
 // returns native-currency groups for an inclusive date range; conversion into
 // the base currency is the service's job.
+
+// BagStore is the persistence contract for bags and their allocation ledger.
+// Balance aggregation (Σ allocations − live tagged spend) is not persisted:
+// the read-side sums the ledger rows and computes spend from the tagged
+// transactions/bills on every read, so edits to the spend always reflect.
+type BagStore interface {
+	ListBags(ctx context.Context, f domain.BagFilters) ([]domain.Bag, error)
+	GetBagByID(ctx context.Context, id int64) (domain.Bag, error)
+	CreateBag(ctx context.Context, b domain.Bag) (domain.Bag, error)
+	UpdateBag(ctx context.Context, b domain.Bag) (domain.Bag, error)
+	DeleteBag(ctx context.Context, id int64) error
+	// CreateAllocation writes one ledger row.
+	CreateAllocation(ctx context.Context, a domain.BagAllocation) (domain.BagAllocation, error)
+	// ListAllocations returns one bag's ledger, newest first.
+	ListAllocations(ctx context.Context, bagID int64) ([]domain.BagAllocation, error)
+	// CreateAllocationPair writes both rebalance legs atomically and links
+	// them through related_allocation_id.
+	CreateAllocationPair(ctx context.Context, from, to domain.BagAllocation) (domain.BagAllocation, domain.BagAllocation, error)
+	// AllocationTotals sums the signed ledger per bag, bounded by an optional
+	// date ("YYYY-MM-DD"; empty = all-time). All amounts are in the bag's
+	// account currency.
+	AllocationTotals(ctx context.Context, until string) (map[int64]int64, error)
+	// TaggedSpend sums the live spend attributed to each bag per native
+	// currency, bounded by an optional date ("YYYY-MM-DD"; empty = all-time).
+	TaggedSpend(ctx context.Context, until string) ([]domain.BagCurrencySpend, error)
+}
+
+// SummaryStore is the persistence contract for dashboard aggregates. It
+// returns native-currency groups for an inclusive date range; conversion into
+// the base currency is the service's job.
 type SummaryStore interface {
 	RawRangeSummary(ctx context.Context, from, to string) (domain.RawSummary, error)
 	// RawGlance returns the period-independent "at a glance" subtotals:
@@ -222,6 +252,7 @@ type Services struct {
 	Prompts       *AIPromptService
 	Insights      *InsightService
 	Goals         *GoalService
+	Bags          *BagService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -247,6 +278,7 @@ func New(
 	prompts *AIPromptService,
 	insights *InsightService,
 	goals GoalStore,
+	bags BagStore,
 ) *Services {
 	budgetSvc := &BudgetService{budgets: budgets, categories: categories}
 	return &Services{
@@ -254,7 +286,7 @@ func New(
 		Categories:   &CategoryService{categories: categories},
 		Stores:       storeSvc,
 		Products:     productSvc,
-		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, log: slog.Default()},
+		Transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, bags: bags, log: slog.Default()},
 		Budgets:      budgetSvc,
 		// The summary reads budgets, so it runs the monthly rollover first:
 		// the reference is the same instance the budgets handler uses.
@@ -266,5 +298,6 @@ func New(
 		Prompts:       prompts,
 		Insights:      insights,
 		Goals:         &GoalService{goals: goals, accounts: accounts},
+		Bags:          &BagService{bags: bags, accounts: accounts, fx: fx, log: slog.Default()},
 	}
 }

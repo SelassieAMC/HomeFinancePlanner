@@ -534,6 +534,7 @@ function billToDraft(bill: Bill): BillDraft {
       line_total_cents: it.line_total_cents,
       is_return: it.is_return,
       budget_id: it.budget_id ?? undefined,
+      bag_id: it.bag_id ?? undefined,
     })),
     items_subtotal_cents: bill.items_subtotal_cents,
     discount_cents: bill.discount_cents,
@@ -541,6 +542,7 @@ function billToDraft(bill: Bill): BillDraft {
     total_cents: bill.total_cents,
     printed_total_cents: bill.printed_total_cents,
     budget_id: bill.budget_id ?? undefined,
+    bag_id: bill.bag_id ?? undefined,
   };
 }
 

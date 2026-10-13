@@ -1,7 +1,7 @@
 import { useAsync } from '../../hooks/useAsync';
 import type { AsyncState } from '../../hooks/useAsync';
 import { categoriesApi } from '../../api/categories';
-import { Card, ErrorMessage } from '../../components/ui';
+import { Card } from '../../components/ui';
 import { formatCents } from '../../lib/money';
 import { todayISO } from '../../lib/date';
 import type { BudgetStatus, Summary } from '../../types/domain';
@@ -20,46 +20,34 @@ function daysInMonth(month: string): number {
   return new Date(year ?? 2000, monthIdx ?? 12, 0).getDate();
 }
 
-/**
- * Roadmap Step 2 on the dashboard: the displayed month's monthly-budget caps
- * plus the still-open lifetime envelopes, reusing the month summary the stat
- * tiles already fetch (`Summary.budgets`) — no extra aggregate endpoint.
- *
- * Monthly rows bound their spend to their own month (migration 0032), so a
- * monthly row shows up exactly when the displayed month is the row's month;
- * envelopes show lifetime progress, like the Budgets page. For capped rows in
- * the *current* calendar month a pace line projects when the cap would run
- * out if the month's elapsed pace continues. Hidden entirely when nothing
- * qualifies.
- */
-export function BudgetProgressCard({ summary }: { summary: AsyncState<Summary> }) {
+/** The dashboard budget section's qualifying rows: the displayed month's
+ *  monthly caps (closed in-range rows included as the month's history) plus
+ *  every still-open envelope. Shared by the body and the tabbed planning
+ *  card's emptiness check. */
+export function budgetRowsFor(data: Summary): BudgetStatus[] {
+  const month = data.from.slice(0, 7);
+  return (data.budgets ?? []).filter((b) =>
+    b.cadence === 'monthly' ? b.month === month : b.status === 'open',
+  );
+}
+
+/** Body of the budgets section (no Card wrapper — the tabbed planning card
+ *  and a standalone card shell wrap it). Assumes the summary loaded; null
+ *  when nothing qualifies. */
+export function BudgetsBody({ summary }: { summary: AsyncState<Summary> }) {
   const categories = useAsync(() => categoriesApi.list(), []);
 
-  if (summary.loading) {
-    return (
-      <Card title="Budgets" className="budgets-card">
-        <p className="hint-text">Loading budgets…</p>
-      </Card>
-    );
-  }
-  if (summary.error || !summary.data) {
-    return (
-      <Card title="Budgets" className="budgets-card">
-        <ErrorMessage message={summary.error?.message ?? 'Summary unavailable.'} />
-      </Card>
-    );
-  }
+  const data = summary.data;
+  if (!data) return null;
 
-  const month = summary.data.from.slice(0, 7);
-  const currency = summary.data.currency;
+  const month = data.from.slice(0, 7);
+  const currency = data.currency;
   const catById = new Map((categories.data ?? []).map((c) => [c.id, c]));
 
   // Monthly rows for the displayed month (closed ones the summary kept for
   // in-range activity stay visible as the month's history) and every open
   // envelope; finished envelopes are the Budgets page's concern.
-  const rows = (summary.data.budgets ?? []).filter((b) =>
-    b.cadence === 'monthly' ? b.month === month : b.status === 'open',
-  );
+  const rows = budgetRowsFor(data);
   if (rows.length === 0) return null;
 
   // Pace projection reference point: the day inside the displayed month.
@@ -80,8 +68,7 @@ export function BudgetProgressCard({ summary }: { summary: AsyncState<Summary> }
   );
 
   return (
-    <Card title={`Budgets · ${monthTag(month)}`} className="budgets-card">
-      <div className="budget-list">
+    <div className="budget-list">
         {rows.map((b) => {
           const cat = catById.get(b.category_id);
           const isClosed = b.status === 'closed';
@@ -154,6 +141,5 @@ export function BudgetProgressCard({ summary }: { summary: AsyncState<Summary> }
           );
         })}
       </div>
-    </Card>
   );
 }

@@ -5,6 +5,7 @@ import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
 import { productsApi } from '../../api/products';
+import { bagsApi } from '../../api/bags';
 import {
   Button,
   CategorySelect,
@@ -114,7 +115,9 @@ export function buildConfirmInput(
       unit_price_cents: it.unit_price_cents,
       discount_cents: it.discount_cents,
       budget_id: it.budget_id ?? undefined,
+      bag_id: it.bag_id ?? undefined,
     })),
+    bag_id: draft.bag_id ?? undefined,
     account_id: accountId,
   };
 }
@@ -300,6 +303,32 @@ export function BillDraftEditor({
   const walletAccount = accounts?.find(
     (a) => a.type === 'cash' && a.name.toLowerCase() === 'wallet',
   );
+
+  // Bag envelopes (open, reserve partitions). The backend refuses a bag
+  // outside the bill's account, so the options are filtered to the chosen
+  // account: '' and the wallet default are the wallet's bags, a new card
+  // account starts bagless, and unknown accounts (options not loaded yet)
+  // fall back to all open bags — labeled with their account for clarity.
+  const bagsView = useAsync(() => bagsApi.overview(), []);
+  const selectedAccountId =
+    accountChoice === null
+      ? undefined
+      : accountChoice === '__new_card__'
+        ? null
+        : accountChoice === ''
+          ? (walletAccount?.id ?? undefined)
+          : Number(accountChoice) || undefined;
+  const openBags = useMemo(() => {
+    const all = (bagsView.data?.accounts ?? []).flatMap((a) =>
+      a.bags
+        .filter((b) => b.status === 'open')
+        .map((b) => ({ ...b, accountName: a.account_name })),
+    );
+    if (selectedAccountId === null) return []; // a brand-new card starts bagless
+    return selectedAccountId === undefined
+      ? all
+      : all.filter((b) => b.account_id === selectedAccountId);
+  }, [bagsView.data, selectedAccountId]);
 
   // Preselect once the account options arrive: the saved bill's current
   // account, or (fresh scan) the card account matching the receipt's digits.
@@ -652,9 +681,29 @@ export function BillDraftEditor({
             ))}
           </select>
         </div>
+        <div className="stat-card stat-bag">
+          <span className="stat-card-label">Bag</span>
+          <select
+            className="stat-card-input"
+            value={draft.bag_id ?? ''}
+            aria-label="Bag the bill is spent out of"
+            disabled={isBusy}
+            onChange={(e) =>
+              updateHeader({ bag_id: e.target.value ? Number(e.target.value) : null })
+            }
+          >
+            <option value="">No bag</option>
+            {openBags.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} · {b.accountName}
+              </option>
+            ))}
+          </select>
+          {selectedAccountId === undefined && (
+            <span className="stat-card-sub">shown across accounts — pick an account first</span>
+          )}
+        </div>
       </div>
-
-      <div className="bill-actions">{actions}</div>
 
       {mismatch && (
         <div className="bill-warning">
@@ -933,6 +982,28 @@ export function BillDraftEditor({
                     {budgets.map((b) => (
                       <option key={b.id} value={b.id}>
                         {budgetLabel(b, categories)} • {formatCents(b.amount_cents, baseCurrency.data?.currency ?? currency)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="item-field">
+                  <span>Bag</span>
+                  <select
+                    value={it.bag_id ?? ''}
+                    aria-label={`Bag for ${it.name}`}
+                    disabled={isBusy}
+                    onChange={(e) =>
+                      updateItem(it.id, {
+                        bag_id: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                  >
+                    <option value="">
+                      {draft.bag_id ? 'Bill bag (default)' : 'No bag'}
+                    </option>
+                    {openBags.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} · {b.accountName}
                       </option>
                     ))}
                   </select>

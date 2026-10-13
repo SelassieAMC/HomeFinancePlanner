@@ -40,6 +40,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	promptH := &handlers.PromptHandler{Svc: svc.Prompts}
 	insightH := &handlers.InsightHandler{Svc: svc.Insights}
 	goalH := &handlers.GoalHandler{Svc: svc.Goals}
+	bagH := &handlers.BagHandler{Svc: svc.Bags}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -154,6 +155,21 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("POST /api/v1/goals", goalH.Create)
 	mux.HandleFunc("PUT /api/v1/goals/{id}", goalH.Update)
 	mux.HandleFunc("DELETE /api/v1/goals/{id}", goalH.Delete)
+
+	// Bags: allocation envelopes inside one account. /year-close and
+	// /rebalance are literals next to the {id} wildcard — unambiguous in
+	// ServeMux. The {id}/allocations routes are 4 segments next to the
+	// 2-segment /{id} — unambiguous.
+	mux.HandleFunc("GET    /api/v1/bags", bagH.List)
+	mux.HandleFunc("POST   /api/v1/bags", bagH.Create)
+	mux.HandleFunc("GET    /api/v1/bags/year-close", bagH.YearClose)
+	mux.HandleFunc("POST   /api/v1/bags/rebalance", bagH.Rebalance)
+	mux.HandleFunc("GET    /api/v1/bags/{id}", bagH.Get)
+	mux.HandleFunc("PUT    /api/v1/bags/{id}", bagH.Update)
+	mux.HandleFunc("PUT    /api/v1/bags/{id}/status", bagH.SetStatus)
+	mux.HandleFunc("DELETE /api/v1/bags/{id}", bagH.Delete)
+	mux.HandleFunc("GET    /api/v1/bags/{id}/allocations", bagH.ListAllocations)
+	mux.HandleFunc("POST   /api/v1/bags/{id}/allocations", bagH.Allocate)
 
 	mux.HandleFunc("GET /api/v1/settings/ai", settingsH.ListAIProviders)
 	mux.HandleFunc("PUT /api/v1/settings/ai", settingsH.SaveAIProviders)

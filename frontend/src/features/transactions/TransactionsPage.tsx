@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
 import { transactionsApi, type TransactionFilters } from '../../api/transactions';
+import { bagsApi } from '../../api/bags';
 import { accountsApi } from '../../api/accounts';
 import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
@@ -27,6 +28,7 @@ type ViewTab = 'activity' | 'add';
 export function TransactionsPage() {
   const [month, setMonth] = useState(currentMonth());
   const [kind, setKind] = useState<TransactionKind | ''>('');
+  const [bagFilter, setBagFilter] = useState('');
   const [tab, setTab] = useState<ViewTab>('activity');
   const [savedNotice, setSavedNotice] = useState(false);
 
@@ -39,14 +41,17 @@ export function TransactionsPage() {
 
   const filters: TransactionFilters = { month, limit: 100 };
   if (kind) filters.kind = kind;
+  if (bagFilter) filters.bag_id = Number(bagFilter);
 
   const { data, loading, error, reload } = useAsync(
     () => transactionsApi.list(filters),
-    [month, kind],
+    [month, kind, bagFilter],
   );
   const accounts = useAsync(() => accountsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
   const stores = useAsync(() => storesApi.list(), []);
+  // Bag filter options: every bag that has its own activity view.
+  const bagsView = useAsync(() => bagsApi.overview(), []);
 
   // Expanded panel: the list endpoint omits item lines, so expanding a
   // transaction with items fetches the full record (like the bills view).
@@ -177,6 +182,22 @@ export function TransactionsPage() {
               onChange={(e) => setMonth(e.target.value)}
               aria-label="Filter by month"
             />
+            {(bagsView.data?.accounts ?? []).some((v) => v.bags.length > 0) && (
+              <select
+                value={bagFilter}
+                onChange={(e) => setBagFilter(e.target.value)}
+                aria-label="Filter by bag"
+              >
+                <option value="">All bags</option>
+                {(bagsView.data?.accounts ?? []).flatMap((v) =>
+                  v.bags.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({v.account_name})
+                    </option>
+                  )),
+                )}
+              </select>
+            )}
             <Button
               variant="primary"
               className="btn-sm"
@@ -265,6 +286,7 @@ export function TransactionsPage() {
                               isBill ? 'Bill' : t.store_name || null,
                               cat ?? 'Uncategorized',
                               account,
+                              t.bag_name || null,
                             ]
                               .filter(Boolean)
                               .join(' · ')
