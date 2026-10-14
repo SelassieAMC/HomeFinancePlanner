@@ -3200,3 +3200,11 @@ textarea:focus,
     height: 32px;
   }
 }
+
+/* Inline two-step user delete confirm inside a member panel. */
+.delete-confirm-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

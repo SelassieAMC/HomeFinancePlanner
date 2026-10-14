@@ -18,11 +18,13 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux := http.NewServeMux()
 
 	if ui != nil {
-		// Wrapped in a middleware that injects the "back to the planner" link
-		// into River's SPA shell (its only text/html response); the UI itself
-		// strips the /riverui prefix internally.
-		mux.Handle("GET /riverui", middleware.RiverUIBackLink(ui))
-		mux.Handle("/riverui/", middleware.RiverUIBackLink(ui))
+		// Session-guarded (it can retry/cancel jobs, so it stays behind the
+		// household login) and wrapped in a middleware that injects the
+		// "back to the planner" link into River's SPA shell (its only
+		// text/html response); the UI itself strips the /riverui prefix.
+		riverUI := middleware.RiverUIBackLink(ui)
+		mux.Handle("GET /riverui", middleware.RequireSession(svc.Users.Current, riverUI))
+		mux.Handle("/riverui/", middleware.RequireSession(svc.Users.Current, riverUI))
 	}
 
 	healthH := handlers.NewHealthHandler(cfg)
@@ -66,9 +68,11 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 
 	// Admin user management: /users/{id}/photo is a 4-segment literal-free
 	// route next to nothing — /api/v1/users has no other {id} wildcards.
-	mux.HandleFunc("GET  /api/v1/users", adminUserH.List)
-	mux.HandleFunc("POST /api/v1/users", adminUserH.Create)
-	mux.HandleFunc("GET  /api/v1/users/{id}/photo", adminUserH.Photo)
+	mux.HandleFunc("GET    /api/v1/users", adminUserH.List)
+	mux.HandleFunc("POST   /api/v1/users", adminUserH.Create)
+	mux.HandleFunc("PUT    /api/v1/users/{id}", adminUserH.Update)
+	mux.HandleFunc("DELETE /api/v1/users/{id}", adminUserH.Delete)
+	mux.HandleFunc("GET    /api/v1/users/{id}/photo", adminUserH.Photo)
 
 	mux.HandleFunc("GET /api/v1/accounts", accountH.List)
 	mux.HandleFunc("POST /api/v1/accounts", accountH.Create)
@@ -225,8 +229,9 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 
 	// Middleware chain, outermost first. Auth sits inside CORS (preflight
 	// answers never need a session) and around every route: /api requires a
-	// login cookie except the public login/health routes above; /riverui and
-	// anything outside /api pass through.
+	// login cookie except the public login/health routes above; the /riverui
+	// mounts carry their own session guard; anything else outside /api
+	// passes through.
 	return middleware.RequestID(
 		middleware.Logger(log,
 			middleware.Recover(

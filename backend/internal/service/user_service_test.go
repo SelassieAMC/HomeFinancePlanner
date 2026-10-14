@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -108,6 +109,33 @@ func (f *fakeUserStore) SetPhoto(_ context.Context, id int64, path string) (doma
 	u.HasPhoto = path != ""
 	f.items[id] = u
 	return u, nil
+}
+
+func (f *fakeUserStore) AdminUpdate(_ context.Context, id int64, username, fullName string, isAdmin bool) (domain.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.items[id]
+	if !ok {
+		return domain.User{}, domain.ErrNotFound
+	}
+	for _, existing := range f.items {
+		if existing.ID != id && strings.EqualFold(existing.Username, username) {
+			return domain.User{}, domain.ErrConflict
+		}
+	}
+	u.Username, u.FullName, u.IsAdmin = username, fullName, isAdmin
+	f.items[id] = u
+	return u, nil
+}
+
+func (f *fakeUserStore) Delete(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.items[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(f.items, id)
+	return nil
 }
 
 // fakeSessionStore is an in-memory session store.
@@ -272,5 +300,88 @@ func TestAdminCreateValidatesAndConflicts(t *testing.T) {
 	}
 	if _, err := svc.AdminCreate(ctx, CreateUserInput{Username: "bob", Password: "x"}); err == nil {
 		t.Fatal("too-short password must fail")
+	}
+}
+
+func TestAdminUpdateEditsAndGuards(t *testing.T) {
+	users := newFakeUserStore()
+	sessions := newFakeSessionStore()
+	svc := NewUserService(users, sessions, t.TempDir())
+	ctx := context.Background()
+	svc.EnsureSeedAdmin(ctx) // admin (id 1, admin)
+	anna, _ := svc.AdminCreate(ctx, CreateUserInput{Username: "Anna", FullName: "A", Password: "anna1"})
+	bob, _ := svc.AdminCreate(ctx, CreateUserInput{Username: "bob", FullName: "B", Password: "bob123", IsAdmin: true})
+	annaSession, _, _ := svc.Login(ctx, anna.ID, "anna1", false)
+
+	// Plain edit works.
+	if _, err := svc.AdminUpdate(ctx, anna.ID, AdminUpdateInput{Username: "anna", FullName: "Anna W", IsAdmin: false}); err != nil {
+		t.Fatalf("plain edit: %v", err)
+	}
+	// Taken username refused (case-insensitive).
+	if _, err := svc.AdminUpdate(ctx, anna.ID, AdminUpdateInput{Username: "BOB", FullName: "Anna W", IsAdmin: false}); err == nil {
+		t.Fatal("taken username must fail")
+	}
+	// Demoting the last of two admins is fine; the last one is not.
+	if _, err := svc.AdminUpdate(ctx, bob.ID, AdminUpdateInput{Username: "bob", FullName: "B", IsAdmin: false}); err != nil {
+		t.Fatalf("demote with co-admin: %v", err)
+	}
+	if _, err := svc.AdminUpdate(ctx, 1, AdminUpdateInput{Username: "admin", FullName: "Administrator", IsAdmin: false}); err == nil {
+		t.Fatal("demoting the last admin must fail")
+	}
+	// Password reset works and revokes every session of the target.
+	if _, err := svc.AdminUpdate(ctx, anna.ID, AdminUpdateInput{Username: "anna", FullName: "Anna W", IsAdmin: false, Password: "fresh9"}); err != nil {
+		t.Fatalf("reset pw: %v", err)
+	}
+	if _, err := svc.Current(ctx, annaSession); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatal("password reset must revoke the target's sessions")
+	}
+	if _, _, err := svc.Login(ctx, anna.ID, "anna1", false); !errors.Is(err, domain.ErrCredentials) {
+		t.Fatal("old password must stop working after a reset")
+	}
+	if _, _, err := svc.Login(ctx, anna.ID, "fresh9", false); err != nil {
+		t.Fatalf("reset password login: %v", err)
+	}
+}
+
+func TestAdminDeleteGuards(t *testing.T) {
+	users := newFakeUserStore()
+	sessions := newFakeSessionStore()
+	dir := t.TempDir()
+	svc := NewUserService(users, sessions, dir)
+	ctx := context.Background()
+	svc.EnsureSeedAdmin(ctx)
+	admin, _ := users.FindByUsername(ctx, "admin")
+	anna, _ := svc.AdminCreate(ctx, CreateUserInput{Username: "Anna", FullName: "A", Password: "anna1"})
+
+	// Self-deletion is refused outright.
+	if err := svc.AdminDelete(ctx, admin.ID, admin.ID); err == nil {
+		t.Fatal("self-delete must fail")
+	}
+	// Deleting the last admin is refused.
+	if err := svc.AdminDelete(ctx, anna.ID, admin.ID); err == nil {
+		t.Fatal("deleting the last admin must fail")
+	}
+	// A normal delete removes user + session and the avatar file.
+	photo := dir + "/anna.jpg"
+	if err := os.WriteFile(photo, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	users.mu.Lock()
+	updated := users.items[anna.ID]
+	updated.PhotoPath = photo
+	users.items[anna.ID] = updated
+	users.mu.Unlock()
+	annaSession, _, _ := svc.Login(ctx, anna.ID, "anna1", false)
+	if err := svc.AdminDelete(ctx, admin.ID, anna.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := svc.Current(ctx, annaSession); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatal("deleted user's session must die")
+	}
+	if _, err := os.Stat(photo); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("avatar file must be deleted with the user")
+	}
+	if err := svc.AdminDelete(ctx, admin.ID, anna.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("second delete: want ErrNotFound")
 	}
 }

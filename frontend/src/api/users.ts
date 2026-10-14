@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { User, UserInput } from '../types/domain';
+import type { User, UserInput, UserUpdateInput } from '../types/domain';
 
 const BASE = '/api/v1/users';
 
@@ -9,4 +9,6 @@ const BASE = '/api/v1/users';
 export const usersApi = {
   list: () => apiClient.get<User[]>(BASE),
   create: (input: UserInput) => apiClient.post<User>(BASE, input),
+  update: (id: number, input: UserUpdateInput) => apiClient.put<User>(`${BASE}/${id}`, input),
+  delete: (id: number) => apiClient.delete<void>(`${BASE}/${id}`),
 };

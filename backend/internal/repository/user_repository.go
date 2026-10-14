@@ -127,6 +127,22 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, id int64, passwordH
 	return r.GetByID(ctx, id)
 }
 
+// AdminUpdate rewrites username, display name and the admin flag in one go
+// (the admin management endpoint). The username's UNIQUE NOCASE index turns a
+// collision into domain.ErrConflict via mapWriteError.
+func (r *UserRepository) AdminUpdate(ctx context.Context, id int64, username, fullName string, isAdmin bool) (domain.User, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE users SET username = ?, full_name = ?, is_admin = ?, updated_at = ? WHERE id = ?`,
+		username, fullName, boolInt(isAdmin), time.Now().Unix(), id)
+	if err != nil {
+		return domain.User{}, mapWriteError("update user", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.User{}, domain.ErrNotFound
+	}
+	return r.GetByID(ctx, id)
+}
+
 // SetPhoto stores (or clears, with an empty path) the avatar file path.
 func (r *UserRepository) SetPhoto(ctx context.Context, id int64, photoPath string) (domain.User, error) {
 	res, err := r.db.ExecContext(ctx, `

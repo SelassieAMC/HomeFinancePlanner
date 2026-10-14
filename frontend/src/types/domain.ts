@@ -909,3 +909,11 @@ export interface UserInput {
   password: string;
   is_admin?: boolean;
 }
+
+/** Admin edit payload; empty password keeps the current one. */
+export interface UserUpdateInput {
+  username: string;
+  full_name: string;
+  is_admin: boolean;
+  password?: string;
+}

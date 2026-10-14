@@ -26,8 +26,10 @@ type UserStore interface {
 	FindByUsername(ctx context.Context, username string) (domain.User, error)
 	Create(ctx context.Context, u domain.User) (domain.User, error)
 	UpdateFullName(ctx context.Context, id int64, fullName string) (domain.User, error)
+	AdminUpdate(ctx context.Context, id int64, username, fullName string, isAdmin bool) (domain.User, error)
 	UpdatePassword(ctx context.Context, id int64, passwordHash string) (domain.User, error)
 	SetPhoto(ctx context.Context, id int64, photoPath string) (domain.User, error)
+	Delete(ctx context.Context, id int64) error
 }
 
 // SessionStore is the persistence contract for login cookie sessions.
@@ -369,4 +371,120 @@ func (s *UserService) AdminCreate(ctx context.Context, in CreateUserInput) (doma
 // AdminList returns every user (admin only — the handler enforces the role).
 func (s *UserService) AdminList(ctx context.Context) ([]domain.User, error) {
 	return s.users.List(ctx)
+}
+
+// AdminUpdateInput is the admin edit payload. An empty Password keeps the
+// current one (the household admin resets a password by entering a new one).
+type AdminUpdateInput struct {
+	Username string
+	FullName string
+	IsAdmin  bool
+	Password string // optional: empty = unchanged
+}
+
+// AdminUpdate edits an existing user (admin only — the handler enforces the
+// role). Guards: the username stays unique case-insensitively and no change
+// may remove the last administrator. A new password revokes every session of
+// the edited user (their devices re-login with the reset password).
+func (s *UserService) AdminUpdate(ctx context.Context, id int64, in AdminUpdateInput) (domain.User, error) {
+	target, err := s.users.GetByID(ctx, id)
+	if err != nil {
+		return domain.User{}, err
+	}
+	username := strings.TrimSpace(in.Username)
+	if !usernameRegex.MatchString(username) {
+		return domain.User{}, validationError(
+			"username %q must be 2-32 characters: letters, digits, dots, dashes or underscores", username)
+	}
+	fullName := strings.TrimSpace(in.FullName)
+	if len(fullName) > 80 {
+		return domain.User{}, validationError("full name must be at most 80 characters")
+	}
+	// Removing an admin requires another one to survive.
+	if target.IsAdmin && !in.IsAdmin {
+		if err := s.refuseLastAdmin(ctx, target.ID); err != nil {
+			return domain.User{}, err
+		}
+	}
+	// The NOCASE unique index is the hard guarantee; the explicit lookup just
+	// names the conflict before hitting it (another user owns that name).
+	if other, err := s.users.FindByUsername(ctx, username); err == nil && other.ID != id {
+		return domain.User{}, validationError("username %q is already taken", username)
+	}
+	passwordHash := ""
+	if in.Password != "" {
+		if len(in.Password) < 4 {
+			return domain.User{}, validationError("password must be at least 4 characters")
+		}
+		if len(in.Password) > maxPasswordLen {
+			return domain.User{}, validationError("password must be at most %d characters", maxPasswordLen)
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return domain.User{}, fmt.Errorf("hash password: %w", err)
+		}
+		passwordHash = string(hash)
+	}
+	updated, err := s.users.AdminUpdate(ctx, id, username, fullName, in.IsAdmin)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if passwordHash != "" {
+		updated, err = s.users.UpdatePassword(ctx, id, passwordHash)
+		if err != nil {
+			return domain.User{}, err
+		}
+		// The old password is dead — so are its remembered devices.
+		if err := s.sessions.DeleteAllForUserExcept(ctx, id, ""); err != nil {
+			return domain.User{}, err
+		}
+	}
+	return updated, nil
+}
+
+// AdminDelete removes a user and their sessions (FK cascade) and avatar file.
+// Deleting your own account and removing the last administrator are refused —
+// the household always keeps at least one admin able to manage users.
+func (s *UserService) AdminDelete(ctx context.Context, actingID, id int64) error {
+	if actingID == id {
+		return validationError("you cannot delete your own account")
+	}
+	target, err := s.users.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if target.IsAdmin {
+		if err := s.refuseLastAdmin(ctx, target.ID); err != nil {
+			return err
+		}
+	}
+	if err := s.users.Delete(ctx, id); err != nil {
+		return err
+	}
+	// The FK cascade already removed the session rows; this explicit revoke
+	// keeps the service self-contained if that FK ever changes. Empty except
+	// token = revoke everything the user owns.
+	if err := s.sessions.DeleteAllForUserExcept(ctx, id, ""); err != nil {
+		return err
+	}
+	s.removeAvatarFile(target.PhotoPath, "user delete")
+	return nil
+}
+
+// refuseLastAdmin fails when targetID is the only administrator left.
+func (s *UserService) refuseLastAdmin(ctx context.Context, targetID int64) error {
+	users, err := s.users.List(ctx)
+	if err != nil {
+		return err
+	}
+	admins := 0
+	for _, u := range users {
+		if u.IsAdmin && u.ID != targetID {
+			admins++
+		}
+	}
+	if admins == 0 {
+		return validationError("cannot remove the last administrator")
+	}
+	return nil
 }

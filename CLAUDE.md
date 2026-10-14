@@ -567,8 +567,17 @@ endpoints under `/api/v1/me` (full name, password change — verify current +
 min 4 chars + revokes every *other* session of that user, photo up to 10 MB
 normalized by `imageproc` to a 256 px JPEG under `AVATARS_PATH`, replacing the
 old file on disk). Admin-only `GET|POST /api/v1/users` (create family members
-that appear in the login dropdown immediately) and `GET /api/v1/users/{id}/photo`
-(serves any avatar to any logged-in user); `requireAdmin` → 403. There is no
-user edit/delete endpoint yet and no per-user data isolation — every account,
-bill, budget is visible to everyone. `/riverui` remains unauthenticated by
-design (LAN-host posture, same as before multi-user).
+that appear in the login dropdown immediately), `PUT|DELETE /api/v1/users/{id}`
+(edit username/full-name/admin flag, optional password reset that revokes all
+of that user's sessions, delete with guards: no self-deletion, no removing the
+last administrator), and `GET /api/v1/users/{id}/photo` (serves any avatar to
+any logged-in user); `requireAdmin` → 403. There is no per-user data
+isolation — every account, bill, budget is visible to everyone (the roadmap's
+"personal vs shared ownership" question: accounts may one day be owned by a
+member or shared by the household). `/riverui` carries its own session guard
+at its mount points (`middleware.RequireSession`: unauthenticated browsers
+redirect to `/login`, non-browser requests get a 401) — it can retry and
+cancel jobs, so it stays behind the household login. Deliberately still
+open: the seeded `admin`/`admin` is never force-refreshed at first login and
+there is no CSRF token (SameSite=Lax + no cross-origin credentials is the
+whole defense — accepted for the private-LAN posture).

@@ -259,6 +259,61 @@ func (h *AdminUserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusCreated, user)
 }
 
+type updateUserRequest struct {
+	Username string `json:"username"`
+	FullName string `json:"full_name"`
+	IsAdmin  bool   `json:"is_admin"`
+	Password string `json:"password"` // optional: empty keeps the current one
+}
+
+// Update edits an existing user (full name, username, admin flag, optional
+// password reset). The last-admin and username-uniqueness guards live in the
+// service.
+func (h *AdminUserHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireAdmin(w, r); !ok {
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req updateUserRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	user, err := h.Svc.AdminUpdate(r.Context(), id, service.AdminUpdateInput{
+		Username: req.Username,
+		FullName: req.FullName,
+		IsAdmin:  req.IsAdmin,
+		Password: req.Password,
+	})
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, user)
+}
+
+// Delete removes a user and (via the FK) their sessions; the service guards
+// self-deletion and the last administrator, and cleans the avatar file up.
+func (h *AdminUserHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	actor, ok := requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.Svc.AdminDelete(r.Context(), actor.ID, id); err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Photo serves any user's avatar image — a logged-in household member may see
 // every member's tiny photo (the header renders them).
 func (h *AdminUserHandler) Photo(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
@@ -60,6 +61,27 @@ func Auth(resolver SessionResolver, next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+	})
+}
+
+// RequireSession guards a non-API UI surface (the embedded River job-queue
+// UI): a valid login cookie is mandatory. Browsers without one are sent to
+// the SPA's login screen; non-browser requests (riverui's fetches, curl)
+// get the plain 401 envelope.
+func RequireSession(resolver SessionResolver, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(SessionCookieName)
+		if err == nil && cookie.Value != "" {
+			if _, err := resolver(r.Context(), cookie.Value); err == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		if strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		respondUnauthorized(w)
 	})
 }
 
