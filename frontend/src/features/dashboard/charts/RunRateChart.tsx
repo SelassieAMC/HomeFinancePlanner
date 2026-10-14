@@ -51,6 +51,7 @@ export function RunRateChart({ data, loading, error }: Props) {
   return (
     <ChartCard
       title="Monthly Run Rate vs. Budget"
+      window={data && data.month ? monthTitle(data.month) : undefined}
       subtitle="Cumulative spend by day of month. The pace line spreads open budget envelopes linearly — a target, not a monthly cap."
       loading={loading}
       error={error}
@@ -133,4 +134,14 @@ export function RunRateChart({ data, loading, error }: Props) {
       </div>
     </ChartCard>
   );
+}
+/** "2026-10" → "October 2026" — the run-rate chart covers exactly one
+ *  calendar month, so its window reads as a month, not a range. */
+function monthTitle(month: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return month;
+  return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+  });
 }

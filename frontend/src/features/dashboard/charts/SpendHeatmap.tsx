@@ -2,6 +2,7 @@ import type { SpendHeatmap } from '../../../types/analytics';
 import { formatCents } from '../../../lib/money';
 import { heatmapShade } from '../../../lib/analytics';
 import { ChartCard } from './ChartCard';
+import { rangeLabel } from '../../../lib/date';
 
 interface Props {
   data: SpendHeatmap | null;
@@ -22,6 +23,7 @@ export function SpendHeatmapChart({ data, loading, error }: Props) {
     <ChartCard
       title="Shopping Habits Heatmap"
       subtitle="Accepted bill lines by weekday and purchase type."
+      window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
       emptyMessage="No accepted bills in this period yet."

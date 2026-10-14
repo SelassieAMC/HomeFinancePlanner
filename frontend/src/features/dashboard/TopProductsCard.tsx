@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Button, Dialog } from '../../components/ui';
 import { ChartCard } from './charts/ChartCard';
+import { rangeLabel } from '../../lib/date';
 import { formatCents } from '../../lib/money';
 import type { TopProducts } from '../../types/analytics';
 
@@ -72,6 +73,7 @@ export function TopProductsCard({
   return (
     <ChartCard
       title="Top Products"
+      window={data ? rangeLabel(data.from, data.to) : undefined}
       subtitle={data ? `by spend, ${formatCents(data.total_spend_cents, data.currency)} total` : undefined}
       loading={loading}
       error={error}
@@ -81,7 +83,7 @@ export function TopProductsCard({
       <div className="insight-list">{inline.map(rowEl)}</div>
       {overflow > 0 && (
         <Button variant="ghost" onClick={() => setShowAll(true)}>
-          View all {rows.length} products →
+          View all {rows.length} products
         </Button>
       )}
       <TopListDialog title="Top Products — full list" open={showAll} onClose={() => setShowAll(false)}>

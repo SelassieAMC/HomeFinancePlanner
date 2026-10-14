@@ -13,6 +13,7 @@ import type { PriceIndex } from '../../../types/analytics';
 import { formatCents } from '../../../lib/money';
 import { priceIndexRows } from '../../../lib/analytics';
 import { ChartCard } from './ChartCard';
+import { rangeLabel } from '../../../lib/date';
 
 interface Props {
   data: PriceIndex | null;
@@ -58,6 +59,7 @@ export function PersonalPriceIndexChart({ data, loading, error }: Props) {
     <ChartCard
       title="Personal Consumer Price Index"
       subtitle={`Unit prices of your most-bought staples, indexed to 100 at ${data ? monthLabel(data.base_month) : 'the base month'}.`}
+      window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
       emptyMessage="No staple items purchased regularly in the last 12 months."

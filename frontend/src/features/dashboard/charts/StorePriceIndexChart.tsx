@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import type { StorePriceIndex, StorePriceIndexRow } from '../../../types/analytics';
 import { ChartCard } from './ChartCard';
+import { rangeLabel } from '../../../lib/date';
 import { ChartTooltip } from './ChartTooltip';
 
 interface Props {
@@ -29,6 +30,7 @@ export function StorePriceIndexChart({ data, loading, error }: Props) {
     <ChartCard
       title="Store Price Efficiency"
       subtitle="Average price of overlapping products, 100 = overall average. Lower is cheaper."
+      window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
       emptyMessage="Not enough overlapping products across stores in this period."

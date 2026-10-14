@@ -203,9 +203,7 @@ export function DashboardPage() {
           the forecast. One pane open at a time keeps the page height constant. */}
       <Tabs tabs={TABS} active={tab} onChange={setTab} ariaLabel="Dashboard sections" />
 
-      {tab === 'planning' && (
-        <PlanningCard summary={monthSummary} bare />
-      )}
+      {tab === 'planning' && <PlanningCard summary={monthSummary} />}
 
       {tab === 'products' && (
         // Step-3 consumption section: what was bought, where, and how the

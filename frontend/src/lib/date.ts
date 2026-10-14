@@ -115,6 +115,27 @@ export function isCurrentPeriod(period: Period): boolean {
   return period.start <= today && today <= period.end;
 }
 
+/** Human label for an arbitrary inclusive range, e.g. "Sep 8 – 14" or
+ *  "Sep – Oct 2026" — used on chart headers so each card states the window
+ *  underneath its numbers. */
+export function rangeLabel(from: string, to: string): string {
+  const a = fromISO(from);
+  const b = fromISO(to);
+  const sameMonth = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+  if (sameMonth) {
+    return `${b.toLocaleDateString('en-US', { month: 'short' })} ${a.getDate()} – ${b.getDate()}`;
+  }
+  const sameYear = a.getFullYear() === b.getFullYear();
+  const left = a.toLocaleDateString('en-US', {
+    month: 'short',
+    year: sameYear ? undefined : 'numeric',
+  });
+  return `${left} – ${b.toLocaleDateString('en-US', {
+    month: sameYear ? 'short' : undefined,
+    year: 'numeric',
+  })}`;
+}
+
 /** Human label for the period header, e.g. "Sep 11, 2026",
  *  "Sep 8 – 14, 2026", "September 2026", "2026". */
 export function periodLabel(period: Period): string {

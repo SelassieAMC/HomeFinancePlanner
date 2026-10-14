@@ -10,6 +10,7 @@ import {
 import type { FixedSplit } from '../../../types/analytics';
 import { formatCents } from '../../../lib/money';
 import { ChartCard } from './ChartCard';
+import { rangeLabel } from '../../../lib/date';
 import { ChartTooltip } from './ChartTooltip';
 
 interface Props {
@@ -48,6 +49,7 @@ export function FixedSplitChart({ data, loading, error }: Props) {
     <ChartCard
       title="Fixed vs. Discretionary"
       subtitle="Monthly spending split into fixed commitments (rent, utilities, insurance) and flexible spend."
+      window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
       emptyMessage="No expenses recorded in this window yet."

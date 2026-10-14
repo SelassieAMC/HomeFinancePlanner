@@ -16,11 +16,11 @@ import { GoalsBody } from './GoalsCard';
 import { BagsBody, bagsHaveContent } from './BagsCard';
 
 // Budgets, goals and bags are sibling planning layers — one card with tabs
-// instead of three stacked cards. Standalone it renders inside a Card; on the
-// dashboard it sits in the Planning tab pane (`bare` = no double chrome). The
-// card is only visible when at least one layer has something to show (each is
-// hidden-when-empty on its own); a layer without content shows guidance inside
-// its tab so the user learns where to create it.
+// instead of three stacked cards. On the dashboard it is the Planning tab's
+// whole content: the card chrome keeps the inner tab strip obviously scoped,
+// because a second bare strip directly under the page tabs reads as another
+// page-level navigation. A layer without content shows guidance inside its
+// tab so the user learns where to create it.
 
 type PlanningSection = 'budgets' | 'goals' | 'bags';
 
@@ -30,16 +30,7 @@ const TABS: TabDef<PlanningSection>[] = [
   { key: 'bags', label: 'Bags' },
 ];
 
-export function PlanningCard({
-  summary,
-  bare = false,
-}: {
-  summary: AsyncState<Summary>;
-  /** Embed without the Card wrapper (the dashboard's Planning tab pane is
-   *  chrome enough; without this the tab shows a card titled "Planning"
-   *  inside a tab labelled "Planning"). */
-  bare?: boolean;
-}) {
+export function PlanningCard({ summary }: { summary: AsyncState<Summary> }) {
   const goals = useAsync(() => goalsApi.list(), []);
   const bags = useAsync(() => bagsApi.overview(), []);
 
@@ -79,12 +70,14 @@ export function PlanningCard({
   const everythingEmpty =
     budgetsReady && goalsReady && bagsReady && !hasBudgets && !hasGoals && !hasBags;
   // While loads are in flight, show the skeleton; once everything is known
-  // and no layer qualifies, an empty period just says so — inside the tab
-  // pane nothing here would read as a broken page.
+  // and no layer qualifies, the card shows guidance instead of vanishing —
+  // on the dashboard's Planning tab, a blank pane reads as a broken page.
   if (everythingEmpty) {
-    return bare ? (
-      <EmptyState message="Nothing to plan yet — set up budgets, goals or bags on the Planning page." />
-    ) : null;
+    return (
+      <Card title="Planning" className="budgets-card planning-card">
+        <EmptyState message="Nothing to plan yet — set up budgets, goals or bags on the Planning page." />
+      </Card>
+    );
   }
 
   const monthTag = summary.data
@@ -137,9 +130,6 @@ export function PlanningCard({
     </>
   );
 
-  if (bare) {
-    return <div className="planning-card">{body}</div>;
-  }
   return (
     <Card title="Planning" className="budgets-card planning-card">
       {body}

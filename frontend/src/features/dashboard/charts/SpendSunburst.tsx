@@ -3,6 +3,7 @@ import type { CategorySunburst } from '../../../types/analytics';
 import { formatCents } from '../../../lib/money';
 import { sunburstArcs } from '../../../lib/analytics';
 import { ChartCard } from './ChartCard';
+import { rangeLabel } from '../../../lib/date';
 
 interface Props {
   data: CategorySunburst | null;
@@ -40,6 +41,7 @@ export function SpendSunburst({ data, loading, error }: Props) {
     <ChartCard
       title="Micro-Category Distribution"
       subtitle="Accepted bill lines by section and category."
+      window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
       emptyMessage="No accepted bills in this period yet."

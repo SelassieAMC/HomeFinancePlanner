@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../../components/ui';
 import { ChartCard } from './charts/ChartCard';
 import { TOP_LIST_INLINE, TopListDialog } from './TopProductsCard';
+import { rangeLabel } from '../../lib/date';
 import { formatCents } from '../../lib/money';
 import type { TopStores } from '../../types/analytics';
 
@@ -44,6 +45,7 @@ export function StoreLoyaltyCard({
   return (
     <ChartCard
       title="Store Loyalty"
+      window={data ? rangeLabel(data.from, data.to) : undefined}
       subtitle={data ? `by spend, ${formatCents(data.total_spend_cents, data.currency)} total` : undefined}
       loading={loading}
       error={error}
@@ -53,7 +55,7 @@ export function StoreLoyaltyCard({
       <div className="insight-list">{inline.map(rowEl)}</div>
       {overflow > 0 && (
         <Button variant="ghost" onClick={() => setShowAll(true)}>
-          View all {rows.length} stores →
+          View all {rows.length} stores
         </Button>
       )}
       <TopListDialog title="Store Loyalty — full list" open={showAll} onClose={() => setShowAll(false)}>
