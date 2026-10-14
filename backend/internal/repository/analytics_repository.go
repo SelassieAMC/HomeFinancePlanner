@@ -29,12 +29,16 @@ const itemPriceLimit = 20000
 // on a 1l line → 2.39; on a 0.5l line → 4.78); pcs stays per piece. Lines
 // without a magnitude keep the legacy math (the printed unit price IS the
 // per-unit price). Lines with a free-text or missing unit are excluded rather
-// than compared across incompatible units. Serves the store price index and
-// the personal price index.
+// than compared across incompatible units. The comparable key is the
+// normalization memory's label for the printed line name — generic family,
+// else standard name, else the lowercased raw text — so store-brand variants
+// of the same product fold into one series (markets and brands never name
+// products identically). Serves the store price index and the personal price
+// index.
 func (r *AnalyticsRepository) ItemPrices(ctx context.Context, from, to string) ([]domain.ItemPriceRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT COALESCE(b.store_id, 0), b.date,
-		       lower(trim(bi.name)),
+		       COALESCE(NULLIF(pnm.generic_name, ''), NULLIF(pnm.standard_name, ''), lower(trim(bi.name))),
 		       CASE bi.unit WHEN 'g' THEN 'kg' WHEN 'ml' THEN 'l' ELSE bi.unit END,
 		       b.currency,
 		       CASE WHEN COALESCE(bi.unit_value, 0) > 0 THEN
@@ -48,6 +52,7 @@ func (r *AnalyticsRepository) ItemPrices(ctx context.Context, from, to string) (
 		FROM bill_items bi
 		JOIN bills b ON b.id = bi.bill_id
 		LEFT JOIN categories c ON c.id = bi.category_id
+		LEFT JOIN product_name_mappings pnm ON pnm.raw_name = bi.name COLLATE NOCASE
 		WHERE b.status = 'accepted' AND b.date >= ? AND b.date <= ?
 		  AND COALESCE(bi.is_return, 0) = 0
 		  AND bi.quantity > 0 AND bi.unit_price_cents > 0
@@ -183,25 +188,30 @@ func (r *AnalyticsRepository) SpendByMonthAndFixed(ctx context.Context, months [
 
 // TopProducts sums quantity and spend per linked product over accepted,
 // non-return bill lines UNION the item lines of manual expense transactions,
-// grouped per product and native currency. Deposit/return lines never carry a
-// product_id, so deposit artifacts drop out on their own; the GROUP BY lives
-// inside each branch because the two sources don't share line-level columns.
+// grouped per product and native currency. The row also carries the raw
+// product name's normalization mapping (standard + generic — same join the
+// grouped catalogue uses), which the service folds into one generic-family
+// row. Deposit/return lines never carry a product_id, so deposit artifacts
+// drop out on their own; the GROUP BY lives inside each branch because the
+// two sources don't share line-level columns.
 func (r *AnalyticsRepository) TopProducts(ctx context.Context, from, to string) ([]domain.ProductSpendRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT bi.product_id, p.name, b.currency, SUM(COALESCE(bi.quantity, 0)), SUM(bi.line_total_cents)
+		SELECT bi.product_id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), b.currency, SUM(COALESCE(bi.quantity, 0)), SUM(bi.line_total_cents)
 		FROM bill_items bi
 		JOIN bills b ON b.id = bi.bill_id
 		JOIN products p ON p.id = bi.product_id
+		LEFT JOIN product_name_mappings pnm ON pnm.raw_name = p.name COLLATE NOCASE
 		WHERE b.status = 'accepted' AND b.date >= ? AND b.date <= ?
 		  AND COALESCE(bi.is_return, 0) = 0
-		GROUP BY bi.product_id, p.name, b.currency
+		GROUP BY bi.product_id, p.name, pnm.standard_name, pnm.generic_name, b.currency
 		UNION ALL
-		SELECT ti.product_id, p.name, t.currency, SUM(ti.quantity), SUM(ti.line_total_cents)
+		SELECT ti.product_id, p.name, COALESCE(pnm.standard_name, ''), COALESCE(pnm.generic_name, ''), t.currency, SUM(ti.quantity), SUM(ti.line_total_cents)
 		FROM transaction_items ti
 		JOIN transactions t ON t.id = ti.transaction_id
 		JOIN products p ON p.id = ti.product_id
+		LEFT JOIN product_name_mappings pnm ON pnm.raw_name = p.name COLLATE NOCASE
 		WHERE t.kind = 'expense'
-		GROUP BY ti.product_id, p.name, t.currency`, from, to)
+		GROUP BY ti.product_id, p.name, pnm.standard_name, pnm.generic_name, t.currency`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("analytics top products %s..%s: %w", from, to, err)
 	}
@@ -210,7 +220,7 @@ func (r *AnalyticsRepository) TopProducts(ctx context.Context, from, to string) 
 	out := []domain.ProductSpendRow{}
 	for rows.Next() {
 		var p domain.ProductSpendRow
-		if err := rows.Scan(&p.ProductID, &p.Name, &p.Currency, &p.Quantity, &p.TotalCents); err != nil {
+		if err := rows.Scan(&p.ProductID, &p.Name, &p.StandardName, &p.GenericName, &p.Currency, &p.Quantity, &p.TotalCents); err != nil {
 			return nil, fmt.Errorf("scan top product row: %w", err)
 		}
 		out = append(out, p)

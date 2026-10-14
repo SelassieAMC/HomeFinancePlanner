@@ -201,3 +201,130 @@ func TestAnalyticsTopProductsAndStores(t *testing.T) {
 	}
 	_ = lidl // Lidl's only bill is discarded, so its row never appears
 }
+
+// TestAnalyticsTopProductsFoldFamily covers the normalization fold: two
+// distinct product rows whose raw names share one generic_name in
+// product_name_mappings both map to that family, so a period's buys of both
+// arrive as foldable rows (the service combines them by fold label). Products
+// without a mapping carry empty names — the service falls back to the raw
+// name.
+func TestAnalyticsTopProductsFoldFamily(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewAnalyticsRepository(db)
+
+	seed := func(query string, args ...any) int64 {
+		t.Helper()
+		res, err := db.ExecContext(ctx, query, args...)
+		if err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("seed id: %v", err)
+		}
+		return id
+	}
+	rewe := seed(`INSERT INTO stores (name, created_at, updated_at) VALUES ('REWE', 100, 100)`)
+	brand := seed(`INSERT INTO products (name, created_at, updated_at) VALUES ('Joghurt Erdbeer Brand 500g', 100, 100)`)
+	aldi := seed(`INSERT INTO products (name, created_at, updated_at) VALUES ('Fruchtjoghurt Erdbeer', 100, 100)`)
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, source, created_at, updated_at)
+		VALUES ('Joghurt Erdbeer Brand 500g', 'Strawberry Yoghurt', 'Fruit Yoghurt', 'user', 100, 100)`)
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, source, created_at, updated_at)
+		VALUES ('Fruchtjoghurt Erdbeer', 'Strawberry Yoghurt', 'Fruit Yoghurt', 'user', 100, 100)`)
+	plain := seed(`INSERT INTO products (name, created_at, updated_at) VALUES ('Bread', 100, 100)`) // unmapped family
+
+	bill := seed(`
+		INSERT INTO bills (store_id, market_name, date, currency, status, created_at, updated_at)
+		VALUES (?, 'REWE', '2026-05-10', 'EUR', 'accepted', 100, 100)`, rewe)
+	seed(`INSERT INTO bill_items (bill_id, product_id, name, quantity, unit_price_cents, line_total_cents)
+		VALUES (?, ?, 'Joghurt Erdbeer Brand 500g', 2, 100, 200)`, bill, brand)
+	seed(`INSERT INTO bill_items (bill_id, product_id, name, quantity, unit_price_cents, line_total_cents)
+		VALUES (?, ?, 'Fruchtjoghurt Erdbeer', 1, 130, 130)`, bill, aldi)
+	seed(`INSERT INTO bill_items (bill_id, product_id, name, quantity, unit_price_cents, line_total_cents)
+		VALUES (?, ?, 'Bread', 1, 300, 300)`, bill, plain)
+
+	rows, err := repo.TopProducts(ctx, "2026-05-01", "2026-05-31")
+	if err != nil {
+		t.Fatalf("top products: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d; want 3 (two family branches + bread): %+v", len(rows), rows)
+	}
+	for _, r := range rows {
+		switch r.ProductID {
+		case brand, aldi:
+			if r.GenericName != "Fruit Yoghurt" || r.StandardName != "Strawberry Yoghurt" {
+				t.Errorf("product %d: fold names = %q/%q; want Fruit Yoghurt/Strawberry Yoghurt", r.ProductID, r.StandardName, r.GenericName)
+			}
+		case plain:
+			if r.Name != "Bread" || r.GenericName != "" || r.StandardName != "" {
+				t.Errorf("unmapped product: name=%q standard=%q generic=%q; want Bread/'',''", r.Name, r.StandardName, r.GenericName)
+			}
+		default:
+			t.Fatalf("unexpected row: %+v", r)
+		}
+	}
+}
+
+// TestAnalyticsItemPricesFoldKey covers the comparable fold key of the item
+// price scan: brand-variant lines whose printed names differ get the SAME key
+// through the normalization memory's generic family (so the index compares
+// like-for-like across markets), a mapping with no family falls back to its
+// standard name, and an unmapped line keeps its lowercased raw name.
+func TestAnalyticsItemPricesFoldKey(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewAnalyticsRepository(db)
+
+	seed := func(query string, args ...any) int64 {
+		t.Helper()
+		res, err := db.ExecContext(ctx, query, args...)
+		if err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("seed id: %v", err)
+		}
+		return id
+	}
+	rewe := seed(`INSERT INTO stores (name, created_at, updated_at) VALUES ('REWE', 100, 100)`)
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, source, created_at, updated_at)
+		VALUES ('Cola Rewe 1l', 'Coca-Cola', 'Cola', 'ai', 100, 100)`)
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, source, created_at, updated_at)
+		VALUES ('Coca-Cola 1l', 'Coca-Cola', 'Cola', 'ai', 100, 100)`)
+	seed(`INSERT INTO product_name_mappings (raw_name, standard_name, generic_name, source, created_at, updated_at)
+		VALUES ('Zitrone Tee Bio', 'Lemon Tea', '', 'ai', 100, 100)`) // standard only — no family known
+
+	bill := seed(`
+		INSERT INTO bills (store_id, market_name, date, currency, status, created_at, updated_at)
+		VALUES (?, 'REWE', '2026-05-10', 'EUR', 'accepted', 100, 100)`, rewe)
+	item := func(name string) {
+		t.Helper()
+		seed(`INSERT INTO bill_items (bill_id, name, quantity, unit, unit_value, unit_price_cents, line_total_cents, is_return)
+			VALUES (?, ?, 1, 'l', 1.0, 100, 100, 0)`, bill, name)
+	}
+	item("Cola Rewe 1l")    // mapped: fold key = its generic family 'Cola'
+	item("Coca-Cola 1l")    // differently printed name, SAME generic → same key
+	item("Zitrone Tee Bio") // generic empty → falls back to the standard name
+	item("Mystery Soap 2l") // unmapped → lowercased raw name
+
+	rows, err := repo.ItemPrices(ctx, "2026-05-01", "2026-05-31")
+	if err != nil {
+		t.Fatalf("item prices: %v", err)
+	}
+	byKey := map[string]int{}
+	for _, r := range rows {
+		byKey[r.Key]++
+	}
+	want := map[string]int{"Cola": 2, "Lemon Tea": 1, "mystery soap 2l": 1}
+	if len(byKey) != len(want) {
+		t.Fatalf("keys = %v; want %v", byKey, want)
+	}
+	for key, n := range want {
+		if byKey[key] != n {
+			t.Fatalf("key %q count %d; want %d (all keys: %v)", key, byKey[key], n, byKey)
+		}
+	}
+}

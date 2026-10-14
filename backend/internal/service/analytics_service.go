@@ -82,9 +82,10 @@ func (s *AnalyticsService) baseCurrencyAndConverter(ctx context.Context) (string
 	return base, newConverter(base, snap), nil
 }
 
-// productKey identifies a "standardized product": an item name (lowercased,
-// trimmed) in one base unit. Milk 1l and Milk 0.5l are intentionally distinct
-// keys — pack sizes are not price-comparable.
+// productKey identifies a comparable price series: the normalization fold
+// label (generic family → mapped standard → raw text; see ItemPrices) in one
+// base unit. Brands and pack sizes of a family share the key — per-unit
+// normalization (per kg/l) is what makes them comparable.
 type productKey struct {
 	name string
 	unit string
@@ -680,11 +681,27 @@ func validateTopRange(from, to string) error {
 	return nil
 }
 
-// TopProducts ranks the products bought in the range by converted spend.
-// Quantity is the raw line-quantity sum; the average price is spend ÷
-// quantity (per piece) reported for convenience. TotalSpendCents covers every
-// qualifying product, so the card can show the ranked rows' share of the
-// period's product spend even after the ?limit= cut.
+// productFoldKey is the generic-family fold label of one linked product row
+// (repo semantics: generic → mapped standard → raw product name). Markets and
+// brands print different names for the same product, so the spend charts rank
+// families, not raw texts.
+func productFoldKey(r domain.ProductSpendRow) string {
+	if r.GenericName != "" {
+		return r.GenericName
+	}
+	if r.StandardName != "" {
+		return r.StandardName
+	}
+	return r.Name
+}
+
+// TopProducts ranks the buys of the range by converted spend, folded into
+// generic product families (member products combined; the row's product_id is
+// the lowest member's id, a representative handle). Quantity is the raw
+// line-quantity sum; the average price is spend ÷ quantity (per piece)
+// reported for convenience. TotalSpendCents covers every qualifying product,
+// so the card can show the ranked rows' share of the period's product spend
+// even after the ?limit= cut.
 func (s *AnalyticsService) TopProducts(ctx context.Context, from, to string, limit int) (domain.TopProducts, error) {
 	out := domain.TopProducts{From: from, To: to, Rows: []domain.TopProductRow{}}
 	if err := validateTopRange(from, to); err != nil {
@@ -702,18 +719,23 @@ func (s *AnalyticsService) TopProducts(ctx context.Context, from, to string, lim
 	}
 
 	type prodAgg struct {
-		name     string
-		quantity float64
-		cents    int64
+		name        string
+		productID   int64
+		quantity    float64
+		cents       int64
 	}
-	byProduct := map[int64]*prodAgg{}
+	byFamily := map[string]*prodAgg{}
 	var grand int64
 	for _, r := range rows {
 		cents := conv.add(r.Currency, r.TotalCents)
-		agg := byProduct[r.ProductID]
+		key := productFoldKey(r)
+		agg := byFamily[key]
 		if agg == nil {
-			agg = &prodAgg{name: r.Name}
-			byProduct[r.ProductID] = agg
+			agg = &prodAgg{name: key, productID: r.ProductID}
+			byFamily[key] = agg
+		}
+		if r.ProductID < agg.productID {
+			agg.productID = r.ProductID
 		}
 		agg.quantity += r.Quantity
 		agg.cents += cents
@@ -721,9 +743,9 @@ func (s *AnalyticsService) TopProducts(ctx context.Context, from, to string, lim
 	}
 	out.TotalSpendCents = grand
 
-	ranked := make([]domain.TopProductRow, 0, len(byProduct))
-	for id, agg := range byProduct {
-		row := domain.TopProductRow{ProductID: id, Name: agg.name, Quantity: agg.quantity, TotalCents: agg.cents}
+	ranked := make([]domain.TopProductRow, 0, len(byFamily))
+	for _, agg := range byFamily {
+		row := domain.TopProductRow{ProductID: agg.productID, Name: agg.name, Quantity: agg.quantity, TotalCents: agg.cents}
 		if agg.quantity > 0 {
 			row.AvgPriceCents = int64(float64(agg.cents)/agg.quantity + 0.5)
 		}

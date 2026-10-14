@@ -11,11 +11,15 @@ package domain
 // ItemPriceRow is a repository-facing intermediate row: one accepted,
 // non-return bill line normalized to a price per base unit (kg/l/pcs) in its
 // native currency. It feeds the store price index and the personal price
-// index; conversion to base currency happens in the service.
+// index; conversion to base currency happens in the service. Key is the
+// comparable product label — the normalization memory's generic family (or
+// standard name, or the raw name when unmapped) — never the raw printed text:
+// markets and brands print different names for the same product, and the
+// index must compare like-for-like.
 type ItemPriceRow struct {
 	StoreID      int64  // 0 when the bill has no store
 	Date         string // YYYY-MM-DD
-	Key          string // lower(trim(name))
+	Key          string // generic family → standard name → lower(trim(name))
 	BaseUnit     string // kg | l | pcs
 	Currency     string
 	PricePerUnit float64 // cents per base unit, native currency
@@ -186,20 +190,29 @@ type SpendHeatmap struct {
 
 // --- Consumption Analysis: Top Products & Store Loyalty ----------------------
 
-// ProductSpendRow is a repository-facing intermediate row: one product's
-// summed quantity and spend in its native currency, aggregated over accepted
-// non-return bill lines plus manual-transaction item lines. Conversion into
-// the base currency happens in the service.
+// ProductSpendRow is a repository-facing intermediate row: one linked
+// product's summed quantity and spend in its native currency, aggregated over
+// accepted non-return bill lines plus manual-transaction item lines. The
+// mapping names come from product_name_mappings (raw name join) so the
+// service can fold member products into one generic-family row. Conversion
+// into the base currency happens in the service.
 type ProductSpendRow struct {
-	ProductID  int64
-	Name       string
-	Currency   string
-	Quantity   float64
-	TotalCents int64
+	ProductID    int64
+	Name         string
+	StandardName string
+	GenericName  string
+	Currency     string
+	Quantity     float64
+	TotalCents   int64
 }
 
-// TopProductRow is one ranked product of the top-products response. Quantity
-// is the line-quantity sum; AvgPriceCents is spend ÷ quantity per piece
+// TopProductRow is one ranked entry of the top-products response — a generic
+// product family (members folded), since markets and brands print different
+// names for what the user buys the same thing. Name is the fold label
+// (generic family, else the one mapped standard name, else the raw product
+// name); ProductID is the lowest member's id, a representative handle only
+// (the API exposes no per-product link from these rows). Quantity is the
+// line-quantity sum; AvgPriceCents is spend ÷ quantity per piece
 // (meaningless when Quantity is 0 — then it is 0).
 type TopProductRow struct {
 	ProductID     int64   `json:"product_id"`

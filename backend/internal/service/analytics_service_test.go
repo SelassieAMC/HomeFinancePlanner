@@ -469,6 +469,45 @@ func TestTopProductsRankConvertLimit(t *testing.T) {
 	}
 }
 
+// TestTopProductsFoldsFamilies covers the generic-family fold: two member
+// products of one family (different raw names, currencies) collapse into one
+// renamed row keyed by the family, carrying the lowest member's id as the
+// representative product_id.
+func TestTopProductsFoldsFamilies(t *testing.T) {
+	store := &fakeAnalyticsStore{products: []domain.ProductSpendRow{
+		// One family, "Fruit Yoghurt", bought at two stores in two currencies.
+		{ProductID: 4, Name: "Joghurt Erdbeer Brand 500g", StandardName: "Strawberry Yoghurt", GenericName: "Fruit Yoghurt", Currency: "EUR", Quantity: 2, TotalCents: 300},
+		{ProductID: 2, Name: "Fruchtjoghurt Erdbeer", StandardName: "Strawberry Yoghurt", GenericName: "Fruit Yoghurt", Currency: "USD", Quantity: 1, TotalCents: 330},
+		// An unmapped product falls back to its own name.
+		{ProductID: 1, Name: "Bread", Currency: "EUR", Quantity: 1, TotalCents: 300},
+	}}
+	svc, _ := newTestAnalyticsService(store, domain.RateSnapshot{Pivot: "EUR", Rates: map[string]float64{"USD": 1.1}}, nil)
+
+	out, err := svc.TopProducts(context.Background(), "2026-08-01", "2026-08-31", 0)
+	if err != nil {
+		t.Fatalf("TopProducts: %v", err)
+	}
+	// Yogurt: 300 + 330 USD ÷ 1.1 = 300 EUR → 600 ¢, quantity 3 → avg 200.
+	if out.TotalSpendCents != 900 {
+		t.Fatalf("total = %d; want 900 (300 + 300 + 300)", out.TotalSpendCents)
+	}
+	byName := map[string]domain.TopProductRow{}
+	for _, r := range out.Rows {
+		byName[r.Name] = r
+	}
+	fam, ok := byName["Fruit Yoghurt"]
+	if !ok {
+		t.Fatalf("folded family row missing; rows=%+v", out.Rows)
+	}
+	if fam.ProductID != 2 || fam.Quantity != 3 || fam.TotalCents != 600 || fam.AvgPriceCents != 200 {
+		t.Fatalf("family row: %+v; want product_id 2, quantity 3, 600 ¢, avg 200", fam)
+	}
+	bread, ok := byName["Bread"]
+	if !ok || bread.ProductID != 1 || bread.AvgPriceCents != 300 {
+		t.Fatalf("bread row: %+v", bread)
+	}
+}
+
 // TestTopProductsZeroQuantityDropsAvgPrice guards the divide-by-zero on
 // quantity-less aggregate rows.
 func TestTopProductsZeroQuantityDropsAvgPrice(t *testing.T) {
