@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { bagsApi } from '../../api/bags';
 import { accountsApi } from '../../api/accounts';
@@ -27,6 +28,7 @@ import {
 // Σ allocations − tagged spend, and the account section shows the money still
 // unbagged. Same card language as budgets (the closest cousin in the UI).
 export function BagsPage({ embedded = false }: { embedded?: boolean }) {
+  const { t } = useTranslation('bags');
   const overview = useAsync(() => bagsApi.overview(), []);
   const accounts = useAsync(() => accountsApi.list(), []);
 
@@ -50,7 +52,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
     try {
       await overview.reload();
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : 'Failed to reload bags.');
+      setPageError(err instanceof Error ? err.message : t('errors.reload'));
     }
   }
 
@@ -58,11 +60,11 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
     e.preventDefault();
     setFormError(null);
     if (!createName.trim()) {
-      setFormError('Name the bag.');
+      setFormError(t('validation.nameRequired'));
       return;
     }
     if (!createAccount) {
-      setFormError('Choose the account the bag partitions.');
+      setFormError(t('validation.accountRequired'));
       return;
     }
     const input: BagInput = {
@@ -73,7 +75,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
     if (createAmount) {
       const cents = dollarsToCents(createAmount);
       if (!Number.isFinite(cents) || cents <= 0) {
-        setFormError('Target must be positive.');
+        setFormError(t('validation.targetPositive'));
         return;
       }
       input.target_cents = cents;
@@ -85,7 +87,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       setCreateTarget('');
       await refresh();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create bag.');
+      setFormError(err instanceof Error ? err.message : t('errors.create'));
     }
   }
 
@@ -108,7 +110,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       setConfirmDelete(null);
       await refresh();
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : 'Failed to delete bag.');
+      setPageError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
       setBusy(false);
     }
@@ -121,7 +123,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       await bagsApi.setStatus(bag.id, status);
       await refresh();
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : 'Failed to change the bag.');
+      setPageError(err instanceof Error ? err.message : t('errors.change'));
     } finally {
       setBusy(false);
     }
@@ -134,7 +136,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       const rows = await bagsApi.allocations(bag.id);
       setHistoryOf({ bag, currency, rows });
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : 'Failed to load the ledger.');
+      setPageError(err instanceof Error ? err.message : t('errors.ledger'));
       setHistoryOf(null);
     }
   }
@@ -147,7 +149,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
     try {
       setYearClose(await bagsApi.yearClose(year));
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : 'Failed to load the close preview.');
+      setPageError(err instanceof Error ? err.message : t('errors.closePreview'));
     } finally {
       setBusy(false);
     }
@@ -161,23 +163,23 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
 
   const content = (
     <>
-      <Card title="Add bag">
+      <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
           <input
-            placeholder="Bag name"
+            placeholder={t('add.namePlaceholder')}
             value={createName}
             onChange={(e) => setCreateName(e.target.value)}
             maxLength={100}
-            aria-label="Bag name"
+            aria-label={t('add.nameAria')}
             required
           />
           <select
             value={createAccount}
             onChange={(e) => setCreateAccount(e.target.value)}
-            aria-label="Account"
+            aria-label={t('add.accountAria')}
             required
           >
-            <option value="">Account…</option>
+            <option value="">{t('add.accountPlaceholder')}</option>
             {accountsData.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} ({a.currency})
@@ -185,18 +187,16 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
             ))}
           </select>
           <input
-            placeholder="Target (optional)"
+            placeholder={t('add.targetPlaceholder')}
             inputMode="decimal"
             value={createTarget}
             onChange={(e) => setCreateTarget(e.target.value)}
-            aria-label="Target amount (optional)"
+            aria-label={t('add.targetAria')}
           />
-          <Button type="submit">Add</Button>
+          <Button type="submit">{t('actions.add')}</Button>
         </form>
         <p className="hint-text">
-          A bag reserves money inside one account — funding it does not move
-          money, it claims part of the account's balance. Tag expenses into the
-          bag to spend the reserve.
+          {t('add.hint')}
         </p>
         {formError && <ErrorMessage message={formError} />}
       </Card>
@@ -205,15 +205,15 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
 
       <div className="form-row">
         <form className="form-row" onSubmit={openYearClose}>
-          <input type="number" name="year" defaultValue={new Date().getFullYear()} min={2000} max={2999} aria-label="Year" />
+          <input type="number" name="year" defaultValue={new Date().getFullYear()} min={2000} max={2999} aria-label={t('dialogs.yearClose.yearAria')} />
           <Button type="submit" variant="secondary" disabled={busy}>
-            Year-close preview
+            {t('actions.yearPreview')}
           </Button>
         </form>
       </div>
 
       {sections.length === 0 ? (
-        <EmptyState message="No bags yet — add your first reserve above." />
+        <EmptyState message={t('list.empty')} />
       ) : (
         sections.map((view) => (
           <section key={view.account_id} className="bag-account-section">
@@ -223,22 +223,22 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
                 <span className="stat-label"> · {formatCents(view.account_balance_cents, view.currency)}</span>
               </h3>
               <div className="bag-unbagged">
-                <span className="stat-label">Unbagged</span>
+                <span className="stat-label">{t('account.unbagged')}</span>
                 <strong className={view.oversubscribed ? 'budget-status over' : ''}>
                   {formatCents(view.unbagged_cents, view.currency)}
                 </strong>
                 {view.oversubscribed && (
-                  <span className="budget-status over">bags claim more than the account holds</span>
+                  <span className="budget-status over">{t('account.oversubscribed')}</span>
                 )}
               </div>
               {view.bags.some((b) => b.status === 'open') && (
                 <Button variant="secondary" className="btn-sm" onClick={() => setRebalancing(String(view.account_id))}>
-                  Rebalance
+                  {t('actions.rebalance')}
                 </Button>
               )}
             </div>
             {view.bags.length === 0 ? (
-              <p className="hint-text">No bags on this account.</p>
+              <p className="hint-text">{t('list.noBagsOnAccount')}</p>
             ) : (
               <div className="budget-list">
                 {view.bags.map((b) => (
@@ -261,7 +261,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {editing && (
-        <Dialog title="Edit bag">
+        <Dialog title={t('dialogs.edit.title')}>
           <BagEditForm
             initial={editing}
             currency={sections.find((a) => a.account_id === editing.account_id)?.currency ?? ''}
@@ -278,7 +278,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {allocating && (
-        <Dialog title={`Allocate — ${allocating.name}`}>
+        <Dialog title={t('dialogs.allocate.title', { name: allocating.name })}>
           <AllocateForm
             currency={sections.find((a) => a.account_id === allocating.account_id)?.currency ?? ''}
             busy={busy}
@@ -292,18 +292,18 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {historyOf && (
-        <Dialog title={`Ledger — ${historyOf.bag.name}`}>
+        <Dialog title={t('dialogs.history.title', { name: historyOf.bag.name })}>
           <LedgerList rows={historyOf.rows} currency={historyOf.currency} />
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setHistoryOf(null)}>
-              Close
+              {t('actions.close')}
             </Button>
           </div>
         </Dialog>
       )}
 
       {rebalancing && (
-        <Dialog title="Rebalance leftovers">
+        <Dialog title={t('dialogs.rebalance.title')}>
           <RebalanceForm
             account={sections.find((a) => String(a.account_id) === rebalancing)}
             busy={busy}
@@ -317,7 +317,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {yearClose && (
-        <Dialog title={`Year close ${yearClose.year}`}>
+        <Dialog title={t('dialogs.yearClose.title', { year: yearClose.year })}>
           <YearCloseList
             preview={yearClose}
             onSubmit={async () => {
@@ -331,18 +331,16 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {confirmDelete && (
-        <Dialog title="Delete bag?">
+        <Dialog title={t('dialogs.delete.title')}>
           <p className="hint-text">
-            This permanently removes “{confirmDelete.name}” with its ledger.
-            Spend already tagged into it stays in your activity, read as plain
-            expense (untagged). This cannot be undone.
+            {t('dialogs.delete.body', { name: confirmDelete.name })}
           </p>
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={busy}>
-              Cancel
+              {t('actions.cancel')}
             </Button>
             <Button variant="danger" onClick={handleDelete} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete'}
+              {busy ? t('actions.deleting') : t('actions.delete')}
             </Button>
           </div>
         </Dialog>
@@ -354,7 +352,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
 
   return (
     <div className="page">
-      <h2 className="page-title">Bags</h2>
+      <h2 className="page-title">{t('title')}</h2>
       {content}
     </div>
   );
@@ -389,6 +387,7 @@ function BagCard({
   onToggleStatus: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation('bags');
   const health = bagHealth(bag);
   const pct =
     bag.target_cents != null && bag.target_cents > 0
@@ -405,7 +404,7 @@ function BagCard({
         <span className="budget-amounts">
           <strong>{formatCents(bag.balance_cents, currency)}</strong>
           {bag.target_cents != null && (
-            <span aria-label="target">{' / '}{formatCents(bag.target_cents, currency)}</span>
+            <span aria-label={t('card.targetAria')}>{' / '}{formatCents(bag.target_cents, currency)}</span>
           )}
         </span>
       </div>
@@ -418,32 +417,32 @@ function BagCard({
         </div>
       )}
       <div className="budget-status">
-        Spent {formatCents(bag.tagged_spend_cents, currency)} ·{' '}
+        {t('status.spent', { amount: formatCents(bag.tagged_spend_cents, currency) })} ·{' '}
         {bag.status === 'closed'
-          ? 'closed'
+          ? t('status.closed')
           : bag.balance_cents < 0
-            ? `overspent ${formatCents(-bag.balance_cents, currency)}`
+            ? t('status.overspent', { amount: formatCents(-bag.balance_cents, currency) })
             : bag.balance_cents === 0
-              ? 'spent out — free to close'
-              : 'holds its reserve'}
+              ? t('status.spentOut')
+              : t('status.holdsReserve')}
       </div>
       <div className="camera-row">
         {bag.status === 'open' && (
           <Button variant="secondary" className="btn-sm" onClick={onAllocate} disabled={busy}>
-            Allocate
+            {t('actions.allocate')}
           </Button>
         )}
         <Button variant="ghost" className="btn-sm" onClick={onHistory}>
-          Ledger
+          {t('actions.ledger')}
         </Button>
         <Button variant="ghost" className="btn-sm" onClick={onEdit} disabled={busy}>
-          Edit
+          {t('actions.edit')}
         </Button>
         <Button variant="ghost" className="btn-sm" onClick={onToggleStatus} disabled={busy}>
-          {bag.status === 'open' ? 'Close' : 'Reopen'}
+          {bag.status === 'open' ? t('actions.closeBag') : t('actions.reopen')}
         </Button>
         <Button variant="danger" className="btn-sm" onClick={onDelete} disabled={busy}>
-          Delete
+          {t('actions.delete')}
         </Button>
       </div>
     </Card>
@@ -465,6 +464,7 @@ function BagEditForm({
   onCancel: () => void;
   onError: (msg: string | null) => void;
 }) {
+  const { t } = useTranslation('bags');
   const [name, setName] = useState(initial.name);
   const [target, setTarget] = useState(
     initial.target_cents != null ? (initial.target_cents / 100).toString() : '',
@@ -479,7 +479,7 @@ function BagEditForm({
     if (target) {
       const cents = dollarsToCents(target);
       if (!Number.isFinite(cents) || cents <= 0) {
-        setFormError('Target must be positive.');
+        setFormError(t('validation.targetPositive'));
         return;
       }
       input.target_cents = cents;
@@ -487,18 +487,18 @@ function BagEditForm({
     try {
       await onSubmit(input);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save the bag.');
+      setFormError(err instanceof Error ? err.message : t('errors.save'));
     }
   }
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       <label>
-        Name
+        {t('dialogs.edit.nameLabel')}
         <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
       </label>
       <label>
-        Target ({currency}, optional — empty removes it)
+        {t('dialogs.edit.targetLabel', { currency })}
         <input
           inputMode="decimal"
           value={target}
@@ -506,15 +506,15 @@ function BagEditForm({
         />
       </label>
       <p className="hint-text">
-        The account never changes — a reserve lives where it was opened.
+        {t('dialogs.edit.notice')}
       </p>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
-          Cancel
+          {t('actions.cancel')}
         </Button>
         <Button type="submit" disabled={busy}>
-          {busy ? 'Saving…' : 'Save changes'}
+          {busy ? t('actions.saving') : t('actions.saveChanges')}
         </Button>
       </div>
     </form>
@@ -532,6 +532,7 @@ function AllocateForm({
   onSubmit: (input: BagAllocationInput) => Promise<void>;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation('bags');
   const [kind, setKind] = useState<'fund' | 'withdraw' | 'adjust'>('fund');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
@@ -544,49 +545,49 @@ function AllocateForm({
     const cents = dollarsToCents(amount);
     if (kind === 'adjust') {
       if (!Number.isFinite(cents) || cents === 0) {
-        setFormError('An adjustment must be non-zero.');
+        setFormError(t('validation.adjustNonZero'));
         return;
       }
     } else if (!Number.isFinite(cents) || cents <= 0) {
-      setFormError('Enter a positive amount (the kind decides the direction).');
+      setFormError(t('validation.positiveKind'));
       return;
     }
     try {
       await onSubmit({ kind, amount_cents: cents, note, date });
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to allocate.');
+      setFormError(err instanceof Error ? err.message : t('errors.allocate'));
     }
   }
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       <label>
-        Action
+        {t('dialogs.allocate.actionLabel')}
         <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
-          <option value="fund">Fund — reserve into the bag</option>
-          <option value="withdraw">Withdraw — release back to unbagged</option>
-          <option value="adjust">Adjust — explicit correction</option>
+          <option value="fund">{t('dialogs.allocate.kindFund')}</option>
+          <option value="withdraw">{t('dialogs.allocate.kindWithdraw')}</option>
+          <option value="adjust">{t('dialogs.allocate.kindAdjust')}</option>
         </select>
       </label>
       <label>
-        Amount ({currency})
+        {t('dialogs.allocate.amountLabel', { currency })}
         <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
       </label>
       <label>
-        Note (optional)
+        {t('dialogs.allocate.noteLabel')}
         <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
       </label>
       <label>
-        Date
+        {t('dialogs.allocate.dateLabel')}
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
       </label>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
-          Cancel
+          {t('actions.cancel')}
         </Button>
         <Button type="submit" disabled={busy}>
-          Post
+          {t('actions.post')}
         </Button>
       </div>
     </form>
@@ -594,14 +595,15 @@ function AllocateForm({
 }
 
 function LedgerList({ rows, currency }: { rows: BagAllocation[]; currency: string }) {
+  const { t } = useTranslation('bags');
   if (rows.length === 0) {
-    return <EmptyState message="No ledger entries yet." />;
+    return <EmptyState message={t('ledger.empty')} />;
   }
   return (
     <div className="ledger-list">
       {rows.map((a) => (
         <div key={a.id} className="ledger-row">
-          <span className="ledger-kind">{a.kind}</span>
+          <span className="ledger-kind">{t(`ledger.kinds.${a.kind}`)}</span>
           <span className="ledger-amounts">{formatSignedCents(a.amount_cents, currency)}</span>
           <span className="ledger-meta">
             {a.date}
@@ -630,6 +632,7 @@ function RebalanceForm({
   onSubmit: (input: BagRebalanceInput) => Promise<void>;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation('bags');
   const open = (account?.bags ?? []).filter((b) => b.status === 'open');
   const [fromBag, setFromBag] = useState('');
   const [toBag, setToBag] = useState('');
@@ -644,12 +647,12 @@ function RebalanceForm({
     e.preventDefault();
     setFormError(null);
     if (!fromBag || !toBag) {
-      setFormError('Choose both bags.');
+      setFormError(t('validation.bothBags'));
       return;
     }
     const cents = dollarsToCents(amount);
     if (!Number.isFinite(cents) || cents <= 0) {
-      setFormError('Enter a positive amount.');
+      setFormError(t('validation.positive'));
       return;
     }
     try {
@@ -661,17 +664,17 @@ function RebalanceForm({
         date,
       });
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to rebalance.');
+      setFormError(err instanceof Error ? err.message : t('errors.rebalance'));
     }
   }
 
   if (open.length < 2) {
     return (
       <>
-        <EmptyState message="Two open bags on the account are needed to rebalance between them." />
+        <EmptyState message={t('dialogs.rebalance.needTwo')} />
         <div className="dialog-actions">
           <Button variant="secondary" onClick={onCancel}>
-            Close
+            {t('actions.close')}
           </Button>
         </div>
       </>
@@ -681,16 +684,16 @@ function RebalanceForm({
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       <div className="form-row">
-        <select value={fromBag} onChange={(e) => setFromBag(e.target.value)} aria-label="From bag" required>
-          <option value="">From bag…</option>
+        <select value={fromBag} onChange={(e) => setFromBag(e.target.value)} aria-label={t('dialogs.rebalance.fromAria')} required>
+          <option value="">{t('dialogs.rebalance.fromPlaceholder')}</option>
           {open.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name} ({formatCents(b.balance_cents, account?.currency ?? '')})
             </option>
           ))}
         </select>
-        <select value={toBag} onChange={(e) => setToBag(e.target.value)} aria-label="To bag" required>
-          <option value="">To bag…</option>
+        <select value={toBag} onChange={(e) => setToBag(e.target.value)} aria-label={t('dialogs.rebalance.toAria')} required>
+          <option value="">{t('dialogs.rebalance.toPlaceholder')}</option>
           {others.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
@@ -699,27 +702,27 @@ function RebalanceForm({
         </select>
       </div>
       <label>
-        Amount ({account?.currency ?? ''})
+        {t('dialogs.allocate.amountLabel', { currency: account?.currency ?? '' })}
         <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
       </label>
       <label>
-        Note (optional)
+        {t('dialogs.allocate.noteLabel')}
         <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
       </label>
       <label>
-        Date
+        {t('dialogs.allocate.dateLabel')}
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
       </label>
       {from && from.balance_cents < 0 && (
-        <p className="hint-text">The source bag is overspending — fix its tagging first.</p>
+        <p className="hint-text">{t('dialogs.rebalance.warnOverspending')}</p>
       )}
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
-          Cancel
+          {t('actions.cancel')}
         </Button>
         <Button type="submit" disabled={busy}>
-          Move
+          {t('actions.move')}
         </Button>
       </div>
     </form>
@@ -741,17 +744,16 @@ function YearCloseList({
   onSubmit: () => Promise<void>;
   onError: (msg: string | null) => void;
 }) {
+  const { t } = useTranslation('bags');
   const anyRows = preview.bags.length > 0;
   return (
     <div className="year-close">
       {anyRows && (
         <p className="hint-text">
-          Balances as they would stand after everything dated through Dec 31 of
-          {preview.year}. Move a leftover into another bag, or release it — the
-          posting uses the regular ledger, dated at the year end.
+          {t('dialogs.yearClose.hint', { year: preview.year })}
         </p>
       )}
-      {!anyRows && <EmptyState message="No open bags for this year." />}
+      {!anyRows && <EmptyState message={t('dialogs.yearClose.empty')} />}
       <div className="budget-list">
         {preview.bags.map((row) => (
           <YearCloseRow
@@ -767,7 +769,7 @@ function YearCloseList({
       </div>
       {preview.conversion_warnings.length > 0 && (
         <ErrorMessage
-          message={`Exchange rate missing for ${preview.conversion_warnings.join(', ')} — those amounts are shown 1:1.`}
+          message={t('dialogs.yearClose.conversionWarning', { currencies: preview.conversion_warnings.join(', ') })}
         />
       )}
     </div>
@@ -789,6 +791,7 @@ function YearCloseRow({
   onDone: () => Promise<void>;
   onError: (msg: string | null) => void;
 }) {
+  const { t } = useTranslation('bags');
   const closeDate = `${year}-12-31`;
   const [targetBag, setTargetBag] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -801,12 +804,12 @@ function YearCloseRow({
         from_bag_id: row.bag_id,
         to_bag_id: Number(targetBag),
         amount_cents: row.balance_cents,
-        note: `year close ${year}`,
+        note: t('dialogs.yearClose.notes.move', { year }),
         date: closeDate,
       });
       await onDone();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to post the move.');
+      setFormError(err instanceof Error ? err.message : t('errors.move'));
     }
   }
 
@@ -817,12 +820,12 @@ function YearCloseRow({
       await bagsApi.allocate(row.bag_id, {
         kind: 'withdraw',
         amount_cents: row.balance_cents,
-        note: `year close ${year} — leftover released`,
+        note: t('dialogs.yearClose.notes.release', { year }),
         date: closeDate,
       });
       await onDone();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to release the leftover.');
+      setFormError(err instanceof Error ? err.message : t('errors.release'));
     }
   }
 
@@ -839,19 +842,19 @@ function YearCloseRow({
       </div>
       <div className="budget-status">
         {row.shortfall_cents > 0
-          ? `${formatCents(row.shortfall_cents, row.currency)} short of its target`
+          ? t('dialogs.yearClose.row.shortOfTarget', { amount: formatCents(row.shortfall_cents, row.currency) })
           : row.target_cents > 0
-            ? 'Target covered'
+            ? t('dialogs.yearClose.row.targetCovered')
             : row.balance_cents < 0
-              ? `overspent ${formatCents(-row.balance_cents, row.currency)}`
-              : 'No target'}
+              ? t('status.overspent', { amount: formatCents(-row.balance_cents, row.currency) })
+              : t('dialogs.yearClose.row.noTarget')}
       </div>
       {row.balance_cents > 0 && (
         <div className="camera-row">
           {bags.length > 0 && (
             <>
-              <select value={targetBag} onChange={(e) => setTargetBag(e.target.value)} aria-label="Move leftover to">
-                <option value="">Move leftover to…</option>
+              <select value={targetBag} onChange={(e) => setTargetBag(e.target.value)} aria-label={t('dialogs.yearClose.row.moveToAria')}>
+                <option value="">{t('dialogs.yearClose.row.moveToPlaceholder')}</option>
                 {bags.map((b) => (
                   <option key={b.bag_id} value={b.bag_id}>
                     {b.bag_name}
@@ -864,7 +867,7 @@ function YearCloseRow({
                 disabled={busy || !targetBag}
                 onClick={() => void moveAll()}
               >
-                Move all
+                {t('actions.moveAll')}
               </Button>
             </>
           )}
@@ -874,7 +877,7 @@ function YearCloseRow({
             onClick={() => void release()}
             disabled={busy}
           >
-            Release leftover
+            {t('actions.releaseLeftover')}
           </Button>
         </div>
       )}

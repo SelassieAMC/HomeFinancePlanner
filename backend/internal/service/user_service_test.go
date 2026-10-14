@@ -86,6 +86,18 @@ func (f *fakeUserStore) UpdateFullName(_ context.Context, id int64, fullName str
 	return u, nil
 }
 
+func (f *fakeUserStore) UpdateLocale(_ context.Context, id int64, locale string) (domain.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.items[id]
+	if !ok {
+		return domain.User{}, domain.ErrNotFound
+	}
+	u.Locale = locale
+	f.items[id] = u
+	return u, nil
+}
+
 func (f *fakeUserStore) UpdatePassword(_ context.Context, id int64, hash string) (domain.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -383,5 +395,29 @@ func TestAdminDeleteGuards(t *testing.T) {
 	}
 	if err := svc.AdminDelete(ctx, admin.ID, anna.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatal("second delete: want ErrNotFound")
+	}
+}
+
+func TestUpdateLocaleStoresValidAndRefusesUnknown(t *testing.T) {
+	users := newFakeUserStore()
+	svc := NewUserService(users, newFakeSessionStore(), t.TempDir())
+	ctx := context.Background()
+	created, err := users.Create(ctx, domain.User{Username: "anna", FullName: "Anna", PasswordHash: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := svc.UpdateLocale(ctx, created.ID, " de ")
+	if err != nil {
+		t.Fatalf("valid locale: %v", err)
+	}
+	if u.Locale != "de" {
+		t.Fatalf("want de, got %q", u.Locale)
+	}
+
+	for _, bad := range []string{"", "fr", "ENGLISH", "de-DE-x-much-too-long"} {
+		if _, err := svc.UpdateLocale(ctx, created.ID, bad); err == nil {
+			t.Fatalf("locale %q must be refused", bad)
+		}
 	}
 }

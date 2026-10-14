@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { goalsApi } from '../../api/goals';
 import { accountsApi } from '../../api/accounts';
@@ -19,6 +20,7 @@ import {
 // the net-worth math already trusts. The achieved state is derived, never
 // stored.
 export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
+  const { t } = useTranslation('goals');
   const { data, loading, error, reload } = useAsync(() => goalsApi.list(), []);
   const accounts = useAsync(() => accountsApi.list(), []);
 
@@ -39,11 +41,11 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
 
     const cents = dollarsToCents(amount); // parses the comma decimal separator too
     if (!Number.isFinite(cents) || cents <= 0) {
-      setFormError('Enter a positive target amount.');
+      setFormError(t('validation.positive_amount'));
       return;
     }
     if (!accountId) {
-      setFormError('Choose the account the goal tracks.');
+      setFormError(t('validation.choose_account'));
       return;
     }
     try {
@@ -53,7 +55,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       setTargetDate('');
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create goal.');
+      setFormError(err instanceof Error ? err.message : t('errors.create'));
     }
   }
 
@@ -78,7 +80,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       setConfirmDelete(null);
       reload();
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : 'Failed to delete goal.');
+      setPageError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
       setBusy(false);
     }
@@ -96,18 +98,18 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
 
   const content = (
     <>
-      <Card title="Add goal">
+      <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
           <input
-            placeholder="Goal name"
+            placeholder={t('add.name_placeholder')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={200}
-            aria-label="Goal name"
+            aria-label={t('add.name_aria')}
             required
           />
           <input
-            placeholder="Target amount"
+            placeholder={t('add.amount_placeholder')}
             inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -116,10 +118,10 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
           <select
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
-            aria-label="Tracked account"
+            aria-label={t('add.account_aria')}
             required
           >
-            <option value="">Tracked account…</option>
+            <option value="">{t('add.account_empty')}</option>
             {(accounts.data ?? []).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} ({a.currency})
@@ -130,15 +132,12 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
             type="date"
             value={targetDate}
             onChange={(e) => setTargetDate(e.target.value)}
-            aria-label="Target date (optional)"
+            aria-label={t('add.date_aria')}
           />
-          <Button type="submit">Add</Button>
+          <Button type="submit">{t('add.submit')}</Button>
         </form>
         <p className="hint-text">
-          Progress is the tracked account's current balance — contribute with a
-          transfer into it. The currency follows that account. The target date
-          is a milestone you're aiming for ("by when") — purely informational:
-          nothing is enforced or reminded by it.
+          {t('hints.progress')} {t('hints.target_date')}
         </p>
         {formError && <ErrorMessage message={formError} />}
       </Card>
@@ -146,7 +145,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       {pageError && <ErrorMessage message={pageError} />}
 
       {goals.length === 0 ? (
-        <EmptyState message="No goals yet — add your first one above." />
+        <EmptyState message={t('empty')} />
       ) : (
         <div className="budget-list">
           {goals.map((g) => (
@@ -161,7 +160,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {editing && (
-        <Dialog title="Edit goal">
+        <Dialog title={t('edit.title')}>
           <GoalEditForm
             initial={editing}
             accounts={accounts.data ?? []}
@@ -173,17 +172,14 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {confirmDelete && (
-        <Dialog title="Delete goal?">
-          <p className="hint-text">
-            This permanently removes “{confirmDelete.name}”. The tracked account
-            and its balances are untouched. This cannot be undone.
-          </p>
+        <Dialog title={t('delete.title')}>
+          <p className="hint-text">{t('delete.body', { name: confirmDelete.name })}</p>
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={busy}>
-              Cancel
+              {t('delete.cancel')}
             </Button>
             <Button variant="danger" onClick={handleDelete} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete'}
+              {busy ? t('delete.deleting') : t('delete.confirm')}
             </Button>
           </div>
         </Dialog>
@@ -195,7 +191,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
 
   return (
     <div className="page">
-      <h2 className="page-title">Goals</h2>
+      <h2 className="page-title">{t('title')}</h2>
       {content}
     </div>
   );
@@ -221,6 +217,7 @@ function GoalCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation('goals');
   const pct = goal.target_cents > 0 ? (goal.progress_cents / goal.target_cents) * 100 : 0;
   const remaining = Math.max(0, goal.target_cents - goal.progress_cents);
   return (
@@ -243,15 +240,20 @@ function GoalCard({
       </div>
       <div className={goal.achieved ? 'budget-status ok' : 'budget-status'}>
         {goal.achieved
-          ? 'Goal reached'
-          : `${formatCents(remaining, goal.currency)} to go${goal.target_date ? ` · by ${goal.target_date}` : ''}`}
+          ? t('card.reached')
+          : goal.target_date
+            ? t('card.to_go_by', {
+                amount: formatCents(remaining, goal.currency),
+                date: goal.target_date,
+              })
+            : t('card.to_go', { amount: formatCents(remaining, goal.currency) })}
       </div>
       <div className="camera-row">
         <Button variant="secondary" className="btn-sm" onClick={onEdit}>
-          Edit
+          {t('card.edit')}
         </Button>
         <Button variant="danger" className="btn-sm" onClick={onDelete}>
-          Delete
+          {t('card.delete')}
         </Button>
       </div>
     </Card>
@@ -275,6 +277,7 @@ function GoalEditForm({
   onSubmit: (input: GoalInput) => Promise<void>;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation('goals');
   const [name, setName] = useState(initial.name);
   const [amount, setAmount] = useState((initial.target_cents / 100).toString());
   const [accountId, setAccountId] = useState(String(initial.account_id));
@@ -286,20 +289,20 @@ function GoalEditForm({
     setFormError(null);
     const cents = dollarsToCents(amount);
     if (!Number.isFinite(cents) || cents <= 0) {
-      setFormError('Enter a positive target amount.');
+      setFormError(t('validation.positive_amount'));
       return;
     }
     try {
       await onSubmit(input(name, cents, accountId, targetDate));
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save the goal.');
+      setFormError(err instanceof Error ? err.message : t('errors.save'));
     }
   }
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       <label>
-        Name
+        {t('edit.name')}
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -308,7 +311,7 @@ function GoalEditForm({
         />
       </label>
       <label>
-        Target amount ({initial.currency})
+        {t('edit.target_amount', { currency: initial.currency })}
         <input
           inputMode="decimal"
           value={amount}
@@ -317,7 +320,7 @@ function GoalEditForm({
         />
       </label>
       <label>
-        Tracked account
+        {t('edit.account')}
         <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
           {/* Same-currency accounts only: the backend refuses a cross-currency
               re-point — the target would silently change meaning. */}
@@ -331,26 +334,23 @@ function GoalEditForm({
         </select>
       </label>
       <label>
-        Target date (optional)
+        {t('edit.date')}
         <input
           type="date"
           value={targetDate}
           onChange={(e) => setTargetDate(e.target.value)}
         />
       </label>
-      <p className="hint-text">
-        The target date is a milestone you're aiming for ("by when") — purely
-        informational: nothing is enforced or reminded by it.
-      </p>
+      <p className="hint-text">{t('hints.target_date')}</p>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         {onCancel && (
           <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
-            Cancel
+            {t('edit.cancel')}
           </Button>
         )}
         <Button type="submit" disabled={busy}>
-          {busy ? 'Saving…' : 'Save changes'}
+          {busy ? t('edit.saving') : t('edit.save')}
         </Button>
       </div>
     </form>

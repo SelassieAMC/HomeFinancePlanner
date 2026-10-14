@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Spinner } from '../ui';
 import { useAuth } from '../../features/auth/AuthContext';
@@ -10,33 +11,35 @@ import { UserAvatar } from './UserAvatar';
 // navigation, no icons.
 // External items are plain anchors outside the SPA router (the backend serves
 // them directly — e.g. the River job-queue UI), never NavLink routes.
+// The `label` field holds a `common` i18n key (nav.*) — translated at render
+// time so the language switch applies without a reload of the module.
 type NavItem = { to: string; label: string; end?: boolean };
 
 const TAB_ITEMS: NavItem[] = [
-  { to: '/', label: 'Home', end: true },
-  { to: '/transactions', label: 'Activity' },
-  { to: '/planning', label: 'Planning' },
+  { to: '/', label: 'nav.home', end: true },
+  { to: '/transactions', label: 'nav.activity' },
+  { to: '/planning', label: 'nav.planning' },
 ];
 
 const MORE_ITEMS: (NavItem & { external?: true; href?: string })[] = [
-  { to: '/accounts', label: 'Accounts' },
-  { to: '/stores', label: 'Stores' },
-  { to: '/products', label: 'Products' },
-  { to: '/cart', label: 'Purchase cart' },
-  { to: '/bills', label: 'Bills' },
-  { to: '/scan', label: 'Scan bill' },
-  { to: '/settings', label: 'Settings' },
+  { to: '/accounts', label: 'nav.accounts' },
+  { to: '/stores', label: 'nav.stores' },
+  { to: '/products', label: 'nav.products' },
+  { to: '/cart', label: 'nav.purchase_cart' },
+  { to: '/bills', label: 'nav.bills' },
+  { to: '/scan', label: 'nav.scan_bill' },
+  { to: '/settings', label: 'nav.settings' },
   {
     to: '/riverui',
-    label: 'Job queue',
+    label: 'nav.job_queue',
     external: true,
     href: '/riverui',
   },
 ];
 
 const FAB_ITEMS = [
-  { to: '/scan', label: 'Scan bill' },
-  { to: '/transactions', label: 'Add transaction' },
+  { to: '/scan', label: 'nav.scan_bill' },
+  { to: '/transactions', label: 'nav.add_transaction' },
 ];
 
 // Every destination in one list for the desktop sidebar; the union keeps
@@ -48,6 +51,7 @@ const ALL_ITEMS: (NavItem & { external?: true; href?: string })[] = [
 
 export function AppLayout() {
   const { user, loading } = useAuth();
+  const { t } = useTranslation('common');
   const location = useLocation();
   const navigate = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -89,13 +93,13 @@ export function AppLayout() {
       {/* Desktop navigation — hidden behind the tab bar on mobile. */}
       <aside className="sidebar">
         <div className="sidebar-brand">Home Finance Planner</div>
-        <nav aria-label="Main navigation">
+        <nav aria-label={t('nav.main_aria')}>
           <ul className="sidebar-nav">
             {ALL_ITEMS.map((item) =>
               item.external ? (
                 <li key={item.to}>
                   <a href={item.href} className="nav-link">
-                    {item.label}
+                    {t(item.label)}
                   </a>
                 </li>
               ) : (
@@ -105,7 +109,7 @@ export function AppLayout() {
                     end={item.end}
                     className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
                   >
-                    {item.label}
+                    {t(item.label)}
                   </NavLink>
                 </li>
               ),
@@ -118,19 +122,19 @@ export function AppLayout() {
       </main>
 
       {/* Mobile: bottom tab bar with a center speed-dial FAB. */}
-      <nav className="tabbar" aria-label="Main navigation">
+      <nav className="tabbar" aria-label={t('nav.main_aria')}>
         <NavLink
           to="/"
           end
           className={({ isActive }) => (isActive ? 'tab-link active' : 'tab-link')}
         >
-          Home
+          {t('nav.home')}
         </NavLink>
         <NavLink
           to="/transactions"
           className={({ isActive }) => (isActive ? 'tab-link active' : 'tab-link')}
         >
-          Activity
+          {t('nav.activity')}
         </NavLink>
         <span className="tab-fab-slot">
           {fabOpen && (
@@ -149,7 +153,7 @@ export function AppLayout() {
                     className="fab-item"
                     onClick={() => navigate(item.to)}
                   >
-                    {item.label}
+                    {t(item.label)}
                   </button>
                 ))}
               </div>
@@ -158,7 +162,7 @@ export function AppLayout() {
           <button
             type="button"
             className={fabOpen ? 'tab-fab open' : 'tab-fab'}
-            aria-label="Quick actions"
+            aria-label={t('nav.quick_actions_aria')}
             aria-expanded={fabOpen}
             onClick={() => setFabOpen((open) => !open)}
           >
@@ -169,7 +173,7 @@ export function AppLayout() {
           to="/planning"
           className={({ isActive }) => (isActive ? 'tab-link active' : 'tab-link')}
         >
-          Planning
+          {t('nav.planning')}
         </NavLink>
         <button
           type="button"
@@ -178,7 +182,7 @@ export function AppLayout() {
           aria-expanded={moreOpen}
           onClick={() => setMoreOpen(true)}
         >
-          More
+          {t('nav.more')}
         </button>
       </nav>
 
@@ -190,14 +194,14 @@ export function AppLayout() {
             aria-hidden="true"
             onClick={() => setMoreOpen(false)}
           />
-          <div className="more-sheet" role="dialog" aria-label="More pages">
+          <div className="more-sheet" role="dialog" aria-label={t('nav.more_pages_aria')}>
             <nav>
               <ul onClick={() => setMoreOpen(false)}>
                 {MORE_ITEMS.map((item) => (
                   <li key={item.to}>
                     {item.external ? (
                       <a href={item.href} className="more-link">
-                        {item.label}
+                        {t(item.label)}
                       </a>
                     ) : (
                       <NavLink
@@ -206,7 +210,7 @@ export function AppLayout() {
                           isActive ? 'more-link active' : 'more-link'
                         }
                       >
-                        {item.label}
+                        {t(item.label)}
                       </NavLink>
                     )}
                   </li>

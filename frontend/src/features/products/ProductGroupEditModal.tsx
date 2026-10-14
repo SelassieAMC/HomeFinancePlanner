@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { productsApi } from '../../api/products';
 import type { ProductGroup } from '../../types/domain';
 import { Button, Dialog, ErrorMessage } from '../../components/ui';
@@ -20,6 +21,7 @@ interface ProductGroupEditModalProps {
  * family, exactly like the per-product editor does.
  */
 export function ProductGroupEditModal({ group, onClose, onSaved }: ProductGroupEditModalProps) {
+  const { t } = useTranslation('products');
   const [genericName, setGenericName] = useState(group.generic_name);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -27,7 +29,7 @@ export function ProductGroupEditModal({ group, onClose, onSaved }: ProductGroupE
   async function handleSave() {
     const value = genericName.trim();
     if (!value) {
-      setError('Generic product name is required.');
+      setError(t('errors.genericRequired'));
       return;
     }
     if (value === group.generic_name) {
@@ -54,28 +56,27 @@ export function ProductGroupEditModal({ group, onClose, onSaved }: ProductGroupE
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save the generic product name.');
+      setError(err instanceof Error ? err.message : t('errors.saveGeneric'));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Dialog title="Edit generic product">
+    <Dialog title={t('group.title')}>
       <div className="form-grid">
         <label>
-          Generic product name
+          {t('group.name')}
           <input
             value={genericName}
-            placeholder="Product family across brands and sizes"
-            aria-label="Generic product name"
+            placeholder={t('group.placeholder')}
+            aria-label={t('group.nameAria')}
             onChange={(e) => setGenericName(e.target.value)}
             autoFocus
           />
         </label>
         <p className="item-field-note">
-          Applies to all {group.items.length} product{group.items.length === 1 ? '' : 's'} of this
-          family. Their raw names, prices and categories stay untouched.
+          {t('group.appliesNote', { count: group.items.length })}
         </p>
       </div>
 
@@ -83,10 +84,10 @@ export function ProductGroupEditModal({ group, onClose, onSaved }: ProductGroupE
 
       <div className="dialog-actions">
         <Button variant="secondary" onClick={onClose}>
-          Cancel
+          {t('actions.cancel')}
         </Button>
         <Button onClick={() => void handleSave()} disabled={busy}>
-          {busy ? 'Saving…' : 'Save changes'}
+          {busy ? t('actions.saving') : t('actions.saveChanges')}
         </Button>
       </div>
     </Dialog>

@@ -30,10 +30,23 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	PhotoPath    string    `json:"-"`
 	HasPhoto     bool      `json:"has_photo"`
+	Locale       string    `json:"locale"`
 	IsAdmin      bool      `json:"is_admin"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
+
+// DefaultLocale is the value users.locale holds when no language was chosen.
+// Keep in sync with the frontend's DEFAULT_LOCALE.
+const DefaultLocale = "en"
+
+// ValidLocales are the UI languages the frontend ships: the user's preferred
+// one lives on the users row (users.locale, default 'en'). Keep in sync with
+// the frontend's i18n resources.
+var ValidLocales = map[string]bool{"en": true, "de": true, "es": true}
+
+// IsValidLocale reports whether loc is a shippable UI language.
+func IsValidLocale(loc string) bool { return ValidLocales[loc] }
 
 // LoginUser is the public identity shown in the login dropdown: the name and
 // whether an avatar exists — never password material, and only the id for a

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n';
 import { cartApi } from '../../api/cart';
 import { storesApi } from '../../api/stores';
 import { ApiError } from '../../api/client';
@@ -19,6 +21,7 @@ const POLL_MAX_MS = 10 * 60_000; // grounded searches can take minutes
 
 export function CartPage() {
   const cart = useCart();
+  const { t } = useTranslation('cart');
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -64,7 +67,7 @@ export function CartPage() {
       setPhase('result');
       setHistoryKey((k) => k + 1);
     } else if (polled.status === 'failed') {
-      setFailed(polled.error || 'The offer search failed.');
+      setFailed(polled.error || i18n.t('cart:errors.searchFailed'));
       setPhase('failed');
       setHistoryKey((k) => k + 1);
     }
@@ -76,7 +79,7 @@ export function CartPage() {
       setToken(null);
       setPhase('cart');
       setSearchParams({});
-      setError('offer search not found or expired');
+      setError(i18n.t('cart:errors.notFoundOrExpired'));
     }
   }, [poll.error, phase, setSearchParams]);
 
@@ -96,7 +99,7 @@ export function CartPage() {
           setResult(res.result);
           setPhase('result');
         } else if (res.status === 'failed') {
-          setFailed(res.error || 'The offer search failed.');
+          setFailed(res.error || i18n.t('cart:errors.searchFailed'));
           setPhase('failed');
         }
         // still searching → keep polling
@@ -108,10 +111,10 @@ export function CartPage() {
         setSearchParams({});
         setError(
           err instanceof ApiError && err.status === 404
-            ? 'offer search not found or expired'
+            ? i18n.t('cart:errors.notFoundOrExpired')
             : err instanceof Error
               ? err.message
-              : 'Could not load the offer search.',
+              : i18n.t('cart:errors.load'),
         );
       });
     return () => {
@@ -145,7 +148,7 @@ export function CartPage() {
       setPhase('searching');
       setSearchParams({ token: res.search_token }, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not start the offer search.');
+      setError(err instanceof Error ? err.message : i18n.t('cart:errors.start'));
     } finally {
       setBusy(false);
     }
@@ -161,7 +164,7 @@ export function CartPage() {
       setFailed(null);
       setPhase('searching');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Retry failed.');
+      setError(err instanceof Error ? err.message : i18n.t('cart:errors.retry'));
     } finally {
       setBusy(false);
     }
@@ -186,14 +189,14 @@ export function CartPage() {
     setSearchParams({});
   }
 
-  async function discardSearch(t: string) {
+  async function discardSearch(searchToken: string) {
     setBusy(true);
     try {
-      await cartApi.remove(t);
+      await cartApi.remove(searchToken);
       setHistoryKey((k) => k + 1);
-      if (t === token) backToCart();
+      if (searchToken === token) backToCart();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not discard the search.');
+      setError(err instanceof Error ? err.message : i18n.t('cart:errors.discard'));
     } finally {
       setBusy(false);
     }
@@ -203,27 +206,28 @@ export function CartPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Purchase cart</h2>
+      <h2 className="page-title">{t('title')}</h2>
 
       {confirmed && (
         <div className="hint-banner">
-          Purchase confirmed — the cart was cleared. The offer report is kept
-          below under “Past searches”.
+          {t('confirmedBanner')}
         </div>
       )}
       {noProviderHint && cart.items.length === 0 && (
         <div className="hint-banner">
-          Add products from the <Link to="/products">Products</Link> overview,
-          then search current offers for them in your local markets with the AI
-          connector from <Link to="/settings">Settings</Link>.
+          {t('hints.addBefore')}
+          <Link to="/products">{t('hints.productsLink')}</Link>
+          {t('hints.addMiddle')}
+          <Link to="/settings">{t('hints.settingsLink')}</Link>
+          {t('hints.addAfter')}
         </div>
       )}
 
       <Tabs
-        ariaLabel="Purchase cart views"
+        ariaLabel={t('tabs.aria')}
         tabs={[
-          { key: 'cart', label: 'Cart' },
-          { key: 'searches', label: 'Searches' },
+          { key: 'cart', label: t('tabs.cart') },
+          { key: 'searches', label: t('tabs.searches') },
         ]}
         active={tab}
         onChange={setTab}
@@ -232,9 +236,9 @@ export function CartPage() {
       {tab === 'cart' && (
       <>
       {phase === 'cart' && (
-        <Card title="Cart">
+        <Card title={t('cart.cardTitle')}>
           {cart.items.length === 0 ? (
-            <EmptyState message="The cart is empty — add products from the products overview." />
+            <EmptyState message={t('cart.empty')} />
           ) : (
             <ul className="cart-items">
               {cart.items.map((it) => (
@@ -247,16 +251,16 @@ export function CartPage() {
                     <button
                       type="button"
                       className="icon-btn"
-                      aria-label={`Decrease quantity of ${it.name}`}
+                      aria-label={t('qty.decreaseAria', { name: it.name })}
                       onClick={() => cart.setQuantity(it.product_id, it.quantity - 1)}
                     >
                       −
                     </button>
-                    <span aria-label={`Quantity of ${it.name}`}>{it.quantity}</span>
+                    <span aria-label={t('qty.aria', { name: it.name })}>{it.quantity}</span>
                     <button
                       type="button"
                       className="icon-btn"
-                      aria-label={`Increase quantity of ${it.name}`}
+                      aria-label={t('qty.increaseAria', { name: it.name })}
                       onClick={() => cart.setQuantity(it.product_id, it.quantity + 1)}
                     >
                       +
@@ -264,14 +268,14 @@ export function CartPage() {
                   </span>
                   <span className="cart-last-price">
                     {it.last_price_cents !== undefined && it.currency
-                      ? `last: ${formatCents(it.last_price_cents, it.currency)}`
+                      ? t('lastPrice', { price: formatCents(it.last_price_cents, it.currency) })
                       : ''}
                   </span>
                   <button
                     type="button"
                     className="icon-btn"
-                    title="Remove from cart"
-                    aria-label={`Remove ${it.name} from the cart`}
+                    title={t('remove.title')}
+                    aria-label={t('remove.aria', { name: it.name })}
                     onClick={() => cart.remove(it.product_id)}
                   >
                     ✕
@@ -289,8 +293,8 @@ export function CartPage() {
                 if (product) cart.add(product);
                 setPickName('');
               }}
-              ariaLabel="Add a product to the cart"
-              placeholder="Add a product by name…"
+              ariaLabel={t('add.aria')}
+              placeholder={t('add.placeholder')}
             />
           </div>
 
@@ -299,17 +303,17 @@ export function CartPage() {
               onClick={() => setOptionsOpen((open) => !open)}
               disabled={busy || cart.items.length === 0}
             >
-              Search offers
+              {t('search.offers')}
             </Button>
             <Button variant="secondary" onClick={() => cart.clear()} disabled={busy || cart.items.length === 0}>
-              Clear all
+              {t('search.clearAll')}
             </Button>
           </div>
 
           {optionsOpen && cart.items.length > 0 && (
             <div className="search-options">
               <fieldset className="search-options-group">
-                <legend>Store scope</legend>
+                <legend>{t('options.storeScope')}</legend>
                 <label className="search-options-choice">
                   <input
                     type="radio"
@@ -317,7 +321,7 @@ export function CartPage() {
                     checked={!pinStores}
                     onChange={() => setPinStores(false)}
                   />
-                  Any local market — whatever appears available
+                  {t('options.anyMarket')}
                 </label>
                 <label className="search-options-choice">
                   <input
@@ -326,15 +330,14 @@ export function CartPage() {
                     checked={pinStores}
                     onChange={() => setPinStores(true)}
                   />
-                  Only these stores (missing products are reported per store)
+                  {t('options.pinnedStores')}
                 </label>
                 {pinStores && (
                   stores.loading && !stores.data ? (
-                    <Spinner label="Loading your stores…" />
+                    <Spinner label={t('options.loadingStores')} />
                   ) : (stores.data ?? []).length === 0 ? (
                     <p className="hint-text">
-                      No stores recorded yet — add one on a bill, or leave the
-                      scope open.
+                      {t('options.noStores')}
                     </p>
                   ) : (
                     <div className="search-options-stores">
@@ -365,9 +368,7 @@ export function CartPage() {
                   checked={looseMatch}
                   onChange={(e) => setLooseMatch(e.target.checked)}
                 />
-                Include similar names and varieties (loose) — e.g. avocado also
-                matches Hass, XL, ready-to-eat; each offer names what the
-                market sells. Off = exact name only (strict).
+                {t('options.loose')}
               </label>
 
               <div className="camera-row">
@@ -375,10 +376,10 @@ export function CartPage() {
                   onClick={handleSearch}
                   disabled={busy || cart.items.length === 0 || (pinStores && pickedStores.length === 0)}
                 >
-                  Start search
+                  {t('options.start')}
                 </Button>
                 <Button variant="secondary" onClick={() => setOptionsOpen(false)} disabled={busy}>
-                  Cancel
+                  {t('actions.cancel')}
                 </Button>
               </div>
             </div>
@@ -388,34 +389,32 @@ export function CartPage() {
       )}
 
       {phase === 'searching' && (
-        <Card title="Searching offers">
+        <Card title={t('searching.title')}>
           {poll.timedOut ? (
             <div className="hint-banner">
-              Still searching — grounded web searches can take a while. You can
-              leave this page; the result appears here (and under “Past
-              searches”) once it finishes.
+              {t('searching.timedOut')}
             </div>
           ) : (
-            <Spinner label="Asking the AI connector for current offers in your local markets…" />
+            <Spinner label={t('searching.spinner')} />
           )}
           {error && <ErrorMessage message={error} />}
         </Card>
       )}
 
       {phase === 'failed' && (
-        <Card title="Offer search failed">
-          <ErrorMessage message={failed || 'The offer search failed.'} />
+        <Card title={t('failed.title')}>
+          <ErrorMessage message={failed || t('errors.searchFailed')} />
           <div className="hint-banner">
-            The configured AI connector could not search the web. Pick a model
-            or provider with web search in <Link to="/settings">Settings</Link>{' '}
-            (Gemini, Anthropic, or an OpenAI search model), then try again.
+            {t('failed.hintBefore')}
+            <Link to="/settings">{t('failed.settingsLink')}</Link>
+            {t('failed.hintAfter')}
           </div>
           <div className="camera-row">
             <Button onClick={handleRetry} disabled={busy}>
-              Try again
+              {t('failed.retry')}
             </Button>
             <Button variant="secondary" onClick={backToCart} disabled={busy}>
-              Back to cart
+              {t('actions.backToCart')}
             </Button>
           </div>
           {error && <ErrorMessage message={error} />}
@@ -423,12 +422,12 @@ export function CartPage() {
       )}
 
       {phase === 'result' && result && (
-        <Card title="Offers found">
+        <Card title={t('result.title')}>
           <OfferResultView result={result} />
           <div className="camera-row">
-            <Button onClick={handleConfirmPurchase}>Confirm purchase</Button>
+            <Button onClick={handleConfirmPurchase}>{t('result.confirm')}</Button>
             <Button variant="secondary" onClick={backToCart}>
-              Back to cart
+              {t('actions.backToCart')}
             </Button>
           </div>
           {error && <ErrorMessage message={error} />}
@@ -438,11 +437,11 @@ export function CartPage() {
       )}
 
       {tab === 'searches' && (
-      <Card title="Past searches">
+      <Card title={t('history.title')}>
         {history.loading && !history.data ? (
           <Spinner />
         ) : (history.data ?? []).length === 0 ? (
-          <EmptyState message="No offer searches yet." />
+          <EmptyState message={t('history.empty')} />
         ) : (
           <ul className="cart-history">
             {history.data!.map((s) => (
@@ -458,11 +457,13 @@ export function CartPage() {
                   }}
                 >
                   {new Date(s.created_at ?? '').toLocaleString()} ·{' '}
-                  {s.products?.length ?? 0} product(s)
-                  {s.stores && s.stores.length > 0 && ` · ${s.stores.length} pinned`}
-                  {s.name_match === 'loose' && ' · loose'}
+                  {t('history.products', { count: s.products?.length ?? 0 })}
+                  {s.stores && s.stores.length > 0 && ` · ${t('history.pinned', { count: s.stores.length })}`}
+                  {s.name_match === 'loose' && ` · ${t('history.loose')}`}
                 </button>
-                <span className={`offer-status offer-status-${s.status}`}>{s.status}</span>
+                <span className={`offer-status offer-status-${s.status}`}>
+                  {t(`statuses.${s.status}`, { defaultValue: s.status })}
+                </span>
                 <Button
                   type="button"
                   variant="ghost"
@@ -470,7 +471,7 @@ export function CartPage() {
                   disabled={busy || s.status === 'searching'}
                   onClick={() => discardSearch(s.search_token)}
                 >
-                  Discard
+                  {t('actions.discard')}
                 </Button>
               </li>
             ))}

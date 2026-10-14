@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { productsApi } from '../../api/products';
 import { formatCents, parseDecimalInput } from '../../lib/money';
 import type { Category, Product, ProductInput, ProductMergeCheck } from '../../types/domain';
@@ -28,6 +29,7 @@ interface ProductEditModalProps {
  * standardized-name field learns the normalization mapping (source user).
  */
 export function ProductEditModal({ product, categories, onClose, onSaved }: ProductEditModalProps) {
+  const { t } = useTranslation('products');
   const [name, setName] = useState(product.name);
   const [brand, setBrand] = useState(product.brand ?? '');
   const [unit, setUnit] = useState(product.unit ?? '');
@@ -77,7 +79,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
       await productsApi.update(product.id, input);
       onSaved();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save product.');
+      setFormError(err instanceof Error ? err.message : t('errors.save'));
     } finally {
       setBusy(false);
     }
@@ -98,7 +100,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
       });
       onSaved();
     } catch (err) {
-      setMergeError(err instanceof Error ? err.message : 'Failed to merge products.');
+      setMergeError(err instanceof Error ? err.message : t('errors.merge'));
     } finally {
       setMergeBusy(false);
     }
@@ -106,7 +108,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
 
   async function handleSaveClick() {
     if (!name.trim()) {
-      setFormError('Product name is required.');
+      setFormError(t('errors.nameRequired'));
       return;
     }
     const input = buildInput();
@@ -119,9 +121,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
         const check = await productsApi.checkMerge(product.id, input.name);
         if (check.match) {
           if (!check.mergeable) {
-            setFormError(
-              `A product named “${check.match.name}” already exists and cannot be merged. Choose a different name.`,
-            );
+            setFormError(t('errors.mergeConflict', { name: check.match.name }));
             return;
           }
           setPendingInput(input);
@@ -129,7 +129,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
           return;
         }
       } catch (err) {
-        setFormError(err instanceof Error ? err.message : 'Failed to check for a matching product.');
+        setFormError(err instanceof Error ? err.message : t('errors.check'));
         return;
       } finally {
         setBusy(false);
@@ -144,7 +144,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
     try {
       setCurrent(await productsApi.uploadPhoto(product.id, file));
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to upload photo.');
+      setFormError(err instanceof Error ? err.message : t('errors.uploadPhoto'));
     }
   }
 
@@ -153,33 +153,33 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
     try {
       setCurrent(await productsApi.removePhoto(product.id));
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to remove photo.');
+      setFormError(err instanceof Error ? err.message : t('errors.removePhoto'));
     }
   }
 
   return (
-    <Dialog title="Edit product" wide>
+    <Dialog title={t('actions.editTitle')} wide>
       <div className="edit-layout">
         <div className="edit-main">
           <section className="card edit-card">
-            <h4 className="edit-section-title">Basic information</h4>
+            <h4 className="edit-section-title">{t('edit.basicInfo')}</h4>
             <div className="form-grid">
               <label>
-                Product name
+                {t('edit.name')}
                 <input value={name} onChange={(e) => setName(e.target.value)} required />
               </label>
               <label>
-                Brand
+                {t('edit.brand')}
                 <input value={brand} onChange={(e) => setBrand(e.target.value)} />
               </label>
               <div className="form-row-2">
                 <label>
-                  Measure
+                  {t('labels.measure')}
                   <div className="unit-value-row">
                     <UnitSelect
                       value={unit}
-                      ariaLabel="Product measure"
-                      emptyLabel="No measure"
+                      ariaLabel={t('edit.measureAria')}
+                      emptyLabel={t('edit.noMeasure')}
                       onChange={setUnit}
                     />
                     <input
@@ -188,44 +188,44 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
                       value={unitValue}
                       onChange={(e) => setUnitValue(e.target.value)}
                       placeholder="500"
-                      aria-label="Product size value"
-                      title="Printed size magnitude, e.g. 500 for a 500ml bottle; 0 clears it"
+                      aria-label={t('edit.sizeAria')}
+                      title={t('edit.sizeTitle')}
                     />
                   </div>
                 </label>
                 <label>
-                  Category
+                  {t('edit.category')}
                   <CategorySelect
                     categories={categories}
                     kind="product"
                     value={categoryId}
-                    ariaLabel="Product category"
+                    ariaLabel={t('edit.categoryAria')}
                     onChange={setCategoryId}
                   />
                 </label>
               </div>
               <label>
-                Standardized name{' '}
-                <span className="item-field-note">raw name: {name.trim() || '—'}</span>
+                {t('edit.standardName')}{' '}
+                <span className="item-field-note">{t('edit.rawName', { name: name.trim() || '—' })}</span>
                 <input
                   value={standardName}
-                  placeholder="Human-readable name"
-                  aria-label="Standardized name"
+                  placeholder={t('edit.standardNamePlaceholder')}
+                  aria-label={t('edit.standardNameAria')}
                   onChange={(e) => setStandardName(e.target.value)}
                 />
               </label>
               <label>
-                Generic product{' '}
-                <span className="item-field-note">e.g. Frozen Shaped Potatoes</span>
+                {t('edit.genericName')}{' '}
+                <span className="item-field-note">{t('edit.genericExample')}</span>
                 <input
                   value={genericName}
-                  placeholder="Product family across brands and sizes"
-                  aria-label="Generic product family"
+                  placeholder={t('edit.genericPlaceholder')}
+                  aria-label={t('edit.genericAria')}
                   onChange={(e) => setGenericName(e.target.value)}
                 />
               </label>
               <label>
-                Description
+                {t('edit.description')}
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -236,10 +236,10 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
           </section>
 
           <section className="card edit-card">
-            <h4 className="edit-section-title">Purchase data</h4>
+            <h4 className="edit-section-title">{t('edit.purchaseData')}</h4>
             <div className="item-field-grid">
               <div className="item-field">
-                <span>Best price</span>
+                <span>{t('labels.bestPrice')}</span>
                 <strong>
                   {current.best_price_cents !== undefined && current.price_currency
                     ? formatCents(current.best_price_cents, current.price_currency)
@@ -247,11 +247,11 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
                 </strong>
               </div>
               <div className="item-field">
-                <span>Last purchased</span>
+                <span>{t('labels.lastPurchased')}</span>
                 <span>{current.last_purchase_date || '—'}</span>
               </div>
               <div className="item-field">
-                <span>Times bought</span>
+                <span>{t('labels.timesBought')}</span>
                 <strong>{current.times_bought}</strong>
               </div>
             </div>
@@ -262,25 +262,25 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
 
         <div className="edit-side">
           <section className="card edit-card">
-            <h4 className="edit-section-title">Product photo</h4>
+            <h4 className="edit-section-title">{t('edit.photo')}</h4>
             {current.has_image ? (
               <img
                 className="product-photo product-photo-preview"
                 src={productsApi.photoUrl(current)}
-                alt={`${current.name} photo`}
+                alt={t('edit.photoAlt', { name: current.name })}
               />
             ) : (
               <div className="product-photo-placeholder" aria-hidden="true">
-                No photo yet
+                {t('edit.noPhoto')}
               </div>
             )}
             <div className="camera-row">
               <Button variant="secondary" onClick={() => photoInputRef.current?.click()}>
-                {current.has_image ? 'Replace image' : 'Upload image'}
+                {current.has_image ? t('edit.replaceImage') : t('edit.uploadImage')}
               </Button>
               {current.has_image && (
                 <Button variant="ghost" onClick={() => void handleRemovePhoto()}>
-                  Remove
+                  {t('edit.remove')}
                 </Button>
               )}
             </div>
@@ -297,17 +297,17 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
                 void handleUploadPhoto(e.dataTransfer.files?.[0]);
               }}
             >
-              
-              <span>Or drag &amp; drop a photo here</span>
+
+              <span>{t('edit.dropzone')}</span>
             </div>
           </section>
 
           <div className="edit-actions">
             <Button variant="secondary" onClick={onClose}>
-              Cancel
+              {t('actions.cancel')}
             </Button>
             <Button onClick={handleSaveClick} disabled={busy}>
-              {busy ? 'Saving…' : 'Save changes'}
+              {busy ? t('actions.saving') : t('actions.saveChanges')}
             </Button>
           </div>
         </div>

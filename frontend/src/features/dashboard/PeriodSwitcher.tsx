@@ -1,11 +1,12 @@
+import { useTranslation } from 'react-i18next';
 import type { PeriodType } from '../../lib/date';
 import { Button } from '../../components/ui';
 
-const PERIOD_TYPES: { value: PeriodType; label: string }[] = [
-  { value: 'day', label: 'Day' },
-  { value: 'week', label: 'Week' },
-  { value: 'month', label: 'Month' },
-  { value: 'year', label: 'Year' },
+const PERIOD_TYPES: { value: PeriodType }[] = [
+  { value: 'day' },
+  { value: 'week' },
+  { value: 'month' },
+  { value: 'year' },
 ];
 
 interface PeriodSwitcherProps {
@@ -28,28 +29,29 @@ export function PeriodSwitcher({
   onPrev,
   onNext,
 }: PeriodSwitcherProps) {
+  const { t } = useTranslation('dashboard');
   return (
-    <div className="period-nav" role="group" aria-label="Dashboard period">
+    <div className="period-nav" role="group" aria-label={t('period.aria.period')}>
       <div className="segmented">
-        {PERIOD_TYPES.map((t) => (
+        {PERIOD_TYPES.map((p) => (
           <button
-            key={t.value}
+            key={p.value}
             type="button"
-            className={type === t.value ? 'active' : ''}
-            aria-pressed={type === t.value}
-            onClick={() => onTypeChange(t.value)}
+            className={type === p.value ? 'active' : ''}
+            aria-pressed={type === p.value}
+            onClick={() => onTypeChange(p.value)}
           >
-            {t.label}
+            {t(`period.${p.value}`)}
           </button>
         ))}
       </div>
-      <Button variant="ghost" onClick={onPrev} aria-label="Previous period">
+      <Button variant="ghost" onClick={onPrev} aria-label={t('period.aria.prev')}>
         ‹
       </Button>
       <span className="period-nav-label" aria-live="polite">
         {label}
       </span>
-      <Button variant="ghost" onClick={onNext} disabled={nextDisabled} aria-label="Next period">
+      <Button variant="ghost" onClick={onNext} disabled={nextDisabled} aria-label={t('period.aria.next')}>
         ›
       </Button>
     </div>

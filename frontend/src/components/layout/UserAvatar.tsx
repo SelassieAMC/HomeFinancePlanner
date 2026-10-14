@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { authApi, avatarUrl } from '../../api/auth';
 import { useAuth } from '../../features/auth/AuthContext';
@@ -9,6 +10,7 @@ import { useAuth } from '../../features/auth/AuthContext';
 // corner above the page content.
 export function UserAvatar() {
   const { user, setUser } = useAuth();
+  const { t } = useTranslation('common');
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -54,7 +56,7 @@ export function UserAvatar() {
         className="user-avatar-btn"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={'Account: ' + label}
+        aria-label={t('user_menu.account_aria', { name: label })}
         onClick={() => setOpen((o) => !o)}
       >
         {user.has_photo ? (
@@ -80,14 +82,14 @@ export function UserAvatar() {
             )}
             <div>
               <div className="user-menu-name">{label}</div>
-              <div className="user-menu-role">{user.is_admin ? 'Administrator' : 'Family member'}</div>
+              <div className="user-menu-role">{user.is_admin ? t('user_menu.administrator') : t('user_menu.family_member')}</div>
             </div>
           </div>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); navigate('/settings'); }}>
-            Settings &amp; profile
+            {t('user_menu.settings_profile')}
           </button>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); void logout(); }}>
-            Log out
+            {t('user_menu.log_out')}
           </button>
         </div>
       )}

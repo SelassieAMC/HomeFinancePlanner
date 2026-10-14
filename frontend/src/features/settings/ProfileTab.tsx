@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n';
+import { LOCALE_LABELS, SUPPORTED_LOCALES } from '../../i18n/core';
 import { authApi, avatarUrl } from '../../api/auth';
 import { useAuth } from '../auth/AuthContext';
 import { Button, Card, ErrorMessage } from '../../components/ui';
 
-// Own-account profile (settings page, any family member): the avatar photo,
-// the full name shown in the login dropdown and the header, and the password
-// change with a confirm-field double-check.
+// Own-account profile (settings page, any family member): the UI language,
+// the avatar photo, the full name shown in the login dropdown and the header,
+// and the password change with a confirm-field double-check.
 export function ProfileTab() {
+  const { t } = useTranslation('settings');
   const { user, setUser, reload } = useAuth();
+  const [localeError, setLocaleError] = useState<string | null>(null);
   const [fullName, setFullName] = useState('');
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -30,6 +35,23 @@ export function ProfileTab() {
 
   if (!user) return null;
 
+  // Switch first, persist second; on failure put the language back.
+  async function pickLocale(lng: string) {
+    const previous = i18n.language;
+    setLocaleError(null);
+    if (lng !== i18n.language) {
+      void i18n.changeLanguage(lng);
+    }
+    try {
+      setUser(await authApi.updateLocale(lng));
+    } catch (err) {
+      void i18n.changeLanguage(previous);
+      setLocaleError(
+        err instanceof Error ? err.message : t('errors.saveLocale'),
+      );
+    }
+  }
+
   async function saveName(e: React.FormEvent) {
     e.preventDefault();
     setNameSaving(true);
@@ -39,7 +61,7 @@ export function ProfileTab() {
       setUser(await authApi.updateFullName(fullName));
       setNameSaved(true);
     } catch (err) {
-      setNameError(err instanceof Error ? err.message : 'Failed to save.');
+      setNameError(err instanceof Error ? err.message : t('errors.saveName'));
     } finally {
       setNameSaving(false);
     }
@@ -50,11 +72,11 @@ export function ProfileTab() {
     setPwError(null);
     setPwSaved(false);
     if (next !== confirm) {
-      setPwError('New passwords do not match.');
+      setPwError(t('profile.pwMismatch'));
       return;
     }
     if (next.length < 4) {
-      setPwError('New password must be at least 4 characters.');
+      setPwError(t('errors.passwordShort'));
       return;
     }
     setPwSaving(true);
@@ -65,7 +87,7 @@ export function ProfileTab() {
       setNext('');
       setConfirm('');
     } catch (err) {
-      setPwError(err instanceof Error ? err.message : 'Failed to change the password.');
+      setPwError(err instanceof Error ? err.message : t('errors.savePassword'));
     } finally {
       setPwSaving(false);
     }
@@ -78,7 +100,7 @@ export function ProfileTab() {
       setUser(await authApi.uploadPhoto(file));
       reload();
     } catch (err) {
-      setPhotoError(err instanceof Error ? err.message : 'Photo upload failed.');
+      setPhotoError(err instanceof Error ? err.message : t('errors.uploadPhoto'));
     } finally {
       setPhotoBusy(false);
     }
@@ -91,7 +113,7 @@ export function ProfileTab() {
       setUser(await authApi.removePhoto());
       reload();
     } catch (err) {
-      setPhotoError(err instanceof Error ? err.message : 'Removing the photo failed.');
+      setPhotoError(err instanceof Error ? err.message : t('errors.removePhoto'));
     } finally {
       setPhotoBusy(false);
     }
@@ -99,16 +121,34 @@ export function ProfileTab() {
 
   return (
     <>
-      <Card title="Profile photo">
+      <Card title={t('language.title')}>
+        <select
+          className="form-row"
+          value={i18n.language}
+          onChange={(e) => {
+            void pickLocale(e.target.value);
+          }}
+        >
+          {SUPPORTED_LOCALES.map((lng) => (
+            <option key={lng} value={lng}>
+              {LOCALE_LABELS[lng]}
+            </option>
+          ))}
+        </select>
+        <p className="hint-text">{t('language.hint')}</p>
+        {localeError && <ErrorMessage message={localeError} />}
+      </Card>
+
+      <Card title={t('profile.photoTitle')}>
         <div className="profile-photo-row">
           {user.has_photo ? (
             <img
               className="profile-photo"
               src={`${avatarUrl(user.id)}?v=${encodeURIComponent(user.updated_at)}`}
-              alt="Profile photo"
+              alt={t('profile.photoAlt')}
             />
           ) : (
-            <div className="profile-photo profile-photo-empty">?</div>
+            <div className="profile-photo profile-photo-empty">{t('profile.photoEmpty')}</div>
           )}
           <div className="camera-row">
             <input
@@ -123,24 +163,20 @@ export function ProfileTab() {
               }}
             />
             <Button variant="secondary" disabled={photoBusy} onClick={() => fileRef.current?.click()}>
-              {photoBusy ? 'Working…' : user.has_photo ? 'Replace photo' : 'Choose photo'}
+              {photoBusy ? t('profile.working') : user.has_photo ? t('profile.replacePhoto') : t('profile.choosePhoto')}
             </Button>
             {user.has_photo && (
               <Button variant="danger" disabled={photoBusy} onClick={() => void removePhoto()}>
-                Remove
+                {t('profile.remove')}
               </Button>
             )}
           </div>
         </div>
-        <p className="hint-text">
-          Small photo shown at the top right of the page and next to the name in
-          the login list. Any image works — heavy phone formats (HEIC, TIFF)
-          are converted to a small JPEG automatically.
-        </p>
+        <p className="hint-text">{t('profile.photoHint')}</p>
         {photoError && <ErrorMessage message={photoError} />}
       </Card>
 
-      <Card title="Full name">
+      <Card title={t('profile.nameTitle')}>
         <form
           className="form-row"
           onSubmit={(e) => {
@@ -150,7 +186,7 @@ export function ProfileTab() {
         >
           <input
             value={fullName}
-            placeholder="e.g. Anna Weber"
+            placeholder={t('profile.namePlaceholder')}
             maxLength={80}
             disabled={nameSaving}
             onChange={(e) => {
@@ -159,17 +195,17 @@ export function ProfileTab() {
             }}
           />
           <Button type="submit" disabled={nameSaving}>
-            {nameSaving ? 'Saving…' : 'Save'}
+            {nameSaving ? t('profile.saving') : t('profile.save')}
           </Button>
         </form>
         {nameError && <ErrorMessage message={nameError} />}
-        {nameSaved && <div className="hint-banner">Saved ✓</div>}
+        {nameSaved && <div className="hint-banner">{t('profile.saved')}</div>}
       </Card>
 
-      <Card title="Change password">
+      <Card title={t('profile.pwTitle')}>
         <form className="profile-pw-form" onSubmit={savePassword}>
           <label>
-            Current password
+            {t('profile.pwCurrent')}
             <input
               type="password"
               value={current}
@@ -179,7 +215,7 @@ export function ProfileTab() {
             />
           </label>
           <label>
-            New password
+            {t('profile.pwNew')}
             <input
               type="password"
               value={next}
@@ -189,7 +225,7 @@ export function ProfileTab() {
             />
           </label>
           <label>
-            Repeat new password
+            {t('profile.pwRepeat')}
             <input
               type="password"
               value={confirm}
@@ -199,19 +235,16 @@ export function ProfileTab() {
             />
           </label>
           {next.length > 0 && confirm.length > 0 && next !== confirm ? (
-            <span className="form-error-inline">New passwords do not match.</span>
+            <span className="form-error-inline">{t('profile.pwMismatch')}</span>
           ) : null}
           {pwError && <ErrorMessage message={pwError} />}
-          {pwSaved && <div className="hint-banner">Password changed ✓</div>}
+          {pwSaved && <div className="hint-banner">{t('profile.pwSaved')}</div>}
           <div className="camera-row">
             <Button type="submit" disabled={pwSaving || next !== confirm || !current}>
-              {pwSaving ? 'Saving…' : 'Change password'}
+              {pwSaving ? t('profile.saving') : t('profile.pwSubmit')}
             </Button>
           </div>
-          <p className="hint-text">
-            Changing the password signs this user out on other devices; this
-            device stays signed in.
-          </p>
+          <p className="hint-text">{t('profile.pwHint')}</p>
         </form>
       </Card>
     </>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Navigate } from 'react-router-dom';
 import { authApi } from '../../api/auth';
 import type { LoginUser } from '../../types/domain';
@@ -12,6 +13,7 @@ import { useAuth } from './AuthContext';
 // browser-session (12h), checked = 30 days without being asked again.
 export function LoginPage() {
   const { user, loading, setUser } = useAuth();
+  const { t } = useTranslation('auth');
   const usersState = useLoginUsers(user !== null);
   const [userId, setUserId] = useState<number | ''>('');
   const [password, setPassword] = useState('');
@@ -36,7 +38,7 @@ export function LoginPage() {
   if (usersState.error) {
     return (
       <LoginShell>
-        <p className="login-error">Could not load users: {usersState.error.message}</p>
+        <p className="login-error">{t('load_users_error', { message: usersState.error.message })}</p>
       </LoginShell>
     );
   }
@@ -50,7 +52,7 @@ export function LoginPage() {
     try {
       setUser(await authApi.login(userId, password, keepLoggedIn));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed.');
+      setError(err instanceof Error ? err.message : t('login_failed'));
       setPassword('');
       setSubmitting(false);
     }
@@ -59,11 +61,11 @@ export function LoginPage() {
   return (
     <LoginShell>
       <form className="login-card card" onSubmit={handleSubmit}>
-        <h2 className="login-title">Home Finance Planner</h2>
-        <p className="login-subtitle">Who is planning?</p>
+        <h2 className="login-title">{t('title')}</h2>
+        <p className="login-subtitle">{t('subtitle')}</p>
 
         <label>
-          User
+          {t('user_label')}
           <select
             className="login-user-select"
             value={userId}
@@ -79,7 +81,7 @@ export function LoginPage() {
         </label>
 
         <label>
-          Password
+          {t('password_label')}
           <input
             type="password"
             value={password}
@@ -94,7 +96,7 @@ export function LoginPage() {
             checked={keepLoggedIn}
             onChange={(e) => setKeepLoggedIn(e.target.checked)}
           />
-          Keep me logged in
+          {t('keep_logged_in')}
         </label>
 
         {error && <p className="login-error">{error}</p>}
@@ -104,7 +106,7 @@ export function LoginPage() {
           className="btn login-submit"
           disabled={submitting || typeof userId !== 'number'}
         >
-          {submitting ? 'Signing in…' : 'Sign in'}
+          {submitting ? t('signing_in') : t('sign_in')}
         </button>
       </form>
     </LoginShell>

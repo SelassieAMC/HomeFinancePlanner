@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { billsApi, type BillStatsGroupBy } from '../../api/bills';
 import { accountsApi } from '../../api/accounts';
@@ -13,6 +14,7 @@ import { BillDraftEditor, buildConfirmInput } from './BillDraftEditor';
 import { BillDraftView } from './BillDraftView';
 
 export function BillsPage() {
+  const { t } = useTranslation('bills');
   const [month, setMonth] = useState(currentMonth());
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [groupBy, setGroupBy] = useState<BillStatsGroupBy>('market');
@@ -45,7 +47,7 @@ export function BillsPage() {
       setRereadSent(true);
       scans.reload();
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : 'Retry failed.');
+      setScanError(err instanceof Error ? err.message : t('errors.retry'));
       scans.reload(); // a consumed token disappears from the list
     } finally {
       setScanBusyToken(null);
@@ -58,7 +60,7 @@ export function BillsPage() {
     try {
       await billsApi.discardScan(token);
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : 'Failed to discard the scan.');
+      setScanError(err instanceof Error ? err.message : t('errors.discard'));
     } finally {
       setScanBusyToken(null);
       scans.reload();
@@ -74,7 +76,7 @@ export function BillsPage() {
       await billsApi.cancelScan(token);
       scans.reload();
     } catch (err) {
-      setScanError(err instanceof Error ? err.message : 'Failed to cancel the analysis.');
+      setScanError(err instanceof Error ? err.message : t('errors.cancel'));
       scans.reload();
     } finally {
       setScanBusyToken(null);
@@ -125,7 +127,7 @@ export function BillsPage() {
     try {
       setDetail(await billsApi.get(id));
     } catch (err) {
-      setDetailError(err instanceof Error ? err.message : 'Failed to load bill details.');
+      setDetailError(err instanceof Error ? err.message : t('errors.detail'));
     } finally {
       setDetailLoading(false);
     }
@@ -182,7 +184,7 @@ export function BillsPage() {
       setEditDraft(null);
       bills.reload();
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Failed to save the bill.');
+      setEditError(err instanceof Error ? err.message : t('errors.save'));
     } finally {
       setSaving(false);
     }
@@ -200,7 +202,7 @@ export function BillsPage() {
       bills.reload();
       stats.reload();
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Failed to delete the bill.');
+      setDeleteError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
       setDeleting(false);
     }
@@ -210,26 +212,26 @@ export function BillsPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Bills &amp; analysis</h2>
+      <h2 className="page-title">{t('title')}</h2>
 
-      <Card title="Spending analysis">
+      <Card title={t('stats.title')}>
         <div className="filter-row">
           <select
             value={groupBy}
             onChange={(e) => setGroupBy(e.target.value as BillStatsGroupBy)}
-            aria-label="Group analysis by"
+            aria-label={t('stats.groupAria')}
           >
-            <option value="market">By market</option>
-            <option value="month">By month</option>
-            <option value="week">By week</option>
-            <option value="item">By article</option>
-            <option value="category">By category</option>
+            <option value="market">{t('stats.byMarket')}</option>
+            <option value="month">{t('stats.byMonth')}</option>
+            <option value="week">{t('stats.byWeek')}</option>
+            <option value="item">{t('stats.byItem')}</option>
+            <option value="category">{t('stats.byCategory')}</option>
           </select>
           <input
             type="month"
             value={statsMonth}
             onChange={(e) => setStatsMonth(e.target.value)}
-            aria-label="Limit analysis to month"
+            aria-label={t('stats.monthAria')}
           />
         </div>
         {stats.loading ? (
@@ -237,16 +239,16 @@ export function BillsPage() {
         ) : stats.error ? (
           <ErrorMessage message={stats.error.message} />
         ) : (stats.data?.rows ?? []).length === 0 ? (
-          <EmptyState message="No accepted bills yet — confirm a scanned bill to see analysis." />
+          <EmptyState message={t('stats.empty')} />
         ) : (
           <div className="table-scroll">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>{statsLabel(groupBy)}</th>
-                  {groupBy === 'item' && <th className="num">Qty</th>}
-                  <th className="num">Bills</th>
-                  <th className="num">Total ({stats.data?.currency})</th>
+                  <th>{t(`stats.label_${groupBy}`)}</th>
+                  {groupBy === 'item' && <th className="num">{t('stats.qty')}</th>}
+                  <th className="num">{t('stats.bills')}</th>
+                  <th className="num">{t('stats.total', { currency: stats.data?.currency })}</th>
                 </tr>
               </thead>
               <tbody>
@@ -267,7 +269,7 @@ export function BillsPage() {
       </Card>
 
       {(scans.data ?? []).length > 0 && (
-        <Card title="Receipt analysis in progress">
+        <Card title={t('scanCard.title')}>
           {scanError && <ErrorMessage message={scanError} />}
           <ItemPanels>
             {(scans.data ?? []).map((scan) => (
@@ -275,13 +277,13 @@ export function BillsPage() {
                 <summary>
                   <span className="item-title">
                     <span className="item-name">
-                      Receipt scan
-                      {(scan.file_count ?? 1) > 1 && ` — ${scan.file_count} photos, one bill`}
+                      {t('scanCard.name')}
+                      {(scan.file_count ?? 1) > 1 && ` — ${t('scanCard.multi', { n: scan.file_count ?? 1 })}`}
                     </span>
                     <span className="item-brand">
                       {scan.created_at
                         ? new Date(scan.created_at).toLocaleString()
-                        : 'just now'}
+                        : t('scanCard.justNow')}
                     </span>
                   </span>
                   <span
@@ -294,22 +296,20 @@ export function BillsPage() {
                     }`}
                   >
                     {scan.status === 'analyzing'
-                      ? 'Analyzing…'
+                      ? t('status.analyzing')
                       : scan.status === 'failed'
-                        ? 'Failed'
+                        ? t('status.failed')
                         : scan.status === 'cancelled'
-                          ? 'Cancelled'
-                          : 'Ready to review'}
+                          ? t('status.cancelled')
+                          : t('status.ready')}
                   </span>
                 </summary>
                 <div className="item-detail">
                   {scan.status === 'analyzing' && (
                     <>
-                      <Spinner label="Reading the receipt…" />
+                      <Spinner label={t('scanCard.reading')} />
                       <p className="hint-text">
-                        Analysis runs in the background and can take a few
-                        minutes — you can leave this page and check back later;
-                        the draft appears here once it's ready.
+                        {t('scanCard.backgroundHint')}
                       </p>
                       <div className="camera-row">
                         <Button
@@ -317,7 +317,7 @@ export function BillsPage() {
                           disabled={scanBusyToken !== null}
                           onClick={() => cancelScan(scan.scan_token)}
                         >
-                          ✕ Cancel analysis
+                          {t('action.cancelAnalysisIcon')}
                         </Button>
                       </div>
                     </>
@@ -325,10 +325,10 @@ export function BillsPage() {
                   {(scan.status === 'failed' || scan.status === 'cancelled') && (
                     <>
                       {scan.status === 'failed' && (
-                        <ErrorMessage message={scan.error || 'Analysis failed.'} />
+                        <ErrorMessage message={scan.error || t('errors.analysisFailed')} />
                       )}
                       {scan.status === 'cancelled' && (
-                        <p className="hint-text">Analysis was cancelled — the photos are kept until the request is deleted.</p>
+                        <p className="hint-text">{t('scanCard.cancelledHint')}</p>
                       )}
                       <div className="camera-row">
                         <Button
@@ -336,14 +336,14 @@ export function BillsPage() {
                           disabled={scanBusyToken !== null}
                           onClick={() => retryScan(scan.scan_token)}
                         >
-                          Try again
+                          {t('action.tryAgain')}
                         </Button>
                         <Button
                           variant="danger"
                           disabled={scanBusyToken !== null}
                           onClick={() => discardScan(scan.scan_token)}
                         >
-                          Delete request
+                          {t('action.deleteRequest')}
                         </Button>
                       </div>
                     </>
@@ -354,14 +354,14 @@ export function BillsPage() {
                         className="btn btn-secondary"
                         to={`/scan?token=${scan.scan_token}`}
                       >
-                        Review draft
+                        {t('action.reviewDraft')}
                       </Link>
                       <Button
                         variant="danger"
                         disabled={scanBusyToken !== null}
                         onClick={() => discardScan(scan.scan_token)}
                       >
-                        Delete request
+                        {t('action.deleteRequest')}
                       </Button>
                     </div>
                   )}
@@ -377,12 +377,12 @@ export function BillsPage() {
           type="month"
           value={month}
           onChange={(e) => setMonth(e.target.value)}
-          aria-label="Filter bills by month"
+          aria-label={t('filterMonthAria')}
         />
       </div>
 
       {list.length === 0 ? (
-        <EmptyState message="No bills match these filters." />
+        <EmptyState message={t('listEmpty')} />
       ) : (
         <ItemPanels>
           {list.map((bill) => (
@@ -406,8 +406,8 @@ export function BillsPage() {
             >
               <summary>
                 <span className="item-title">
-                  <span className="item-name">{bill.market_name || 'Unknown market'}</span>
-                  <span className="item-brand">{bill.date || 'no date'}</span>
+                  <span className="item-name">{bill.market_name || t('common.unknownMarket')}</span>
+                  <span className="item-brand">{bill.date || t('common.noDate')}</span>
                 </span>
                 <span className="item-price">{formatCents(bill.total_cents, bill.currency)}</span>
               </summary>
@@ -445,7 +445,7 @@ export function BillsPage() {
                             variant="secondary"
                             onClick={() => startEdit(detail)}
                           >
-                            ✏️ Edit bill
+                            {t('action.editBill')}
                           </Button>
                         </div>
                         <BillDraftView bill={detail} categories={categories.data ?? []} />
@@ -454,7 +454,7 @@ export function BillsPage() {
                             variant="secondary"
                             onClick={() => startEdit(detail)}
                           >
-                            ✏️ Edit bill
+                            {t('action.editBill')}
                           </Button>
                           <Button
                             variant="danger"
@@ -463,7 +463,7 @@ export function BillsPage() {
                               setConfirmDeleteId(bill.id);
                             }}
                           >
-                            Delete bill
+                            {t('action.deleteBill')}
                           </Button>
                         </div>
                       </>
@@ -476,33 +476,31 @@ export function BillsPage() {
       )}
 
       {rereadSent && (
-        <Dialog title="Re-read request sent">
+        <Dialog title={t('rereadDialog.title')}>
           <p className="hint-text">
-            The receipt has been queued for analysis in the background — this
-            can take a few minutes. The result appears in this list once it's
-            ready.
+            {t('rereadDialog.billsBody')}
           </p>
           <div className="dialog-actions">
-            <Button onClick={() => setRereadSent(false)}>OK</Button>
+            <Button onClick={() => setRereadSent(false)}>{t('common.ok')}</Button>
           </div>
         </Dialog>
       )}
 
       {confirmDeleteId !== null && detail && detail.id === confirmDeleteId && (
-        <Dialog title="Delete bill?">
+        <Dialog title={t('deleteDialog.title')}>
           <p className="hint-text">
-            This permanently removes “{detail.market_name || 'Unknown market'}” (
-            {formatCents(detail.total_cents, detail.currency)}) — its articles,
-            the recorded expense transaction, and the stored receipt image. This
-            cannot be undone.
+            {t('deleteDialog.body', {
+              market: detail.market_name || t('common.unknownMarket'),
+              amount: formatCents(detail.total_cents, detail.currency),
+            })}
           </p>
           {deleteError && <ErrorMessage message={deleteError} />}
           <div className="dialog-actions">
             <Button variant="secondary" disabled={deleting} onClick={() => setConfirmDeleteId(null)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button variant="danger" disabled={deleting} onClick={confirmDeleteBill}>
-              {deleting ? 'Deleting…' : 'Delete'}
+              {deleting ? t('common.deleting') : t('common.delete')}
             </Button>
           </div>
         </Dialog>
@@ -544,19 +542,4 @@ function billToDraft(bill: Bill): BillDraft {
     budget_id: bill.budget_id ?? undefined,
     bag_id: bill.bag_id ?? undefined,
   };
-}
-
-function statsLabel(groupBy: BillStatsGroupBy): string {
-  switch (groupBy) {
-    case 'market':
-      return 'Market';
-    case 'month':
-      return 'Month';
-    case 'week':
-      return 'Week';
-    case 'item':
-      return 'Article';
-    case 'category':
-      return 'Category';
-  }
 }

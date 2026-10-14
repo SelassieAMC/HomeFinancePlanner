@@ -1,5 +1,8 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
+import i18n from '../../i18n';
+import { intlLocale } from '../../i18n/core';
 import { summaryApi } from '../../api/summary';
 import { analyticsApi } from '../../api/analytics';
 import { formatCents } from '../../lib/money';
@@ -37,30 +40,8 @@ const TOP_LIST_FETCH_LIMIT = 50;
 
 type DashTab = 'planning' | 'products' | 'trends' | 'forecast';
 
-const TABS: TabDef<DashTab>[] = [
-  { key: 'planning', label: 'Planning' },
-  { key: 'products', label: 'Products' },
-  { key: 'trends', label: 'Trends' },
-  { key: 'forecast', label: 'Forecast' },
-];
-
-/** Tile-1 heading per period type: the label should say what the number
- *  covers, so the picker's effect is visible at a glance. */
-const PERIOD_TILE_LABEL: Record<PeriodType, string> = {
-  day: 'Spend that day',
-  week: 'Spend that week',
-  month: 'Month-to-Date',
-  year: 'Year-to-Date',
-};
-
-const PERIOD_NOUN: Record<PeriodType, string> = {
-  day: 'previous day',
-  week: 'previous week',
-  month: 'last month',
-  year: 'previous year',
-};
-
 export function DashboardPage() {
+  const { t } = useTranslation('dashboard');
   const [type, setType] = useState<PeriodType>('month');
   // The anchor is any day inside the period; navigation shifts it by whole
   // period units. Starting from today, the dashboard opens on the current
@@ -124,7 +105,7 @@ export function DashboardPage() {
   ];
   const conversionWarning =
     warnings.length > 0
-      ? `Exchange rate missing for ${warnings.join(', ')} — those amounts are shown 1:1.`
+      ? t('convert.warning', { codes: warnings.join(', ') })
       : '';
 
   // Spend tile comparison vs the previous equal-length period.
@@ -143,15 +124,51 @@ export function DashboardPage() {
   const latestIndex = [...(priceIndex.data?.average ?? [])].reverse().find((p) => p.index !== null)?.index ?? null;
   const inflationPct = latestIndex !== null ? latestIndex - 100 : null;
 
+  // Tab and tile labels translate at render time (call time, never module
+  // load) via the hook's t().
+  const tabs: TabDef<DashTab>[] = [
+    { key: 'planning', label: t('tabs.planning') },
+    { key: 'products', label: t('tabs.products') },
+    { key: 'trends', label: t('tabs.trends') },
+    { key: 'forecast', label: t('tabs.forecast') },
+  ];
+  // Tile-1 heading per period type: the label should say what the number
+  // covers, so the picker's effect is visible at a glance.
+  const tileLabel = ((tt: PeriodType) => {
+    switch (tt) {
+      case 'day':
+        return t('tiles.spendDay');
+      case 'week':
+        return t('tiles.spendWeek');
+      case 'month':
+        return t('tiles.mtd');
+      case 'year':
+        return t('tiles.ytd');
+    }
+  })(type);
+  // Noun for the comparison line vs. the equal-length period before.
+  const periodNoun = ((tt: PeriodType) => {
+    switch (tt) {
+      case 'day':
+        return t('tiles.nouns.day');
+      case 'week':
+        return t('tiles.nouns.week');
+      case 'month':
+        return t('tiles.nouns.month');
+      case 'year':
+        return t('tiles.nouns.year');
+    }
+  })(type);
+
   return (
     <div className="page">
-      <h2 className="page-title">Dashboard</h2>
+      <h2 className="page-title">{t('title')}</h2>
       <PeriodSwitcher
         type={type}
         label={periodLabel(period)}
         nextDisabled={isCurrentPeriod(period)}
-        onTypeChange={(t) => {
-          setType(t);
+        onTypeChange={(pt) => {
+          setType(pt);
           // Keep "today" as the reference so switching always lands on the
           // current period, not wherever the previous type had navigated.
           setAnchor(todayISO());
@@ -177,31 +194,37 @@ export function DashboardPage() {
 
       <div className="stat-grid">
         <Card className="stat-tile">
-          <span className="stat-label">{PERIOD_TILE_LABEL[type]}</span>
+          <span className="stat-label">{tileLabel}</span>
           <span className="stat-value">
             {periodSummary.loading ? '…' : formatCents(periodSummary.data?.expense_cents ?? 0, periodSummary.data?.currency ?? '')}
           </span>
           <span className="stat-label">
-            {changePct === null ? `no ${PERIOD_NOUN[type]} to compare` : `${changePct > 0 ? '+' : ''}${changePct}% vs ${PERIOD_NOUN[type]}`}
+            {changePct === null
+              ? t('tiles.noCompare', { noun: periodNoun })
+              : t('tiles.compare', { pct: `${changePct > 0 ? '+' : ''}${changePct}`, noun: periodNoun })}
           </span>
         </Card>
         <Card className="stat-tile">
-          <span className="stat-label">Fixed vs. Discretionary</span>
-          <span className="stat-value">{fixedPct === null ? '…' : `${fixedPct}% Fixed`}</span>
-          <span className="stat-label">{fixedPct === null ? 'no data yet' : `${100 - fixedPct}% Discretionary · ${monthLabel(month)}`}</span>
+          <span className="stat-label">{t('tiles.fixedTitle')}</span>
+          <span className="stat-value">{fixedPct === null ? '…' : t('tiles.fixedValue', { count: fixedPct })}</span>
+          <span className="stat-label">
+            {fixedPct === null
+              ? t('tiles.noData')
+              : t('tiles.discValue', { count: 100 - fixedPct, month: monthLabel(month) })}
+          </span>
         </Card>
         <Card className="stat-tile">
-          <span className="stat-label">Personal Basket Inflation</span>
+          <span className="stat-label">{t('tiles.basketTitle')}</span>
           <span className="stat-value">
             {inflationPct === null ? '…' : `${inflationPct > 0 ? '+' : ''}${inflationPct.toFixed(1)}%`}
           </span>
-          <span className="stat-label">{inflationPct === null ? 'no data yet' : 'vs 12 months ago'}</span>
+          <span className="stat-label">{inflationPct === null ? t('tiles.noData') : t('tiles.vsLastYear')}</span>
         </Card>
       </div>
 
       {/* Tabbed sections: planning layers, product analysis, trend charts and
           the forecast. One pane open at a time keeps the page height constant. */}
-      <Tabs tabs={TABS} active={tab} onChange={setTab} ariaLabel="Dashboard sections" />
+      <Tabs tabs={tabs} active={tab} onChange={setTab} ariaLabel={t('aria.sections')} />
 
       {tab === 'planning' && <PlanningCard summary={monthSummary} />}
 
@@ -240,5 +263,7 @@ export function DashboardPage() {
 function monthLabel(month: string): string {
   const m = /^(\d{4})-(\d{2})$/.exec(month);
   if (!m) return month;
-  return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleString('en', { month: 'short' });
+  return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleString(intlLocale(i18n.language), {
+    month: 'short',
+  });
 }

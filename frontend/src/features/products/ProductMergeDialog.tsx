@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { formatCents } from '../../lib/money';
 import type { Product, ProductMergeCheck } from '../../types/domain';
 import { Button, Dialog, ErrorMessage } from '../../components/ui';
@@ -32,6 +33,7 @@ export function ProductMergeDialog({
   onKeep,
   onClose,
 }: ProductMergeDialogProps) {
+  const { t } = useTranslation('products');
   const [keep, setKeep] = useState<'source' | 'target' | null>(null);
   const target = check.match;
 
@@ -42,20 +44,17 @@ export function ProductMergeDialog({
   };
 
   return (
-    <Dialog title="Merge products" wide>
+    <Dialog title={t('merge.title')} wide>
       {check.reason === 'same_store' ? (
         <>
           <p>
-            Both products were bought at <strong>{check.store_name}</strong>. Their
-            information is compared below — choose which record to keep. The other
-            one is removed and its purchase history (prices included) is grouped
-            under the kept product.
+            {t('merge.sameStore', { store: check.store_name })}
           </p>
           <div className="table-scroll">
             <table className="data-table merge-compare-table">
               <thead>
                 <tr>
-                  <th aria-label="Field" />
+                  <th aria-label={t('merge.field')} />
                   <th className={keep === 'source' ? 'selected' : ''}>
                     <label className="merge-keep-label">
                       <input
@@ -64,7 +63,7 @@ export function ProductMergeDialog({
                         checked={keep === 'source'}
                         onChange={() => setKeep('source')}
                       />
-                      Keep “{source.name}”
+                      {t('merge.keep', { name: source.name })}
                     </label>
                   </th>
                   <th className={keep === 'target' ? 'selected' : ''}>
@@ -75,40 +74,40 @@ export function ProductMergeDialog({
                         checked={keep === 'target'}
                         onChange={() => setKeep('target')}
                       />
-                      Keep “{target.name}”
+                      {t('merge.keep', { name: target.name })}
                     </label>
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <CompareRow label="Brand" selected={keep} source={source.brand} target={target.brand} />
-                <CompareRow label="Measure" selected={keep} source={source.unit} target={target.unit} />
+                <CompareRow label={t('merge.brand')} selected={keep} source={source.brand} target={target.brand} />
+                <CompareRow label={t('merge.measure')} selected={keep} source={source.unit} target={target.unit} />
                 <CompareRow
-                  label="Category"
+                  label={t('merge.category')}
                   selected={keep}
                   source={source.category_name}
                   target={target.category_name}
                 />
                 <CompareRow
-                  label="Description"
+                  label={t('merge.description')}
                   selected={keep}
                   source={source.description}
                   target={target.description}
                 />
                 <CompareRow
-                  label={`Latest price at ${check.store_name}`}
+                  label={t('merge.latestPriceAt', { store: check.store_name })}
                   selected={keep}
                   source={formatStorePrice(check.source_store_price)}
                   target={formatStorePrice(check.target_store_price)}
                 />
                 <CompareRow
-                  label="Last purchased"
+                  label={t('merge.lastPurchased')}
                   selected={keep}
                   source={source.last_purchase_date}
                   target={target.last_purchase_date}
                 />
                 <CompareRow
-                  label="Times bought"
+                  label={t('merge.timesBought')}
                   selected={keep}
                   source={String(source.times_bought)}
                   target={String(target.times_bought)}
@@ -119,11 +118,12 @@ export function ProductMergeDialog({
         </>
       ) : (
         <p>
-          “{source.name}” will be merged with the existing product “{target.name}”.
-          They were bought at different stores ({joinNames(check.source_stores)} vs{' '}
-          {joinNames(check.target_stores)}), so this is the same product bought in
-          different markets. No information is lost — the purchase history is
-          grouped under one product.
+          {t('merge.differentStores', {
+            source: source.name,
+            target: target.name,
+            sourceStores: joinNames(check.source_stores),
+            targetStores: joinNames(check.target_stores),
+          })}
         </p>
       )}
 
@@ -131,15 +131,15 @@ export function ProductMergeDialog({
 
       <div className="dialog-actions">
         <Button variant="ghost" onClick={onClose} disabled={busy}>
-          Cancel
+          {t('merge.cancel')}
         </Button>
         {check.reason === 'same_store' ? (
           <Button onClick={confirm} disabled={busy || !keep}>
-            {busy ? 'Merging…' : 'Merge products'}
+            {busy ? t('merge.merging') : t('merge.mergeProducts')}
           </Button>
         ) : (
           <Button onClick={() => onKeep('source')} disabled={busy}>
-            {busy ? 'Merging…' : 'Merge products'}
+            {busy ? t('merge.merging') : t('merge.mergeProducts')}
           </Button>
         )}
       </div>

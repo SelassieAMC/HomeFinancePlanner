@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n';
+import { intlLocale } from '../../i18n/core';
 import { useAsync } from '../../hooks/useAsync';
 import { transactionsApi, type TransactionFilters } from '../../api/transactions';
 import { bagsApi } from '../../api/bags';
@@ -26,6 +29,7 @@ import { TransactionForm } from './TransactionForm';
 type ViewTab = 'activity' | 'add';
 
 export function TransactionsPage() {
+  const { t, i18n: i18nInstance } = useTranslation('transactions');
   const [month, setMonth] = useState(currentMonth());
   const [kind, setKind] = useState<TransactionKind | ''>('');
   const [bagFilter, setBagFilter] = useState('');
@@ -69,6 +73,20 @@ export function TransactionsPage() {
   const [confirmDelete, setConfirmDelete] = useState<Transaction | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
+  /** Display label for a stored kind value (the segments and detail field share it). */
+  function kindLabel(value: TransactionKind): string {
+    switch (value) {
+      case 'expense':
+        return t('kind.displayExpense');
+      case 'income':
+        return t('kind.displayIncome');
+      case 'transfer':
+        return t('kind.displayTransfer');
+      default:
+        return value;
+    }
+  }
+
   async function loadDetail(id: number) {
     setDetail(null);
     setDetailError(null);
@@ -76,22 +94,22 @@ export function TransactionsPage() {
     try {
       setDetail(await transactionsApi.get(id));
     } catch (err) {
-      setDetailError(err instanceof Error ? err.message : 'Failed to load transaction details.');
+      setDetailError(err instanceof Error ? err.message : t('errors.loadDetails'));
     } finally {
       setDetailLoading(false);
     }
   }
 
   /** Opens the edit modal with the full record (list rows omit item lines). */
-  async function openEdit(t: Transaction) {
+  async function openEdit(tx: Transaction) {
     setPageError(null);
     setEditLoading(true);
     setEditOpen(true);
     try {
-      setEditing(t.item_count ? await transactionsApi.get(t.id) : t);
+      setEditing(tx.item_count ? await transactionsApi.get(tx.id) : tx);
     } catch (err) {
       setEditOpen(false);
-      setPageError(err instanceof Error ? err.message : 'Failed to load the transaction.');
+      setPageError(err instanceof Error ? err.message : t('errors.load'));
     } finally {
       setEditLoading(false);
     }
@@ -120,7 +138,7 @@ export function TransactionsPage() {
       reload();
     } catch (err) {
       // e.g. 409 when the bill-linked guard fired for a stale row.
-      setPageError(err instanceof Error ? err.message : 'Failed to delete transaction.');
+      setPageError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
       setDeleting(false);
     }
@@ -136,41 +154,41 @@ export function TransactionsPage() {
   // Group consecutive transactions sharing a date (the list arrives sorted by
   // date desc) into "TODAY −$60.15"-style sections, like the reference design.
   const dayGroups: { date: string; label: string; total: number; currency: string; items: Transaction[] }[] = [];
-  for (const t of transactions) {
+  for (const tx of transactions) {
     const last = dayGroups[dayGroups.length - 1];
     // Transfers are neither income nor spend: they move money between the
     // user's own accounts, so the day total stays neutral to them.
-    const signed = t.kind === 'income' ? t.amount_cents : t.kind === 'transfer' ? 0 : -t.amount_cents;
-    if (last && last.date === t.date) {
+    const signed = tx.kind === 'income' ? tx.amount_cents : tx.kind === 'transfer' ? 0 : -tx.amount_cents;
+    if (last && last.date === tx.date) {
       last.total += signed;
-      last.items.push(t);
+      last.items.push(tx);
     } else {
       dayGroups.push({
-        date: t.date,
-        label: dayLabel(t.date),
+        date: tx.date,
+        label: dayLabel(tx.date, intlLocale(i18nInstance.language)),
         total: signed,
-        currency: t.currency,
-        items: [t],
+        currency: tx.currency,
+        items: [tx],
       });
     }
   }
 
   return (
     <div className="page">
-      <h2 className="page-title">Transactions</h2>
+      <h2 className="page-title">{t('title')}</h2>
 
       <Tabs
-        ariaLabel="Transaction views"
+        ariaLabel={t('tabs.viewsAria')}
         tabs={[
-          { key: 'activity', label: 'Activity' },
-          { key: 'add', label: 'Add transaction' },
+          { key: 'activity', label: t('tabs.activity') },
+          { key: 'add', label: t('tabs.add') },
         ]}
         active={tab}
         onChange={setTab}
       />
 
       {savedNotice && tab === 'activity' && (
-        <div className="hint-banner">Transaction saved.</div>
+        <div className="hint-banner">{t('notice.saved')}</div>
       )}
 
       {tab === 'activity' && (
@@ -180,15 +198,15 @@ export function TransactionsPage() {
               type="month"
               value={month}
               onChange={(e) => setMonth(e.target.value)}
-              aria-label="Filter by month"
+              aria-label={t('filters.monthAria')}
             />
             {(bagsView.data?.accounts ?? []).some((v) => v.bags.length > 0) && (
               <select
                 value={bagFilter}
                 onChange={(e) => setBagFilter(e.target.value)}
-                aria-label="Filter by bag"
+                aria-label={t('filters.bagAria')}
               >
-                <option value="">All bags</option>
+                <option value="">{t('filters.allBags')}</option>
                 {(bagsView.data?.accounts ?? []).flatMap((v) =>
                   v.bags.map((b) => (
                     <option key={b.id} value={b.id}>
@@ -203,16 +221,16 @@ export function TransactionsPage() {
               className="btn-sm"
               onClick={() => setTab('add')}
             >
-              Add transaction
+              {t('action.add')}
             </Button>
           </div>
-          <div className="segmented" role="group" aria-label="Filter by kind">
+          <div className="segmented" role="group" aria-label={t('filters.kindAria')}>
             {(
               [
-                ['', 'All'],
-                ['expense', 'Expenses'],
-                ['income', 'Income'],
-                ['transfer', 'Transfers'],
+                ['', t('kind.all')],
+                ['expense', t('kind.expense')],
+                ['income', t('kind.income')],
+                ['transfer', t('kind.transfer')],
               ] as [TransactionKind | '', string][]
             ).map(([value, label]) => (
               <button
@@ -230,7 +248,7 @@ export function TransactionsPage() {
       )}
 
       {tab === 'add' && (
-        <Card title="New transaction">
+        <Card title={t('card.newTransaction')}>
           <TransactionForm
             // Remount on success so the next entry starts empty.
             key={createFormKey}
@@ -252,52 +270,52 @@ export function TransactionsPage() {
       {pageError && <ErrorMessage message={pageError} />}
 
       {transactions.length === 0 ? (
-        <EmptyState message={`No transactions for ${month}.`} />
+        <EmptyState message={t('empty.month', { month })} />
       ) : (
         <div className="day-group">
           {dayGroups.map((group) => (
-            <section key={group.date} aria-label={`${group.label}, total ${formatCents(group.total, group.currency)}`}>
+            <section key={group.date} aria-label={t('day.sectionAria', { label: group.label, total: formatCents(group.total, group.currency) })}>
               <div className="day-header">
                 <span>{group.label}</span>
                 <span>{formatSignedCents(group.total, group.currency)}</span>
               </div>
               <ItemPanels>
-                {group.items.map((t) => {
-                  const isBill = t.bill_id != null;
-                  const isIncome = t.kind === 'income';
-                  const isTransfer = t.kind === 'transfer';
-                  const cat = t.category_id ? categoryNames.get(t.category_id) : undefined;
-                  const account = accountNames.get(t.account_id);
-                  const counterAccount = t.counter_account_id ? accountNames.get(t.counter_account_id) : undefined;
-                  const items = t.id === expandedId ? (detail?.items ?? null) : null;
+                {group.items.map((tx) => {
+                  const isBill = tx.bill_id != null;
+                  const isIncome = tx.kind === 'income';
+                  const isTransfer = tx.kind === 'transfer';
+                  const cat = tx.category_id ? categoryNames.get(tx.category_id) : undefined;
+                  const account = accountNames.get(tx.account_id);
+                  const counterAccount = tx.counter_account_id ? accountNames.get(tx.counter_account_id) : undefined;
+                  const items = tx.id === expandedId ? (detail?.items ?? null) : null;
                   return (
                     <ItemPanel
-                      key={t.id}
-                      title={t.description || '(no description)'}
+                      key={tx.id}
+                      title={tx.description || t('items.none')}
                       subtitle={
                         isTransfer
                           ? [
-                              'Transfer',
-                              `${account ?? `#${t.account_id}`} → ${counterAccount ?? `#${t.counter_account_id}`}`,
+                              t('subtitle.transfer'),
+                              `${account ?? `#${tx.account_id}`} → ${counterAccount ?? `#${tx.counter_account_id}`}`,
                             ]
                               .filter(Boolean)
                               .join(' · ')
                           : [
-                              isBill ? 'Bill' : t.store_name || null,
-                              cat ?? 'Uncategorized',
+                              isBill ? t('subtitle.bill') : tx.store_name || null,
+                              cat ?? t('subtitle.uncategorized'),
                               account,
-                              t.bag_name || null,
+                              tx.bag_name || null,
                             ]
                               .filter(Boolean)
                               .join(' · ')
                       }
-                      value={formatCents(t.amount_cents, t.currency)}
+                      value={formatCents(tx.amount_cents, tx.currency)}
                       valueClass={isIncome ? 'stat-positive' : ''}
                       onToggle={(open) => {
-                        if (open && expandedId !== t.id) {
-                          setExpandedId(t.id);
-                          if (t.item_count && t.item_count > 0) loadDetail(t.id);
-                        } else if (!open && expandedId === t.id) {
+                        if (open && expandedId !== tx.id) {
+                          setExpandedId(tx.id);
+                          if (tx.item_count && tx.item_count > 0) loadDetail(tx.id);
+                        } else if (!open && expandedId === tx.id) {
                           setExpandedId(null);
                           setDetail(null);
                           setDetailError(null);
@@ -310,21 +328,20 @@ export function TransactionsPage() {
                         <>
                           <div className="item-field-grid">
                             <div className="item-field">
-                              <span>Date</span>
-                              <span>{t.date}</span>
+                              <span>{t('field.date')}</span>
+                              <span>{tx.date}</span>
                             </div>
                             <div className="item-field">
-                              <span>Amount</span>
-                              <strong>{formatCents(t.amount_cents, t.currency)}</strong>
+                              <span>{t('field.amount')}</span>
+                              <strong>{formatCents(tx.amount_cents, tx.currency)}</strong>
                             </div>
                           </div>
                           <p className="hint-text">
-                            This transaction was recorded for a scanned bill and
-                            is managed there.
+                            {t('bill.hint')}
                           </p>
                           <div className="camera-row">
-                            <Link className="btn btn-secondary" to={`/bills?bill=${t.bill_id}`}>
-                              View bill
+                            <Link className="btn btn-secondary" to={`/bills?bill=${tx.bill_id}`}>
+                              {t('bill.view')}
                             </Link>
                           </div>
                         </>
@@ -332,63 +349,63 @@ export function TransactionsPage() {
                         <>
                           <div className="item-field-grid">
                             <div className="item-field">
-                              <span>Date</span>
-                              <span>{t.date}</span>
+                              <span>{t('field.date')}</span>
+                              <span>{tx.date}</span>
                             </div>
                             <div className="item-field">
-                              <span>Kind</span>
-                              <span>{t.kind}</span>
+                              <span>{t('field.kind')}</span>
+                              <span>{kindLabel(tx.kind)}</span>
                             </div>
                             <div className="item-field">
-                              <span>Amount</span>
-                              <strong>{formatCents(t.amount_cents, t.currency)}</strong>
+                              <span>{t('field.amount')}</span>
+                              <strong>{formatCents(tx.amount_cents, tx.currency)}</strong>
                             </div>
                           </div>
                           {isTransfer ? (
                             <div className="item-field-grid">
                               <div className="item-field">
-                                <span>From</span>
-                                <span>{account ?? `#${t.account_id}`}</span>
+                                <span>{t('field.from')}</span>
+                                <span>{account ?? `#${tx.account_id}`}</span>
                               </div>
                               <div className="item-field">
-                                <span>To</span>
-                                <span>{counterAccount ?? t.counter_account_name ?? '#' + (t.counter_account_id ?? '?')}</span>
+                                <span>{t('field.to')}</span>
+                                <span>{counterAccount ?? tx.counter_account_name ?? '#' + (tx.counter_account_id ?? '?')}</span>
                               </div>
                               <div className="item-field">
-                                <span>Amount</span>
-                                <span>{formatCents(t.amount_cents, t.currency)}</span>
+                                <span>{t('field.amount')}</span>
+                                <span>{formatCents(tx.amount_cents, tx.currency)}</span>
                               </div>
                             </div>
                           ) : (
                             <div className="item-field-grid">
                               <div className="item-field">
-                                <span>Category</span>
+                                <span>{t('field.category')}</span>
                                 <span>{cat ?? '—'}</span>
                               </div>
                               <div className="item-field">
-                                <span>Account</span>
-                                <span>{account ?? `#${t.account_id}`}</span>
+                                <span>{t('field.account')}</span>
+                                <span>{account ?? `#${tx.account_id}`}</span>
                               </div>
                               <div className="item-field">
-                                <span>Store</span>
-                                <span>{t.store_name ?? '—'}</span>
+                                <span>{t('field.store')}</span>
+                                <span>{tx.store_name ?? '—'}</span>
                               </div>
                             </div>
                           )}
 
-                          {t.item_count != null && t.item_count > 0 && (
+                          {tx.item_count != null && tx.item_count > 0 && (
                             <div className="tx-items">
                               <div className="transaction-lines-header">
-                                <span>Items ({t.item_count})</span>
+                                <span>{t('items.count', { count: tx.item_count })}</span>
                                 {detail?.items_total_cents != null && (
                                   <span>
-                                    Items total {formatCents(detail.items_total_cents, t.currency)}
+                                    {t('items.total', { total: formatCents(detail.items_total_cents, tx.currency) })}
                                   </span>
                                 )}
                               </div>
-                              {t.id === expandedId &&
+                              {tx.id === expandedId &&
                                 (detailLoading ? (
-                                  <Spinner label="Loading items…" />
+                                  <Spinner label={t('items.loading')} />
                                 ) : detailError ? (
                                   <ErrorMessage message={detailError} />
                                 ) : items ? (
@@ -406,26 +423,24 @@ export function TransactionsPage() {
                                             <span className="tx-item-brand"> · {it.generic_name}</span>
                                           )}
                                           {it.product_id == null && (
-                                            <span className="tx-item-brand"> (not linked)</span>
+                                            <span className="tx-item-brand"> {t('items.notLinked')}</span>
                                           )}
                                         </span>
                                         <span className="tx-item-meta">
-                                          {it.quantity} × {formatCents(it.unit_price_cents, t.currency)}
+                                          {it.quantity} × {formatCents(it.unit_price_cents, tx.currency)}
                                           {it.discount_cents > 0
-                                            ? ` − ${formatCents(it.discount_cents, t.currency)}`
+                                            ? ` − ${formatCents(it.discount_cents, tx.currency)}`
                                             : ''}
                                         </span>
                                         <strong className="tx-item-total">
-                                          {formatCents(it.line_total_cents, t.currency)}
+                                          {formatCents(it.line_total_cents, tx.currency)}
                                         </strong>
                                       </div>
                                     ))}
                                     {detail?.items_total_cents !== undefined &&
-                                      detail?.items_total_cents !== t.amount_cents && (
+                                      detail?.items_total_cents !== tx.amount_cents && (
                                         <p className="hint-text">
-                                          The amount differs from the items total — the
-                                          difference stays in the transaction (delivery,
-                                          fees or bags).
+                                          {t('items.diffHint')}
                                         </p>
                                       )}
                                   </>
@@ -434,18 +449,18 @@ export function TransactionsPage() {
                           )}
 
                           <div className="camera-row">
-                            <Button variant="secondary" className="btn-sm" onClick={() => openEdit(t)}>
-                              Edit
+                            <Button variant="secondary" className="btn-sm" onClick={() => openEdit(tx)}>
+                              {t('action.edit')}
                             </Button>
                             <Button
                               variant="danger"
                               className="btn-sm"
                               onClick={() => {
                                 setPageError(null);
-                                setConfirmDelete(t);
+                                setConfirmDelete(tx);
                               }}
                             >
-                              Delete
+                              {t('action.delete')}
                             </Button>
                           </div>
                         </>
@@ -460,9 +475,9 @@ export function TransactionsPage() {
       )}
 
       {editOpen && (
-        <Dialog title="Edit transaction" wide>
+        <Dialog title={t('dialog.editTitle')} wide>
           {editLoading || !editing ? (
-            <Spinner label="Loading…" />
+            <Spinner label={t('dialog.loading')} />
           ) : (
             <TransactionForm
               mode="edit"
@@ -481,18 +496,19 @@ export function TransactionsPage() {
       )}
 
       {confirmDelete && (
-        <Dialog title="Delete transaction?">
+        <Dialog title={t('dialog.deleteTitle')}>
           <p className="hint-text">
-            This permanently removes “{confirmDelete.description || 'this transaction'}” (
-            {formatCents(confirmDelete.amount_cents, confirmDelete.currency)}) and its
-            item lines. This cannot be undone.
+            {t('dialog.deleteBody', {
+              name: confirmDelete.description || t('dialog.defaultName'),
+              amount: formatCents(confirmDelete.amount_cents, confirmDelete.currency),
+            })}
           </p>
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={deleting}>
-              Cancel
+              {t('action.cancel')}
             </Button>
             <Button variant="danger" onClick={handleDelete} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete'}
+              {deleting ? t('action.deleting') : t('action.delete')}
             </Button>
           </div>
         </Dialog>
@@ -503,15 +519,15 @@ export function TransactionsPage() {
 
 /** Section header for a transaction day: "Today", "Yesterday", or
  *  "SAT, SEP 12" for older dates. */
-function dayLabel(iso: string): string {
+function dayLabel(iso: string, locale: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   const day = new Date(y ?? 2000, (m ?? 1) - 1, d ?? 1);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const daysAgo = Math.round((today.getTime() - day.getTime()) / 86_400_000);
-  if (daysAgo === 0) return 'Today';
-  if (daysAgo === 1) return 'Yesterday';
+  if (daysAgo === 0) return i18n.t('transactions:time.today');
+  if (daysAgo === 1) return i18n.t('transactions:time.yesterday');
   return day
-    .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    .toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' })
     .toUpperCase();
 }

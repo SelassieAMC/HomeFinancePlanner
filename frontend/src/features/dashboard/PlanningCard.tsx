@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n';
+import { intlLocale } from '../../i18n/core';
 import { useAsync, type AsyncState } from '../../hooks/useAsync';
 import { goalsApi } from '../../api/goals';
 import { bagsApi } from '../../api/bags';
@@ -24,13 +27,8 @@ import { BagsBody, bagsHaveContent } from './BagsCard';
 
 type PlanningSection = 'budgets' | 'goals' | 'bags';
 
-const TABS: TabDef<PlanningSection>[] = [
-  { key: 'budgets', label: 'Budgets' },
-  { key: 'goals', label: 'Goals' },
-  { key: 'bags', label: 'Bags' },
-];
-
 export function PlanningCard({ summary }: { summary: AsyncState<Summary> }) {
+  const { t } = useTranslation('dashboard');
   const goals = useAsync(() => goalsApi.list(), []);
   const bags = useAsync(() => bagsApi.overview(), []);
 
@@ -74,64 +72,70 @@ export function PlanningCard({ summary }: { summary: AsyncState<Summary> }) {
   // on the dashboard's Planning tab, a blank pane reads as a broken page.
   if (everythingEmpty) {
     return (
-      <Card title="Planning" className="budgets-card planning-card">
-        <EmptyState message="Nothing to plan yet — set up budgets, goals or bags on the Planning page." />
+      <Card title={t('planning.title')} className="budgets-card planning-card">
+        <EmptyState message={t('planning.empty.all')} />
       </Card>
     );
   }
 
   const monthTag = summary.data
-    ? new Date(`${summary.data.from.slice(0, 7)}-01T00:00:00`).toLocaleDateString('en-US', {
+    ? new Date(`${summary.data.from.slice(0, 7)}-01T00:00:00`).toLocaleDateString(intlLocale(i18n.language), {
         month: 'short',
         year: 'numeric',
       })
     : '';
 
+  const tabs: TabDef<PlanningSection>[] = [
+    { key: 'budgets', label: t('planning.tabs.budgets') },
+    { key: 'goals', label: t('planning.tabs.goals') },
+    { key: 'bags', label: t('planning.tabs.bags') },
+  ];
+
   const body = (
     <>
       <Tabs
-        tabs={TABS}
+        tabs={tabs}
         active={active}
         onChange={setActive}
-        ariaLabel="Planning: budgets, goals and bags"
+        ariaLabel={t('planning.aria')}
       />
       <div className="planning-pane">
         {active === 'budgets' &&
           (summary.loading ? (
-            <Spinner label="Loading budgets…" />
+            <Spinner label={t('planning.loading.budgets')} />
           ) : summary.error || !summary.data ? (
-            <ErrorMessage message={summary.error?.message ?? 'Summary unavailable.'} />
+            <ErrorMessage message={summary.error?.message ?? t('planning.errors.summary')} />
           ) : hasBudgets ? (
             <BudgetsBody summary={summary} />
           ) : (
-            <EmptyState message={`No budget activity in ${monthTag} — add caps on the Planning page.`} />
+            <EmptyState message={t('planning.empty.budgets', { month: monthTag })} />
           ))}
         {active === 'goals' &&
           (goals.loading ? (
-            <Spinner label="Loading goals…" />
+            <Spinner label={t('planning.loading.goals')} />
           ) : goals.error ? (
             <ErrorMessage message={goals.error.message} />
           ) : hasGoals ? (
             <GoalsBody goals={goals} />
           ) : (
-            <EmptyState message="No goals yet — add a savings target on the Planning page." />
+            <EmptyState message={t('planning.empty.goals')} />
           ))}
         {active === 'bags' &&
           (bags.loading ? (
-            <Spinner label="Loading bags…" />
+            <Spinner label={t('planning.loading.bags')} />
           ) : bags.error ? (
             <ErrorMessage message={bags.error.message} />
           ) : hasBags ? (
             <BagsBody overview={bags} />
           ) : (
-            <EmptyState message="No bags yet — add a reserve on the Planning page." />
+            <EmptyState message={t('planning.empty.bags')} />
           ))}
       </div>
     </>
   );
 
   return (
-    <Card title="Planning" className="budgets-card planning-card">
+    <Card title={t('planning.title')} className="budgets-card planning-card">
       {body}
     </Card>
   );

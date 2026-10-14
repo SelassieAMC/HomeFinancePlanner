@@ -26,6 +26,7 @@ type UserStore interface {
 	FindByUsername(ctx context.Context, username string) (domain.User, error)
 	Create(ctx context.Context, u domain.User) (domain.User, error)
 	UpdateFullName(ctx context.Context, id int64, fullName string) (domain.User, error)
+	UpdateLocale(ctx context.Context, id int64, locale string) (domain.User, error)
 	AdminUpdate(ctx context.Context, id int64, username, fullName string, isAdmin bool) (domain.User, error)
 	UpdatePassword(ctx context.Context, id int64, passwordHash string) (domain.User, error)
 	SetPhoto(ctx context.Context, id int64, photoPath string) (domain.User, error)
@@ -205,6 +206,19 @@ func (s *UserService) UpdateProfile(ctx context.Context, id int64, fullName stri
 		return domain.User{}, validationError("full name must be at most 80 characters")
 	}
 	return s.users.UpdateFullName(ctx, id, fullName)
+}
+
+// UpdateLocale sets the own UI language preference. The locale list is a
+// closed set kept in sync with the frontend's i18n resources.
+func (s *UserService) UpdateLocale(ctx context.Context, id int64, locale string) (domain.User, error) {
+	locale = strings.TrimSpace(strings.ToLower(locale))
+	if len(locale) > 12 {
+		return domain.User{}, validationError("invalid locale")
+	}
+	if !domain.IsValidLocale(locale) {
+		return domain.User{}, validationError("unsupported locale %q (want en, de or es)", locale)
+	}
+	return s.users.UpdateLocale(ctx, id, locale)
 }
 
 // ChangePassword verifies the current password, sets the new one and revokes

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Card, ErrorMessage, Spinner } from '../../components/ui';
 import { insightsApi } from '../../api/insights';
 import { useAsync } from '../../hooks/useAsync';
@@ -10,18 +11,38 @@ import type { ProductInsight } from '../../types/domain';
  *  when nothing qualifies — unlike the chart cards, an empty watch list is
  *  not a card. */
 export function PriceCreepCard() {
+  const { t } = useTranslation('dashboard');
   const creep = useAsync(() => insightsApi.list({ unseen: true, kind: 'price_creep', limit: 10 }), []);
+
+  /** The old → new per-unit line when the facts snapshot carries both sides. */
+  const creepTrend = (insight: ProductInsight): string => {
+    const d = insight.data;
+    if (d.old_ppu !== undefined && d.new_ppu !== undefined) {
+      return t('facts.ppu', {
+        unit: d.unit,
+        old: formatCents(Math.round(d.old_ppu), insight.currency),
+        new: formatCents(Math.round(d.new_ppu), insight.currency),
+      });
+    }
+    if (d.old_price_cents !== undefined && d.new_price_cents !== undefined) {
+      return t('facts.unitPrice', {
+        old: formatCents(d.old_price_cents, insight.currency),
+        new: formatCents(d.new_price_cents, insight.currency),
+      });
+    }
+    return '';
+  };
 
   if (creep.loading) {
     return (
-      <Card title="Price creep watch" className="insights-card">
+      <Card title={t('priceCreep.title')} className="insights-card">
         <Spinner />
       </Card>
     );
   }
   if (creep.error) {
     return (
-      <Card title="Price creep watch" className="insights-card">
+      <Card title={t('priceCreep.title')} className="insights-card">
         <ErrorMessage message={creep.error.message} />
       </Card>
     );
@@ -38,8 +59,8 @@ export function PriceCreepCard() {
   if (rows.length === 0) return null;
 
   return (
-    <Card title="Price creep watch" className="insights-card">
-      <p className="chart-subtitle">Products whose unit price keeps rising — candidates to swap or stock up elsewhere.</p>
+    <Card title={t('priceCreep.title')} className="insights-card">
+      <p className="chart-subtitle">{t('priceCreep.subtitle')}</p>
       <div className="insight-list">
         {rows.map((insight) => (
           <div key={insight.id} className="insight-row">
@@ -55,16 +76,4 @@ export function PriceCreepCard() {
       </div>
     </Card>
   );
-}
-
-/** The old → new per-unit line when the facts snapshot carries both sides. */
-function creepTrend(insight: ProductInsight): string {
-  const d = insight.data;
-  if (d.old_ppu !== undefined && d.new_ppu !== undefined) {
-    return `per ${d.unit} ${formatCents(Math.round(d.old_ppu), insight.currency)} → ${formatCents(Math.round(d.new_ppu), insight.currency)}`;
-  }
-  if (d.old_price_cents !== undefined && d.new_price_cents !== undefined) {
-    return `unit price ${formatCents(d.old_price_cents, insight.currency)} → ${formatCents(d.new_price_cents, insight.currency)}`;
-  }
-  return '';
 }

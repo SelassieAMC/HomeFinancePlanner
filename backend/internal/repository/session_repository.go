@@ -30,11 +30,13 @@ func (r *SessionRepository) Create(ctx context.Context, token string, userID int
 }
 
 // GetUser returns the owner of a still-valid token, or domain.ErrUnauthorized
-// when the token is unknown or expired.
+// when the token is unknown or expired. The user columns ride the shared
+// userColumns constant — a new users column is added once there, never
+// re-listed here (a stale copy of the list desyncs scanUser's row arity and
+// 401s every authenticated request).
 func (r *SessionRepository) GetUser(ctx context.Context, token string) (domain.User, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT u.id, u.username, u.full_name, u.password_hash, u.photo_path, u.is_admin,
-		       u.created_at, u.updated_at
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+userColumns+`
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?`,
 		token, time.Now().Unix())

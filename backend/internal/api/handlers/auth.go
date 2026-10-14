@@ -117,6 +117,28 @@ func (h *MeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, updated)
 }
 
+type updateLocaleRequest struct {
+	Locale string `json:"locale"`
+}
+
+// UpdateLocale stores the own UI-language preference (settings page).
+func (h *MeHandler) UpdateLocale(w http.ResponseWriter, r *http.Request) {
+	user, ok := principal(w, r)
+	if !ok {
+		return
+	}
+	var req updateLocaleRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	updated, err := h.Svc.UpdateLocale(r.Context(), user.ID, req.Locale)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, updated)
+}
+
 type changePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`

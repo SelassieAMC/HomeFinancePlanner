@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { promptsApi } from '../../api/prompts';
 import type { AIPromptView } from '../../types/domain';
@@ -14,15 +15,13 @@ import {
 
 // Which process resolves each known prompt key. Custom keys are not looked
 // up by anything yet — they are templates or reserved for future features.
+// The values are translation keys resolved with the `prompts` namespace.
 const processUsage: Record<string, string> = {
-  bill_extraction:
-    'Used by: AI bill scanning — every receipt photo/PDF you scan (Bills → Scan) is read with this prompt.',
-  offer_search:
-    'Used by: purchase-cart offer search — the current market prices of your cart products (Cart) are researched with this prompt.',
+  bill_extraction: 'usage.billExtraction',
+  offer_search: 'usage.offerSearch',
 };
 
-const unknownUsage =
-  'Not used by any process — kept as a template, or reserved for a future feature.';
+const unknownUsageKey = 'usage.unknown';
 
 interface PromptDraft {
   name: string;
@@ -35,6 +34,7 @@ function draftOf(p: AIPromptView): PromptDraft {
 }
 
 export function PromptsPage() {
+  const { t } = useTranslation('prompts');
   const prompts = useAsync(() => promptsApi.list(), []);
 
   // Edits live here, keyed by prompt id; untouched prompts render their
@@ -78,7 +78,7 @@ export function PromptsPage() {
     } catch (err) {
       setRowErrors((prev) => ({
         ...prev,
-        [p.id]: err instanceof Error ? err.message : 'Failed to save prompt.',
+        [p.id]: err instanceof Error ? err.message : t('errors.save'),
       }));
     } finally {
       setBusyId(null);
@@ -103,7 +103,7 @@ export function PromptsPage() {
     } catch (err) {
       setRowErrors((prev) => ({
         ...prev,
-        [p.id]: err instanceof Error ? err.message : 'Failed to reset prompt.',
+        [p.id]: err instanceof Error ? err.message : t('errors.reset'),
       }));
     } finally {
       setBusyId(null);
@@ -121,7 +121,7 @@ export function PromptsPage() {
       setRowErrors((prev) => ({
         ...prev,
         [confirmDelete.id]:
-          err instanceof Error ? err.message : 'Failed to delete prompt.',
+          err instanceof Error ? err.message : t('errors.delete'),
       }));
       setConfirmDelete(null);
     } finally {
@@ -146,7 +146,7 @@ export function PromptsPage() {
       setAddContent('');
       await prompts.reload();
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : 'Failed to create prompt.');
+      setAddError(err instanceof Error ? err.message : t('errors.create'));
     } finally {
       setAddSaving(false);
     }
@@ -159,25 +159,21 @@ export function PromptsPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">AI prompts</h2>
+      <h2 className="page-title">{t('title')}</h2>
 
       <p className="hint-text">
-        These instruction texts are sent to your AI connectors. Editing them
-        changes how bills are read and how offers are searched — a broken
-        prompt can break extraction, so keep the JSON schema intact. A prompt
-        with empty content uses its built-in default; deleting one of the two
-        seeded prompts is safe for the same reason.{' '}
-        <code>{'{{categories}}'}</code> is replaced at run time with the live
-        product-category list from your categories.
+        {t('hints.overviewBefore')}
+        <code>{'{{categories}}'}</code>
+        {t('hints.overviewAfter')}
       </p>
 
       {list.length === 0 ? (
-        <EmptyState message="No prompts yet. The built-in defaults are in use." />
+        <EmptyState message={t('empty')} />
       ) : (
         <ItemPanels>
           {list.map((p) => {
             const draft = drafts[p.id] ?? draftOf(p);
-            const usage = processUsage[p.key] ?? unknownUsage;
+            const usageKey = processUsage[p.key] ?? unknownUsageKey;
             const error = rowErrors[p.id];
             return (
               <ItemPanel
@@ -187,46 +183,45 @@ export function PromptsPage() {
                   <>
                     <span className="default-badge"> {p.key}</span>
                     {p.uses_default && (
-                      <span className="hint-inline"> using built-in default</span>
+                      <span className="hint-inline">{t('panel.usingDefault')}</span>
                     )}
                   </>
                 }
-                value={p.uses_default ? 'default' : undefined}
+                value={p.uses_default ? t('panel.defaultBadge') : undefined}
               >
-                <p className="hint-text">{usage}</p>
+                <p className="hint-text">{t(usageKey)}</p>
                 {p.description && <p className="hint-text">{p.description}</p>}
 
                 <div className="form-grid">
                   <label>
-                    Name
+                    {t('fields.name')}
                     <input
                       value={draft.name}
                       onChange={(e) => setDraft(p.id, { name: e.target.value })}
                     />
                   </label>
                   <label>
-                    Description
+                    {t('fields.description')}
                     <input
                       value={draft.description}
-                      placeholder="What this prompt is for"
+                      placeholder={t('fields.descriptionPlaceholder')}
                       onChange={(e) => setDraft(p.id, { description: e.target.value })}
                     />
                   </label>
                 </div>
 
                 <label>
-                  Prompt content
+                  {t('fields.content')}
                   <textarea
                     rows={16}
                     value={draft.content}
-                    placeholder={p.default_content || 'Prompt text'}
+                    placeholder={p.default_content || t('fields.contentPlaceholder')}
                     onChange={(e) => setDraft(p.id, { content: e.target.value })}
                   />
                 </label>
                 {draft.content.includes('{{categories}}') && (
                   <p className="hint-text">
-                    {'{{categories}}'} will be replaced at run time with the live
-                    product-category list (names with commas are quoted).
+                    {t('hints.categoriesNote', { token: '{{categories}}' })}
                   </p>
                 )}
 
@@ -234,18 +229,18 @@ export function PromptsPage() {
 
                 <div className="camera-row">
                   <Button onClick={() => handleSave(p)} disabled={busyId !== null}>
-                    {busyId === p.id ? 'Saving…' : 'Save'}
+                    {busyId === p.id ? t('actions.saving') : t('actions.save')}
                   </Button>
                   <Button
                     variant="secondary"
                     onClick={() => handleReset(p)}
                     disabled={busyId !== null || !p.default_content || p.uses_default}
-                    title={p.default_content ? 'Restore the built-in default text' : 'This prompt has no built-in default'}
+                    title={p.default_content ? t('actions.resetTitle') : t('actions.resetTitleNone')}
                   >
-                    Reset to default
+                    {t('actions.reset')}
                   </Button>
                   <Button variant="danger" onClick={() => setConfirmDelete(p)} disabled={busyId !== null}>
-                    Delete
+                    {t('actions.delete')}
                   </Button>
                 </div>
               </ItemPanel>
@@ -256,76 +251,75 @@ export function PromptsPage() {
 
       <div className="camera-row">
         <Button variant="secondary" onClick={() => setAdding(true)}>
-          + Add prompt
+          {t('actions.add')}
         </Button>
       </div>
 
       {adding && (
-        <Dialog title="Add prompt" wide>
+        <Dialog title={t('add.title')} wide>
           <div className="form-grid">
             <label>
-              Key{' '}
+              {t('add.key')}{' '}
               <span className="hint-inline">
-                lowercase letters, digits or underscores, starting with a
-                letter; immutable after create
+                {t('add.keyHint')}
               </span>
               <input
                 value={addKey}
-                placeholder="my_custom_prompt"
+                placeholder={t('add.keyPlaceholder')}
                 onChange={(e) => setAddKey(e.target.value)}
               />
             </label>
             <label>
-              Name
+              {t('fields.name')}
               <input
                 value={addName}
-                placeholder="Display name"
+                placeholder={t('add.namePlaceholder')}
                 onChange={(e) => setAddName(e.target.value)}
               />
             </label>
             <label>
-              Description
+              {t('fields.description')}
               <input
                 value={addDescription}
-                placeholder="What this prompt is for"
+                placeholder={t('fields.descriptionPlaceholder')}
                 onChange={(e) => setAddDescription(e.target.value)}
               />
             </label>
           </div>
           <label>
-            Prompt content
+            {t('fields.content')}
             <textarea
               rows={8}
               value={addContent}
-              placeholder="Prompt text (empty = the process will use nothing unless a default exists)"
+              placeholder={t('add.contentPlaceholder')}
               onChange={(e) => setAddContent(e.target.value)}
             />
           </label>
           {addError && <ErrorMessage message={addError} />}
           <div className="camera-row">
             <Button variant="secondary" onClick={() => setAdding(false)} disabled={addSaving}>
-              Cancel
+              {t('actions.cancel')}
             </Button>
             <Button onClick={handleCreate} disabled={addSaving || addKey.trim() === '' || addName.trim() === ''}>
-              {addSaving ? 'Creating…' : 'Create prompt'}
+              {addSaving ? t('add.creating') : t('add.create')}
             </Button>
           </div>
         </Dialog>
       )}
 
       {confirmDelete && (
-        <Dialog title={`Delete “${confirmDelete.name}”?`}>
+        <Dialog title={t('deleteDialog.title', { name: confirmDelete.name })}>
           <p className="hint-text">
             {processUsage[confirmDelete.key]
-              ? 'This prompt is used by a process. After deletion the process falls back to the built-in default prompt.'
-              : 'This prompt is not used by any process.'}
+              ? t('deleteDialog.used')
+              : t('deleteDialog.unused')}
           </p>
           <div className="camera-row">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={busyId !== null}>
-              Cancel
+              {t('actions.cancel')}
             </Button>
             <Button variant="danger" onClick={handleDelete} disabled={busyId !== null}>
-              {busyId === confirmDelete.id ? 'Deleting…' : 'Delete'}
+              {busyId === confirmDelete.id ? t('actions.deleting') : t('actions.delete')}
             </Button>
           </div>
         </Dialog>

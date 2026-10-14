@@ -61,6 +61,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 
 	// Own-account profile (settings page): display name, password, avatar.
 	mux.HandleFunc("PUT    /api/v1/me", meH.Update)
+	mux.HandleFunc("PUT    /api/v1/me/locale", meH.UpdateLocale)
 	mux.HandleFunc("PUT    /api/v1/me/password", meH.ChangePassword)
 	mux.HandleFunc("POST   /api/v1/me/photo", meH.UploadPhoto)
 	mux.HandleFunc("GET    /api/v1/me/photo", meH.Photo)

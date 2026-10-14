@@ -1,5 +1,8 @@
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import type { AsyncState } from '../../hooks/useAsync';
+import i18n from '../../i18n';
+import { intlLocale } from '../../i18n/core';
 import { categoriesApi } from '../../api/categories';
 import { Card } from '../../components/ui';
 import { formatCents } from '../../lib/money';
@@ -8,7 +11,7 @@ import type { BudgetStatus, Summary } from '../../types/domain';
 
 /** Short month label for the section title / a monthly row ("2026-10" → "Oct 2026"). */
 function monthTag(month: string): string {
-  return new Date(`${month}-01T00:00:00`).toLocaleDateString('en-US', {
+  return new Date(`${month}-01T00:00:00`).toLocaleDateString(intlLocale(i18n.language), {
     month: 'short',
     year: 'numeric',
   });
@@ -35,6 +38,7 @@ export function budgetRowsFor(data: Summary): BudgetStatus[] {
  *  and a standalone card shell wrap it). Assumes the summary loaded; null
  *  when nothing qualifies. */
 export function BudgetsBody({ summary }: { summary: AsyncState<Summary> }) {
+  const { t } = useTranslation('dashboard');
   const categories = useAsync(() => categoriesApi.list(), []);
 
   const data = summary.data;
@@ -83,7 +87,7 @@ export function BudgetsBody({ summary }: { summary: AsyncState<Summary> }) {
             const pace = b.spent_cents / elapsedDays;
             const daysToExhaust = pace > 0 ? b.remaining_cents / pace : Infinity;
             if (daysToExhaust < monthDays - elapsedDays) {
-              paceWarning = `At this pace you'd exceed the cap in ${Math.max(1, Math.floor(daysToExhaust))} days`;
+              paceWarning = t('budgets.paceWarning', { count: Math.max(1, Math.floor(daysToExhaust)) });
             }
           }
 
@@ -102,7 +106,7 @@ export function BudgetsBody({ summary }: { summary: AsyncState<Summary> }) {
                 </span>
                 {b.cadence === 'monthly' && (
                   <span className="stat-label">
-                    Monthly{b.month ? ` · ${monthTag(b.month)}` : ''}
+                    {t('budgets.monthly')}{b.month ? ` · ${monthTag(b.month)}` : ''}
                   </span>
                 )}
                 <span className="budget-amounts">
@@ -123,19 +127,21 @@ export function BudgetsBody({ summary }: { summary: AsyncState<Summary> }) {
                 }
               >
                 {isClosed
-                  ? `Closed · spent ${formatCents(b.lifetime_spent_cents, currency)} of ${formatCents(
-                      b.amount_cents,
-                      currency,
-                    )}`
+                  ? t('budgets.closed', {
+                      spent: formatCents(b.lifetime_spent_cents, currency),
+                      total: formatCents(b.amount_cents, currency),
+                    })
                   : over
-                    ? `Over by ${formatCents(-b.remaining_cents, currency)}`
-                    : `${formatCents(b.remaining_cents, currency)} left`}
+                    ? t('budgets.over', { amount: formatCents(-b.remaining_cents, currency) })
+                    : t('budgets.left', { amount: formatCents(b.remaining_cents, currency) })}
               </div>
               {paceWarning && <div className="hint-inline">{paceWarning}</div>}
               {/* Envelopes get lifetime progress; the in-range figure shows
                   what this month alone added to the pool. */}
               {b.cadence === 'open' && b.spent_cents > 0 && (
-                <div className="hint-inline">{formatCents(b.spent_cents, currency)} in {monthTag(month)}</div>
+                <div className="hint-inline">
+                  {t('budgets.spentInMonth', { spent: formatCents(b.spent_cents, currency), month: monthTag(month) })}
+                </div>
               )}
             </Card>
           );

@@ -1,6 +1,11 @@
 // Period helpers for the dashboard. All dates are "YYYY-MM-DD" strings in
 // LOCAL time; the backend treats them as opaque (already validated) values.
 // Weeks are Monday–Sunday (ISO 8601).
+// Human labels localize through the i18next language (Intl does the month and
+// weekday names); import order keeps this file dependency-free of i18n setup.
+
+import i18n from '../i18n';
+import { intlLocale } from '../i18n/core';
 
 export type PeriodType = 'day' | 'week' | 'month' | 'year';
 
@@ -115,6 +120,12 @@ export function isCurrentPeriod(period: Period): boolean {
   return period.start <= today && today <= period.end;
 }
 
+/** The Intl tag of the active UI language (lazy so tests without the i18n
+ *  import cycle still work). */
+function tag(): string {
+  return intlLocale(i18n.language);
+}
+
 /** Human label for an arbitrary inclusive range, e.g. "Sep 8 – 14" or
  *  "Sep – Oct 2026" — used on chart headers so each card states the window
  *  underneath its numbers. */
@@ -123,14 +134,14 @@ export function rangeLabel(from: string, to: string): string {
   const b = fromISO(to);
   const sameMonth = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
   if (sameMonth) {
-    return `${b.toLocaleDateString('en-US', { month: 'short' })} ${a.getDate()} – ${b.getDate()}`;
+    return `${b.toLocaleDateString(tag(), { month: 'short' })} ${a.getDate()} – ${b.getDate()}`;
   }
   const sameYear = a.getFullYear() === b.getFullYear();
-  const left = a.toLocaleDateString('en-US', {
+  const left = a.toLocaleDateString(tag(), {
     month: 'short',
     year: sameYear ? undefined : 'numeric',
   });
-  return `${left} – ${b.toLocaleDateString('en-US', {
+  return `${left} – ${b.toLocaleDateString(tag(), {
     month: sameYear ? 'short' : undefined,
     year: 'numeric',
   })}`;
@@ -144,14 +155,14 @@ export function periodLabel(period: Period): string {
   const sameYear = start.getFullYear() === end.getFullYear();
   switch (period.type) {
     case 'day':
-      return start.toLocaleDateString('en-US', {
+      return start.toLocaleDateString(tag(), {
         year: sameYear ? 'numeric' : undefined,
         month: 'short',
         day: 'numeric',
       });
     case 'week': {
-      const from = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const to = end.toLocaleDateString('en-US', {
+      const from = start.toLocaleDateString(tag(), { month: 'short', day: 'numeric' });
+      const to = end.toLocaleDateString(tag(), {
         year: sameYear ? 'numeric' : undefined,
         month: 'short',
         day: 'numeric',
@@ -159,7 +170,7 @@ export function periodLabel(period: Period): string {
       return `${from} – ${to}`;
     }
     case 'month':
-      return start.toLocaleDateString('en-US', {
+      return start.toLocaleDateString(tag(), {
         year: 'numeric',
         month: 'long',
       });

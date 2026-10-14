@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { productsApi } from '../../api/products';
 import { formatCents } from '../../lib/money';
 import type { Product } from '../../types/domain';
@@ -37,6 +38,7 @@ export function ProductAutocomplete({
   autoFocus,
   onBlur,
 }: Props) {
+  const { t } = useTranslation('common');
   const [matches, setMatches] = useState<Product[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -157,7 +159,7 @@ export function ProductAutocomplete({
         >
           {matches.length === 0 ? (
             <li className="product-autocomplete-empty">
-              No match — “{value.trim()}” is created on save
+              {t('product.no_match', { query: value.trim() })}
             </li>
           ) : (
             matches.map((p, i) => (
@@ -180,8 +182,8 @@ export function ProductAutocomplete({
                   {p.times_bought > 0 && currency
                     ? `${p.times_bought}× · ${formatCents(p.latest_price_cents ?? 0, p.price_currency || currency)}`
                     : p.times_bought > 0
-                      ? `${p.times_bought}× bought`
-                      : 'new'}
+                      ? t('product.times_bought', { count: p.times_bought })
+                      : t('product.new')}
                 </span>
               </li>
             ))

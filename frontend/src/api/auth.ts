@@ -22,6 +22,8 @@ export const authApi = {
   me: () => apiClient.get<User>(`${BASE}/auth/me`),
   updateFullName: (fullName: string) =>
     apiClient.put<User>(`${BASE}/me`, { full_name: fullName }),
+  updateLocale: (locale: string) =>
+    apiClient.put<User>(`${BASE}/me/locale`, { locale }),
   changePassword: (currentPassword: string, newPassword: string) =>
     apiClient.put<void>(`${BASE}/me/password`, {
       current_password: currentPassword,

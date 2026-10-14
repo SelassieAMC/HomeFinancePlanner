@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { AsyncState } from '../../hooks/useAsync';
 import { Card } from '../../components/ui';
 import { formatCents } from '../../lib/money';
@@ -17,6 +18,7 @@ export function bagsHaveContent(overview: BagOverview | null): boolean {
  * (Σ allocations − tagged spend); accounts without bags are dropped.
  */
 export function BagsBody({ overview }: { overview: AsyncState<BagOverview | null> }) {
+  const { t } = useTranslation('dashboard');
   if (!overview.data) return null;
 
   const views = overview.data.accounts.filter((v) => v.bags.length > 0);
@@ -53,13 +55,13 @@ export function BagsBody({ overview }: { overview: AsyncState<BagOverview | null
                     </div>
                   )}
                   <div className="budget-status">
-                    Spent {formatCents(b.tagged_spend_cents, v.currency)} · unbagged{' '}
-                    {formatCents(v.unbagged_cents, v.currency)}
+                    {t('bags.spentUnbagged', {
+                      spent: formatCents(b.tagged_spend_cents, v.currency),
+                      unbagged: formatCents(v.unbagged_cents, v.currency),
+                    })}
                   </div>
                   {v.oversubscribed && (
-                    <div className="budget-status over">
-                      Bags claim more than the account holds
-                    </div>
+                    <div className="budget-status over">{t('bags.oversubscribed')}</div>
                   )}
                 </Card>
               );

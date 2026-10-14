@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { useAsync } from '../../hooks/useAsync';
 import { usePolling } from '../../hooks/usePolling';
@@ -15,17 +16,26 @@ import { useAuth } from '../auth/AuthContext';
 import { ProfileTab } from './ProfileTab';
 import { UsersTab } from './UsersTab';
 
-const providerTypes: { value: AIProviderType; label: string }[] = [
-  { value: 'ollama', label: 'Ollama (local, no key)' },
+const providerTypes: { value: AIProviderType; labelKey: string }[] = [
+  { value: 'ollama', labelKey: 'connectors.typeOllama' },
   {
     value: 'ollama_web_search',
-    label: 'Ollama web search (key required)',
+    labelKey: 'connectors.typeOllamaWebSearch',
   },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Google Gemini' },
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'openai_compatible', label: 'OpenAI-compatible (OpenRouter, Groq, …)' },
+  { value: 'openai', labelKey: 'connectors.typeOpenai' },
+  { value: 'gemini', labelKey: 'connectors.typeGemini' },
+  { value: 'anthropic', labelKey: 'connectors.typeAnthropic' },
+  {
+    value: 'openai_compatible',
+    labelKey: 'connectors.typeOpenaiCompatible',
+  },
 ];
+
+// Translated labels resolved through the record (labels are call-time keys,
+// never translated at module load).
+const providerTypeLabels = Object.fromEntries(
+  providerTypes.map((p) => [p.value, p.labelKey]),
+) as Record<AIProviderType, string>;
 
 const modelPlaceholder: Record<AIProviderType, string> = {
   ollama: 'llama3.2-vision',
@@ -79,6 +89,7 @@ function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
 type SettingsTab = 'profile' | 'general' | 'connectors' | 'normalization' | 'users';
 
 export function SettingsPage() {
+  const { t } = useTranslation('settings');
   const { user } = useAuth();
   const [tab, setTab] = useState<SettingsTab>('profile');
   const saved = useAsync(() => settingsApi.listAIProviders(), []);
@@ -104,7 +115,7 @@ export function SettingsPage() {
       setCurrency(result.currency);
       setCurrencySaved(true);
     } catch (err) {
-      setCurrencyError(err instanceof Error ? err.message : 'Failed to save currency.');
+      setCurrencyError(err instanceof Error ? err.message : t('currency.saveError'));
     } finally {
       setCurrencySaving(false);
     }
@@ -185,7 +196,7 @@ export function SettingsPage() {
       setDrafts(savedList.map((p, i) => toDraft(p, i + 1)));
       saved.reload();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save settings.');
+      setSaveError(err instanceof Error ? err.message : t('connectors.saveError'));
     } finally {
       setSaving(false);
     }
@@ -202,7 +213,7 @@ export function SettingsPage() {
         ...prev,
         [d.id as string]: {
           ok: false,
-          error: err instanceof Error ? err.message : 'Test failed.',
+          error: err instanceof Error ? err.message : t('connectors.testError'),
         },
       }));
     } finally {
@@ -243,7 +254,7 @@ export function SettingsPage() {
       await productsApi.runNormalization();
       setJobRunning(true);
     } catch (err) {
-      setJobError(err instanceof Error ? err.message : 'Failed to start the analysis.');
+      setJobError(err instanceof Error ? err.message : t('normalization.startError'));
     } finally {
       setJobStarting(false);
     }
@@ -254,16 +265,18 @@ export function SettingsPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Settings</h2>
+      <h2 className="page-title">{t('page.title')}</h2>
 
       <Tabs
-        ariaLabel="Settings sections"
+        ariaLabel={t('page.sectionsAria')}
         tabs={[
-          { key: 'profile', label: 'Profile' },
-          { key: 'general', label: 'General' },
-          { key: 'connectors', label: 'AI connectors' },
-          { key: 'normalization', label: 'Product normalization' },
-          ...(user?.is_admin ? [{ key: 'users' as const, label: 'Users' }] : []),
+          { key: 'profile', label: t('tabs.profile') },
+          { key: 'general', label: t('page.tabGeneral') },
+          { key: 'connectors', label: t('page.tabConnectors') },
+          { key: 'normalization', label: t('page.tabNormalization') },
+          ...(user?.is_admin
+            ? [{ key: 'users' as const, label: t('tabs.users') }]
+            : []),
         ]}
         active={tab}
         onChange={setTab}
@@ -274,7 +287,7 @@ export function SettingsPage() {
       {tab === 'users' && <UsersTab key="users" />}
 
       {tab === 'general' && (
-        <Card title="Display currency">
+        <Card title={t('currency.title')}>
         <form
           className="form-row"
           onSubmit={(e) => {
@@ -288,7 +301,7 @@ export function SettingsPage() {
               setCurrency(e.target.value);
               setCurrencySaved(false);
             }}
-            aria-label="Base display currency"
+            aria-label={t('currency.selectAria')}
             disabled={baseCurrency.loading || currencySaving}
           >
             {COMMON_CURRENCIES.map((c) => (
@@ -298,17 +311,12 @@ export function SettingsPage() {
             ))}
           </select>
           <Button type="submit" disabled={currencySaving || baseCurrency.loading}>
-            {currencySaving ? 'Saving…' : 'Save'}
+            {currencySaving ? t('currency.saving') : t('currency.save')}
           </Button>
         </form>
-        <p className="hint-text">
-          Totals on the dashboard, budgets and bill analysis are shown in this
-          currency; each bill keeps the currency printed on its receipt and is
-          converted using ECB reference rates. Bills in other currencies cannot
-          be converted while offline — those totals show 1:1 with a warning.
-        </p>
+        <p className="hint-text">{t('currency.hint')}</p>
         {currencyError && <ErrorMessage message={currencyError} />}
-        {currencySaved && <div className="hint-banner">Saved ✓</div>}
+        {currencySaved && <div className="hint-banner">{t('currency.saved')}</div>}
         </Card>
       )}
 
@@ -316,49 +324,59 @@ export function SettingsPage() {
         <>
 
       <p className="hint-text">
-        These connectors read receipt photos during bill scanning and search
-        current prices for the purchase cart. Mark one as default for bill
-        reads and/or one as default for web search; a purpose without a marked
-        connector uses any configured one. Keys are encrypted server-side and
-        never returned in full — the masked value (••••abcd) only shows the
-        last four characters. Leave the key field empty to keep the stored key.{' '}
-        <Link to="/settings/prompts">Manage AI prompts</Link> — the instruction
-        texts these connectors receive.
+        {t('connectors.hint')}{' '}
+        <Link to="/settings/prompts">{t('connectors.managePrompts')}</Link>{' '}
+        {t('connectors.promptLinkSuffix')}
       </p>
 
       {current.length === 0 ? (
-        <EmptyState message="No connectors configured yet. Add one to start scanning bills." />
+        <EmptyState message={t('connectors.empty')} />
       ) : (
         <ItemPanels>
           {current.map((d) => (
             <ItemPanel
               key={d.id ?? d.key}
-              title={providerTypes.find((t) => t.value === d.type)?.label ?? d.type}
+              title={
+                providerTypeLabels[d.type]
+                  ? t(providerTypeLabels[d.type])
+                  : d.type
+              }
               subtitle={
                 <>
-                  {d.model || 'model not set'}
-                  {d.default_for_bills && <span className="default-badge"> ★ bills</span>}
-                  {d.default_for_search && <span className="default-badge"> ★ search</span>}
+                  {d.model || t('connectors.modelNotSet')}
+                  {d.default_for_bills && (
+                    <span className="default-badge"> {t('connectors.badgeBills')}</span>
+                  )}
+                  {d.default_for_search && (
+                    <span className="default-badge"> {t('connectors.badgeSearch')}</span>
+                  )}
                 </>
               }
-              value={testResults[d.id as string]?.ok ? '✓' : d.id ? undefined : 'new'}
+              value={
+                testResults[d.id as string]?.ok
+                  ? '✓'
+                  : d.id
+                    ? undefined
+                    : t('connectors.newBadge')
+              }
             >
               <div className="form-grid">
               <label>
-                Type
+                {t('connectors.typeLabel')}
                 <select
                   value={d.type}
                   onChange={(e) => update(d.key, { type: e.target.value as AIProviderType })}
                 >
-                  {providerTypes.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
+                  {providerTypes.map((pt) => (
+                    <option key={pt.value} value={pt.value}>
+                      {t(pt.labelKey)}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                Base URL <span className="hint-inline">(blank = default)</span>
+                {t('connectors.baseUrlLabel')}{' '}
+                <span className="hint-inline">{t('connectors.baseUrlBlank')}</span>
                 <input
                   value={d.base_url}
                   placeholder={baseUrlPlaceholder[d.type]}
@@ -366,26 +384,31 @@ export function SettingsPage() {
                 />
               </label>
               <label>
-                API key{' '}
+                {t('connectors.apikeyLabel')}{' '}
                 {d.type === 'ollama_web_search' && (
                   <span className="hint-inline">
-                    required — ollama.com key (ollama.com/settings/keys); powers
-                    web search for offer searches
+                    {t('connectors.webSearchKeyHint')}
                   </span>
                 )}
                 {d.stored_key_mask && (
-                  <span className="hint-inline">stored: {d.stored_key_mask}</span>
+                  <span className="hint-inline">
+                    {t('connectors.storedKey', { mask: d.stored_key_mask })}
+                  </span>
                 )}
                 <input
                   type="password"
                   value={d.api_key}
-                  placeholder={d.stored_key_mask ? 'Leave empty to keep stored key' : 'API key'}
+                  placeholder={
+                    d.stored_key_mask
+                      ? t('connectors.keyPlaceholderKeep')
+                      : t('connectors.keyPlaceholder')
+                  }
                   autoComplete="off"
                   onChange={(e) => update(d.key, { api_key: e.target.value })}
                 />
               </label>
               <label>
-                Model
+                {t('connectors.modelLabel')}
                 <input
                   value={d.model}
                   placeholder={modelPlaceholder[d.type]}
@@ -393,7 +416,7 @@ export function SettingsPage() {
                 />
               </label>
               <label className="default-radio">
-                Default for bill reads
+                {t('connectors.defaultBills')}
                 <input
                   type="checkbox"
                   checked={d.default_for_bills}
@@ -401,7 +424,7 @@ export function SettingsPage() {
                 />
               </label>
               <label className="default-radio">
-                Default for web search
+                {t('connectors.defaultSearch')}
                 <input
                   type="checkbox"
                   checked={d.default_for_search}
@@ -417,13 +440,13 @@ export function SettingsPage() {
                   onClick={() => handleTest(d)}
                   disabled={testing !== null}
                 >
-                  {testing === d.id ? 'Testing…' : 'Test connection'}
+                  {testing === d.id ? t('connectors.testing') : t('connectors.testConnection')}
                 </Button>
               ) : (
-                <span className="hint-inline">Save first to test the connection.</span>
+                <span className="hint-inline">{t('connectors.saveFirstTest')}</span>
               )}
               <Button variant="danger" onClick={() => removeProvider(d.key)}>
-                Remove
+                {t('connectors.remove')}
               </Button>
             </div>
 
@@ -432,9 +455,9 @@ export function SettingsPage() {
               const result = testResults[d.id];
               if (!result) return null;
               return result.ok ? (
-                <div className="hint-banner">Connection OK ✓</div>
+                <div className="hint-banner">{t('connectors.testOk')}</div>
               ) : (
-                <ErrorMessage message={result.error ?? 'Connection failed.'} />
+                <ErrorMessage message={result.error ?? t('connectors.testFailed')} />
               );
             })()}
             </ItemPanel>
@@ -446,10 +469,10 @@ export function SettingsPage() {
 
       <div className="camera-row">
         <Button variant="secondary" onClick={addProvider} disabled={saving}>
-          + Add connector
+          {t('connectors.add')}
         </Button>
         <Button onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : 'Save all'}
+          {saving ? t('connectors.saving') : t('connectors.saveAll')}
         </Button>
       </div>
         </>
@@ -458,31 +481,24 @@ export function SettingsPage() {
       {tab === 'normalization' && (
         <>
 
-      <Card title="Analyze existing products">
-        <p className="hint-text">
-          Raw product names stay exactly as the market printed them — the
-          normalization memory maps each raw text to a standardized,
-          human-readable name (e.g. “WHL MLK 1L” → “Whole Milk 1L”) and a
-          generic product family (e.g. “Frozen Shaped Potatoes”). This
-          analysis sends the raw names of products that have no mapping yet
-          — or no recorded family — to the connector flagged as default for
-          bill reads, in batches, and records the suggestions. Product rows
-          are never modified.
-        </p>
+      <Card title={t('normalization.title')}>
+        <p className="hint-text">{t('normalization.hint')}</p>
         {job?.status === 'running' ? (
           <p className="hint-text">
-            Standardizing… {job.processed_names} of {job.total_names} raw
-            names ({job.mapped_names} mapped so far)
+            {t('normalization.running', {
+              processed: job.processed_names,
+              total: job.total_names,
+              mapped: job.mapped_names,
+            })}
           </p>
         ) : job?.status === 'done' ? (
           <p className="hint-text">
-            ✓ Last run finished: {job.mapped_names} of {job.total_names} raw
-            names mapped.
+            {t('normalization.done', { mapped: job.mapped_names, total: job.total_names })}
           </p>
         ) : job?.status === 'failed' ? (
-          <ErrorMessage message={job.error || 'The last analysis failed.'} />
+          <ErrorMessage message={job.error || t('normalization.lastFailed')} />
         ) : (
-          <p className="hint-text">No analysis has been run yet.</p>
+          <p className="hint-text">{t('normalization.notRun')}</p>
         )}
         {jobError && <ErrorMessage message={jobError} />}
         <div className="camera-row">
@@ -491,10 +507,10 @@ export function SettingsPage() {
             disabled={jobStarting || jobRunning || job?.status === 'running'}
           >
             {jobRunning || job?.status === 'running'
-              ? 'Analyzing…'
+              ? t('normalization.analyzing')
               : job?.status === 'done'
-                ? 'Run again (new products only)'
-                : 'Analyze existing products'}
+                ? t('normalization.runAgain')
+                : t('normalization.runNow')}
           </Button>
         </div>
       </Card>

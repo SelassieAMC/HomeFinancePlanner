@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useTranslation } from 'react-i18next';
 import type { StorePriceIndex, StorePriceIndexRow } from '../../../types/analytics';
 import { ChartCard } from './ChartCard';
 import { rangeLabel } from '../../../lib/date';
@@ -25,15 +26,16 @@ interface Props {
  *  marks the overall average. One hue — rank is shown by position, and the
  *  tooltip carries the sample size. */
 export function StorePriceIndexChart({ data, loading, error }: Props) {
+  const { t } = useTranslation('dashboard');
   const rows: StorePriceIndexRow[] = data?.rows ?? [];
   return (
     <ChartCard
-      title="Store Price Efficiency"
-      subtitle="Average price of overlapping products, 100 = overall average. Lower is cheaper."
+      title={t('storePriceIndex.title')}
+      subtitle={t('storePriceIndex.subtitle')}
       window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
-      emptyMessage="Not enough overlapping products across stores in this period."
+      emptyMessage={t('storePriceIndex.empty')}
       empty={rows.length === 0}
     >
       <div className="chart-body">
@@ -53,13 +55,13 @@ export function StorePriceIndexChart({ data, loading, error }: Props) {
                 <ChartTooltip
                   format={(v, e) => {
                     const row = e.payload as StorePriceIndexRow | undefined;
-                    return `${Number(v).toFixed(1)}% · ${row?.product_count ?? 0} products`;
+                    return `${Number(v).toFixed(1)}% · ${t('storePriceIndex.tooltip.products', { count: row?.product_count ?? 0 })}`;
                   }}
                 />
               }
             />
             <ReferenceLine x={100} stroke="var(--text-muted)" strokeDasharray="4 4" />
-            <Bar dataKey="index" name="Price index" radius={[0, 4, 4, 0]} maxBarSize={22}>
+            <Bar dataKey="index" name={t('storePriceIndex.series.priceIndex')} radius={[0, 4, 4, 0]} maxBarSize={22}>
               {rows.map((row) => (
                 <Cell key={row.store_id} fill="var(--chart-1)" />
               ))}
@@ -70,7 +72,7 @@ export function StorePriceIndexChart({ data, loading, error }: Props) {
       <div className="chart-legend">
         <span>
           <span className="chart-legend-swatch" style={{ background: 'var(--text-muted)' }} />
-          100% = average price
+          {t('storePriceIndex.legend')}
         </span>
       </div>
     </ChartCard>

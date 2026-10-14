@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { AsyncState } from '../../hooks/useAsync';
 import { Card } from '../../components/ui';
 import { formatCents } from '../../lib/money';
@@ -11,6 +12,7 @@ import type { GoalStatus } from '../../types/domain';
  * transfers into it.
  */
 export function GoalsBody({ goals }: { goals: AsyncState<GoalStatus[]> }) {
+  const { t } = useTranslation('dashboard');
   if (!goals.data) return null;
   const rows: GoalStatus[] = [...goals.data].sort(
     (a, b) => (a.achieved ? 1 : 0) - (b.achieved ? 1 : 0) || a.name.localeCompare(b.name),
@@ -42,8 +44,10 @@ export function GoalsBody({ goals }: { goals: AsyncState<GoalStatus[]> }) {
             </div>
             <div className={g.achieved ? 'budget-status ok' : 'budget-status'}>
               {g.achieved
-                ? 'Goal reached'
-                : `${formatCents(remaining, g.currency)} to go${g.target_date ? ` · by ${g.target_date}` : ''}`}
+                ? t('goals.reached')
+                : g.target_date
+                  ? t('goals.toGoBy', { amount: formatCents(remaining, g.currency), date: g.target_date })
+                  : t('goals.toGo', { amount: formatCents(remaining, g.currency) })}
             </div>
           </Card>
         );

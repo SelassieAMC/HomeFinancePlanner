@@ -1,4 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Tabs, type TabDef } from '../../components/ui';
 import { BudgetsPage } from '../budgets/BudgetsPage';
 import { GoalsPage } from '../goals/GoalsPage';
@@ -12,14 +13,10 @@ import { SchedulesPage } from '../schedules/SchedulesPage';
 // /goals /bags routes redirect here.
 export type PlanningTab = 'budgets' | 'goals' | 'bags' | 'schedules';
 
-const TABS: TabDef<PlanningTab>[] = [
-  { key: 'budgets', label: 'Budgets' },
-  { key: 'goals', label: 'Goals' },
-  { key: 'bags', label: 'Bags' },
-  { key: 'schedules', label: 'Scheduled' },
-];
+const TAB_KEYS: readonly PlanningTab[] = ['budgets', 'goals', 'bags', 'schedules'];
 
 export function PlanningPage() {
+  const { t } = useTranslation('planning');
   const [params, setParams] = useSearchParams();
   const raw = params.get('tab');
   const tab: PlanningTab = raw === 'goals' || raw === 'bags' || raw === 'schedules' ? raw : 'budgets';
@@ -30,10 +27,15 @@ export function PlanningPage() {
     window.scrollTo({ top: 0 });
   }
 
+  const tabs: TabDef<PlanningTab>[] = TAB_KEYS.map((key) => ({
+    key,
+    label: t(`tabs.${key}`),
+  }));
+
   return (
     <div className="page">
-      <h2 className="page-title">Planning</h2>
-      <Tabs tabs={TABS} active={tab} onChange={select} ariaLabel="Planning sections" />
+      <h2 className="page-title">{t('title')}</h2>
+      <Tabs tabs={tabs} active={tab} onChange={select} ariaLabel={t('tabs_aria')} />
       {tab === 'budgets' && <BudgetsPage embedded />}
       {tab === 'goals' && <GoalsPage embedded />}
       {tab === 'bags' && <BagsPage embedded />}

@@ -8,6 +8,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../../i18n';
+import { intlLocale } from '../../../i18n/core';
 import { ChartTooltip } from './ChartTooltip';
 import type { PriceIndex } from '../../../types/analytics';
 import { formatCents } from '../../../lib/money';
@@ -21,30 +24,39 @@ interface Props {
   error: Error | null;
 }
 
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
+/** "2026-10" → "Oct 26" — month name localized via Intl of the active UI
+ *  language (a malformed label stays as it came). */
 function monthLabel(month: string | number): string {
   const s = String(month);
-  const m = Number(s.slice(5, 7));
-  return `${MONTH_LABELS[m - 1] ?? s} ${s.slice(2, 4)}`;
+  const m = /^(\d{4})-(\d{2})/.exec(s);
+  if (!m) return s;
+  const name = new Date(Number(m[1]), Number(m[2] ?? 1) - 1, 1).toLocaleDateString(
+    intlLocale(i18n.language),
+    { month: 'short' },
+  );
+  return `${name} ${s.slice(2, 4)}`;
 }
 
 /** Median unit price of the top staple items, indexed to 100 at each series'
  *  first month — a personal CPI. The average is a heavier solid line; months
  *  without purchases break the line instead of dropping to the axis. */
 export function PersonalPriceIndexChart({ data, loading, error }: Props) {
+  const { t } = useTranslation('dashboard');
   const { rows, labels, unitPrices, units } = priceIndexRows(
     data ?? { from: '', to: '', base_month: '', currency: '', series: [], average: [], conversion_warnings: [] },
   );
   const currency = data?.currency ?? '';
   const latest = [...(data?.average ?? [])].reverse().find((p) => p.index !== null)?.index ?? null;
 
+  // The 'Average' series' row key stays the internal 'Average'; only the
+  // display name (line name, legend, tooltip) is translated.
+  const averageLabel = t('priceIndex.series.average');
   // Tooltip: index first, the absolute price when the month has one.
   const tooltip = (
     <ChartTooltip
       title={monthLabel}
       format={(v, entry, label) => {
-        const name = String(entry.name ?? '');
+        const name = String(entry.name ?? '') === averageLabel ? 'Average' : String(entry.name ?? '');
         const unit = units.get(name);
         const price = unitPrices.get(`${name}|${label ?? ''}`);
         const index = Number(v).toFixed(1);
@@ -57,12 +69,14 @@ export function PersonalPriceIndexChart({ data, loading, error }: Props) {
 
   return (
     <ChartCard
-      title="Personal Consumer Price Index"
-      subtitle={`Unit prices of your most-bought staples, indexed to 100 at ${data ? monthLabel(data.base_month) : 'the base month'}.`}
+      title={t('priceIndex.title')}
+      subtitle={t('priceIndex.subtitle', {
+        base: data ? monthLabel(data.base_month) : t('priceIndex.baseFallback'),
+      })}
       window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
-      emptyMessage="No staple items purchased regularly in the last 12 months."
+      emptyMessage={t('priceIndex.empty')}
       empty={data === null || data.series.length === 0}
     >
       <div className="chart-body">
@@ -87,7 +101,7 @@ export function PersonalPriceIndexChart({ data, loading, error }: Props) {
                   key={name}
                   type="monotone"
                   dataKey={name}
-                  name={name}
+                  name={isAverage ? averageLabel : name}
                   stroke={isAverage ? 'var(--text)' : `var(--chart-${(i % 8) + 1})`}
                   strokeWidth={isAverage ? 2.5 : 1.5}
                   dot={false}
@@ -102,8 +116,8 @@ export function PersonalPriceIndexChart({ data, loading, error }: Props) {
       {latest !== null && (
         <div className="chart-legend">
           <span>
-            Latest average index: <strong>{latest.toFixed(1)}</strong>
-            {latest > 105 ? ' — prices rising' : latest < 95 ? ' — prices falling' : ' — stable'}
+            {t('priceIndex.latest.prefix')} <strong>{latest.toFixed(1)}</strong>{' '}
+            {latest > 105 ? t('priceIndex.latest.rising') : latest < 95 ? t('priceIndex.latest.falling') : t('priceIndex.latest.stable')}
           </span>
         </div>
       )}

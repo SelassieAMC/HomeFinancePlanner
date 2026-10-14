@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { productsApi } from '../../api/products';
 import { formatCents } from '../../lib/money';
@@ -16,6 +17,7 @@ export function ProductDetailsModal({
   product: Product;
   onClose: () => void;
 }) {
+  const { t } = useTranslation('products');
   const prices = useAsync(() => productsApi.storePrices(product.id), [product.id]);
   const currency = product.price_currency ?? '';
 
@@ -48,11 +50,11 @@ export function ProductDetailsModal({
 
       <div className="item-field-grid">
         <div className="item-field">
-          <span>Measure</span>
+          <span>{t('labels.measure')}</span>
           <span>{product.unit ? (product.unit_value ? `${product.unit_value} ${product.unit}` : product.unit) : '—'}</span>
         </div>
         <div className="item-field">
-          <span>Best price</span>
+          <span>{t('labels.bestPrice')}</span>
           <strong>
             {product.best_price_cents !== undefined && currency
               ? formatCents(product.best_price_cents, currency)
@@ -61,35 +63,35 @@ export function ProductDetailsModal({
         </div>
         {perUnit && (
           <div className="item-field">
-            <span>Price per unit</span>
+            <span>{t('labels.pricePerUnit')}</span>
             <strong>{perUnit}</strong>
           </div>
         )}
         <div className="item-field">
-          <span>Last purchased</span>
+          <span>{t('labels.lastPurchased')}</span>
           <span>{product.last_purchase_date || '—'}</span>
         </div>
         <div className="item-field">
-          <span>Times bought</span>
+          <span>{t('labels.timesBought')}</span>
           <strong>{product.times_bought}</strong>
         </div>
       </div>
 
-      <h4 className="product-details-heading">Prices by store</h4>
+      <h4 className="product-details-heading">{t('details.pricesByStore')}</h4>
       {prices.loading && !prices.data ? (
-        <Spinner label="Loading store prices…" />
+        <Spinner label={t('details.loadingPrices')} />
       ) : prices.error ? (
         <ErrorMessage message={prices.error.message} />
       ) : (prices.data ?? []).length === 0 ? (
-        <p className="product-details-empty">No store prices recorded yet.</p>
+        <p className="product-details-empty">{t('details.noPrices')}</p>
       ) : (
         <div className="table-scroll">
           <table className="data-table store-prices-table">
             <thead>
               <tr>
-                <th>Store</th>
-                <th className="num">Latest price</th>
-                <th>Last bought</th>
+                <th>{t('columns.store')}</th>
+                <th className="num">{t('columns.latestPrice')}</th>
+                <th>{t('columns.lastBought')}</th>
               </tr>
             </thead>
             <tbody>
@@ -113,7 +115,7 @@ export function ProductDetailsModal({
 
       <div className="dialog-actions">
         <Button variant="ghost" onClick={onClose}>
-          Close
+          {t('actions.close')}
         </Button>
       </div>
     </Dialog>

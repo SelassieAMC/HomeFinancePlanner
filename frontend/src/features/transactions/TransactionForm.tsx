@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { Account, Category, Store, Transaction, TransactionInput, TransactionKind } from '../../types/domain';
 import { productsApi } from '../../api/products';
 import { bagsApi } from '../../api/bags';
@@ -103,6 +104,7 @@ function lineCents(line: LineDraft, categories: Category[]): number {
 }
 
 export function TransactionForm({ accounts, categories, stores, mode, initial, onSubmit, onCancel }: Props) {
+  const { t } = useTranslation('transactions');
   const [kind, setKind] = useState<TransactionKind>(initial?.kind ?? 'expense');
   const [date, setDate] = useState(initial?.date ?? new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState(initial ? (initial.amount_cents / 100).toString() : '');
@@ -236,32 +238,32 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
     if (!Number.isFinite(amountCents) || amountCents <= 0) {
       setFormError(
         hasLines
-          ? 'Complete the item lines so the amount is positive. Pure money back is recorded as an income transaction without item lines.'
-          : 'Enter a positive amount.',
+          ? t('form.error.linesIncomplete')
+          : t('form.error.positiveAmount'),
       );
       return;
     }
     if (!accountId) {
-      setFormError('Choose an account.');
+      setFormError(t('form.error.chooseAccount'));
       return;
     }
     if (isTransfer && !counterAccountId) {
-      setFormError('Choose the destination account of the transfer.');
+      setFormError(t('form.error.transferDestination'));
       return;
     }
     if (isTransfer && counterAccountId === accountId) {
-      setFormError('The transfer needs two different accounts.');
+      setFormError(t('form.error.twoAccounts'));
       return;
     }
     const items = [];
     for (const line of lines) {
       if (line.name.trim() === '') {
-        setFormError('Give every item a name, or remove the empty line.');
+        setFormError(t('form.error.lineName'));
         return;
       }
       const total = lineCents(line, categories);
       if (Number.isNaN(total)) {
-        setFormError(`Complete the numbers for “${line.name || 'unnamed item'}”.`);
+        setFormError(t('form.error.numbers', { name: line.name || t('form.unnamed') }));
         return;
       }
       const price = dollarsToCents(line.price);
@@ -275,7 +277,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       // else must not go negative (the backend rejects it).
       if (!lineAllowsNegative(line, categories) && (price < 0 || discount < 0)) {
         setFormError(
-          `Prices for “${line.name || 'unnamed item'}” must not be negative — file it under “Deposit & Returns” to record money back.`,
+          t('form.error.negativePrice', { name: line.name || t('form.unnamed') }),
         );
         return;
       }
@@ -306,7 +308,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         items: items.length > 0 && !isTransfer ? items : undefined,
       });
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save the transaction.');
+      setFormError(err instanceof Error ? err.message : t('form.error.save'));
     } finally {
       setBusy(false);
     }
@@ -316,14 +318,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
     <form className="form-stack" onSubmit={handleSubmit}>
       {/* The kind toggle replaces the old kind select — expense/income/transfer
           is a three-way switch, and item lines pin it to expense. */}
-      <div className="segmented" role="group" aria-label="Kind">
+      <div className="segmented" role="group" aria-label={t('form.kindAria')}>
         <button
           type="button"
           className={kind === 'expense' ? 'active' : ''}
           aria-pressed={kind === 'expense'}
           onClick={() => setKind('expense')}
         >
-          Expense
+          {t('form.kindExpense')}
         </button>
         <button
           type="button"
@@ -332,7 +334,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           disabled={hasLines}
           onClick={() => setKind('income')}
         >
-          Income{hasLines ? ' (no items)' : ''}
+          {t('form.kindIncome')}{hasLines ? t('form.noItems') : ''}
         </button>
         <button
           type="button"
@@ -341,12 +343,12 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           disabled={hasLines}
           onClick={() => setKind('transfer')}
         >
-          Transfer{hasLines ? ' (no items)' : ''}
+          {t('form.kindTransfer')}{hasLines ? t('form.noItems') : ''}
         </button>
       </div>
       <div className="form-grid">
         <label>
-          Date
+          {t('form.label.date')}
           <input
             type="date"
             value={date}
@@ -357,26 +359,26 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           />
         </label>
         <label>
-          Amount
+          {t('form.label.amount')}
           <input
-            placeholder={hasLines ? 'From items' : '0.00'}
+            placeholder={hasLines ? t('form.placeholder.fromItems') : '0.00'}
             inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             required
             readOnly={hasLines}
-            title={hasLines ? 'Calculated from the item lines' : undefined}
-            aria-label={hasLines ? 'Amount (calculated from items)' : 'Amount'}
+            title={hasLines ? t('form.amountCalcTitle') : undefined}
+            aria-label={hasLines ? t('form.aria.amountCalc') : t('form.aria.amount')}
           />
         </label>
         <label>
-          {isTransfer ? 'From account' : 'Account'}
+          {isTransfer ? t('form.label.fromAccount') : t('form.label.account')}
           <select
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
             required
           >
-            <option value="">Account…</option>
+            <option value="">{t('form.placeholder.account')}</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} ({a.currency})
@@ -386,14 +388,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         </label>
         {isTransfer ? (
           <label>
-            To account
+            {t('form.label.toAccount')}
             <select
               value={counterAccountId}
               onChange={(e) => setCounterAccountId(e.target.value)}
-              aria-label="Destination account"
+              aria-label={t('form.aria.destinationAccount')}
               required
             >
-              <option value="">To account…</option>
+              <option value="">{t('form.placeholder.toAccount')}</option>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} ({a.currency})
@@ -403,26 +405,26 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           </label>
         ) : (
           <label>
-            Category
+            {t('form.label.category')}
             <CategorySelect
               categories={categories}
               kind="expense"
               value={categoryId ? Number(categoryId) : null}
               onChange={(id) => setCategoryId(id ? String(id) : '')}
-              ariaLabel="Category"
-              emptyLabel="Category…"
+              ariaLabel={t('form.label.category')}
+              emptyLabel={t('form.placeholder.category')}
             />
           </label>
         )}
         {kind === 'expense' && accountBags.length > 0 && (
           <label>
-            From bag
+            {t('form.label.fromBag')}
             <select
               value={bagId}
               onChange={(e) => setBagId(e.target.value)}
-              aria-label="From bag (optional)"
+              aria-label={t('form.aria.fromBag')}
             >
-              <option value="">No bag</option>
+              <option value="">{t('form.option.noBag')}</option>
               {accountBags.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -433,14 +435,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         )}
         {!isTransfer && (
           <label>
-            Store
+            {t('form.label.store')}
           {customStore ? (
             <input
               autoFocus
-              placeholder="New market…"
+              placeholder={t('form.placeholder.newMarket')}
               value={customStoreName}
               onChange={(e) => setCustomStoreName(e.target.value)}
-              aria-label="New market name"
+              aria-label={t('form.aria.newMarket')}
               onBlur={() => {
                 // Nothing typed → back to the store list.
                 if (customStoreName.trim() === '') setCustomStore(false);
@@ -456,9 +458,9 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 }
                 setStoreId(e.target.value);
               }}
-              aria-label="Store (optional)"
+              aria-label={t('form.aria.store')}
             >
-              <option value="">No store</option>
+              <option value="">{t('form.option.noStore')}</option>
               {sortedStores.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -469,19 +471,19 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               {initial?.store_name && !pickedStore && (
                 <option value={initial.store_name}>{initial.store_name}</option>
               )}
-              <option value="__custom__">+ Add market…</option>
+              <option value="__custom__">{t('form.option.addMarket')}</option>
             </select>
           )}
         </label>
         )}
         <label>
-          Description
+          {t('form.label.description')}
           <input
-            placeholder="Optional note"
+            placeholder={t('form.placeholder.note')}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             maxLength={500}
-            aria-label="Description"
+            aria-label={t('form.aria.description')}
           />
         </label>
       </div>
@@ -489,8 +491,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       {isTransfer && transferAccount &&
         accounts.find((a) => String(a.id) === accountId)?.currency !== transferAccount.currency && (
           <p className="hint-inline">
-            Cross-currency transfer — the amount is recorded in the source
-            account's currency ({currency}).
+            {t('form.crossCurrency', { currency })}
           </p>
         )}
 
@@ -498,9 +499,9 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       {!isTransfer && (
       <div className="transaction-lines">
         <div className="transaction-lines-header">
-          <span>Items {hasLines ? '' : '(optional)'}</span>
+          <span>{t('form.lines.header')} {hasLines ? '' : t('form.lines.optional')}</span>
           <Button type="button" variant="secondary" className="btn-sm" onClick={() => setLines((ls) => [...ls, newLine()])}>
-            + Add item
+            {t('form.lines.addItem')}
           </Button>
         </div>
         {lines.map((line, i) => {
@@ -528,8 +529,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 }}
                 onBlur={() => void lookupNormalization(line)}
                 currency={currency}
-                placeholder={`Item ${i + 1} name`}
-                ariaLabel={`Item ${i + 1} name`}
+                placeholder={t('form.placeholder.itemName', { n: i + 1 })}
+                ariaLabel={t('form.placeholder.itemName', { n: i + 1 })}
               />
               <input
                 className="transaction-line-num"
@@ -537,21 +538,21 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 inputMode="decimal"
                 value={line.qty}
                 onChange={(e) => updateLine(line.key, { qty: e.target.value })}
-                aria-label={`Item ${i + 1} quantity`}
-                placeholder="Qty"
+                aria-label={t('form.lines.qtyAria', { n: i + 1 })}
+                placeholder={t('form.lines.qty')}
               />
               <div className="unit-value-row">
                 <UnitSelect
                   value={line.unit}
                   onChange={(unit) => updateLine(line.key, { unit })}
-                  ariaLabel={`Item ${i + 1} unit`}
+                  ariaLabel={t('form.lines.unitAria', { n: i + 1 })}
                 />
                 <input
                   type="text"
                   inputMode="decimal"
                   value={line.unit_value}
                   onChange={(e) => updateLine(line.key, { unit_value: e.target.value })}
-                  aria-label={`Item ${i + 1} size value`}
+                  aria-label={t('form.lines.sizeAria', { n: i + 1 })}
                   placeholder="500"
                 />
               </div>
@@ -560,23 +561,23 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 inputMode="decimal"
                 value={line.price}
                 onChange={(e) => updateLine(line.key, { price: e.target.value })}
-                aria-label={`Item ${i + 1} unit price`}
-                placeholder="Price"
+                aria-label={t('form.lines.unitPriceAria', { n: i + 1 })}
+                placeholder={t('form.lines.price')}
               />
               <input
                 className="transaction-line-num"
                 inputMode="decimal"
                 value={line.discount}
                 onChange={(e) => updateLine(line.key, { discount: e.target.value })}
-                aria-label={`Item ${i + 1} discount`}
-                placeholder="Disc."
+                aria-label={t('form.lines.discountAria', { n: i + 1 })}
+                placeholder={t('form.lines.discount')}
               />
               <CategorySelect
                 categories={categories}
                 kind="product"
                 value={line.category_id}
                 onChange={(id) => updateLine(line.key, { category_id: id })}
-                ariaLabel={`Item ${i + 1} product category`}
+                ariaLabel={t('form.lines.categoryAria', { n: i + 1 })}
               />
               <span className="transaction-line-total">
                 {Number.isNaN(total) ? '—' : formatCents(total, currency)}
@@ -584,7 +585,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               <Button
                 type="button"
                 variant="ghost"
-                aria-label={`Remove item ${i + 1}`}
+                aria-label={t('form.lines.removeAria', { n: i + 1 })}
                 onClick={() => setLines((ls) => ls.filter((l) => l.key !== line.key))}
               >
                 ✕
@@ -592,13 +593,13 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               {line.normalizedName &&
                 line.normalizedName.toLowerCase() !== line.name.trim().toLowerCase() && (
                   <span className="transaction-line-normalized">
-                    ↳ known as “{line.normalizedName}”
-                    {line.normalizedGeneric && ` · family “${line.normalizedGeneric}”`}
+                    {t('form.lines.knownAs', { name: line.normalizedName })}
+                    {line.normalizedGeneric && ` · ${t('form.lines.knownFamily', { family: line.normalizedGeneric })}`}
                   </span>
                 )}
               {!line.normalizedName && line.normalizedGeneric && (
                 <span className="transaction-line-normalized">
-                  ↳ family “{line.normalizedGeneric}”
+                  {t('form.lines.family', { family: line.normalizedGeneric })}
                 </span>
               )}
             </div>
@@ -606,7 +607,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         })}
         {hasLines && (
           <div className="transaction-lines-footer">
-            <span>Items total</span>
+            <span>{t('form.lines.total')}</span>
             <strong>{formatCents(itemsTotal, currency)}</strong>
           </div>
         )}
@@ -618,11 +619,11 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       <div className="form-actions">
         {onCancel && (
           <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
-            Cancel
+            {t('form.action.cancel')}
           </Button>
         )}
         <Button type="submit" disabled={busy}>
-          {busy ? 'Saving…' : mode === 'create' ? 'Add transaction' : 'Save changes'}
+          {busy ? t('form.action.saving') : mode === 'create' ? t('form.action.add') : t('form.action.save')}
         </Button>
       </div>
     </form>

@@ -1,10 +1,14 @@
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 
-export function Spinner({ label = 'Loading…' }: { label?: string }) {
+// The default loading label resolves at render time so the spinner text
+// follows the active language; callers may still override `label`.
+export function Spinner({ label }: { label?: string }) {
+  const { t } = useTranslation('common');
   return (
     <div className="spinner-wrap" role="status" aria-live="polite">
       <span className="spinner" aria-hidden="true" />
-      <span>{label}</span>
+      <span>{label ?? t('loading')}</span>
     </div>
   );
 }

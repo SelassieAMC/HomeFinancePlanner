@@ -17,7 +17,7 @@ func NewUserRepository(db *sql.DB) *UserRepository { return &UserRepository{db: 
 
 const userColumns = `
 	u.id, u.username, u.full_name, u.password_hash, u.photo_path, u.is_admin,
-	u.created_at, u.updated_at`
+	u.locale, u.created_at, u.updated_at`
 
 const userFrom = `FROM users u`
 
@@ -82,13 +82,14 @@ func (r *UserRepository) FindByUsername(ctx context.Context, username string) (d
 
 // Create inserts a user and returns it with its id and timestamps filled in.
 // The username's UNIQUE NOCASE index turns a collision into domain.ErrConflict
-// via mapWriteError.
+// via mapWriteError. An empty Locale stores the column default (NULLIF/COALESCE
+// keeps the zero value from overriding it — an explicit '' would).
 func (r *UserRepository) Create(ctx context.Context, u domain.User) (domain.User, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO users (username, full_name, password_hash, photo_path, is_admin, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		u.Username, u.FullName, u.PasswordHash, u.PhotoPath, boolInt(u.IsAdmin), now, now)
+		INSERT INTO users (username, full_name, password_hash, photo_path, is_admin, locale, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), ?), ?, ?)`,
+		u.Username, u.FullName, u.PasswordHash, u.PhotoPath, boolInt(u.IsAdmin), u.Locale, domain.DefaultLocale, now, now)
 	if err != nil {
 		return domain.User{}, mapWriteError("create user", err)
 	}
@@ -143,6 +144,21 @@ func (r *UserRepository) AdminUpdate(ctx context.Context, id int64, username, fu
 	return r.GetByID(ctx, id)
 }
 
+// UpdateLocale rewrites the UI-language preference ('en'/'de'/'es' — the
+// service validates before calling).
+func (r *UserRepository) UpdateLocale(ctx context.Context, id int64, locale string) (domain.User, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE users SET locale = ?, updated_at = ? WHERE id = ?`,
+		locale, time.Now().Unix(), id)
+	if err != nil {
+		return domain.User{}, mapWriteError("update user locale", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.User{}, domain.ErrNotFound
+	}
+	return r.GetByID(ctx, id)
+}
+
 // SetPhoto stores (or clears, with an empty path) the avatar file path.
 func (r *UserRepository) SetPhoto(ctx context.Context, id int64, photoPath string) (domain.User, error) {
 	res, err := r.db.ExecContext(ctx, `
@@ -175,17 +191,19 @@ func scanUser(row interface{ Scan(...any) error }) (domain.User, error) {
 		hash    string
 		photo   string
 		isAdmin int64
+		locale  string
 		created int64
 		updated int64
 	)
 	if err := row.Scan(&u.ID, &u.Username, &u.FullName, &hash, &photo, &isAdmin,
-		&created, &updated); err != nil {
+		&locale, &created, &updated); err != nil {
 		return domain.User{}, err
 	}
 	u.PasswordHash = hash
 	u.PhotoPath = photo
 	u.HasPhoto = photo != ""
 	u.IsAdmin = isAdmin != 0
+	u.Locale = locale
 	u.CreatedAt = time.Unix(created, 0).UTC()
 	u.UpdatedAt = time.Unix(updated, 0).UTC()
 	return u, nil

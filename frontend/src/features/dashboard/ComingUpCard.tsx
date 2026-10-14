@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTranslation, Trans } from 'react-i18next';
 import { Button, Card, ErrorMessage } from '../../components/ui';
 import { schedulesApi } from '../../api/schedules';
 import { useAsync } from '../../hooks/useAsync';
@@ -20,16 +21,15 @@ function dueWindow(today: string): string {
   return `${limit.getFullYear()}-${String(limit.getMonth() + 1).padStart(2, '0')}-${String(limit.getDate()).padStart(2, '0')}`;
 }
 
-function dueLabel(due: string, today: string): string {
-  if (due < today) return 'Overdue';
-  if (due === today) return 'Today';
-  const days = Math.round(
+/** Days until the due date (past dates land on ≤ 0). */
+function daysUntil(due: string, today: string): number {
+  return Math.round(
     (new Date(`${due}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86400000,
   );
-  return days === 1 ? 'Tomorrow' : `In ${days} days`;
 }
 
 export function ComingUpCard() {
+  const { t } = useTranslation('dashboard');
   const today = todayISO();
   const runs = useAsync(() => schedulesApi.runs({ status: ['pending'], due_to: dueWindow(today), limit: 50 }), []);
   const [busy, setBusy] = useState(false);
@@ -53,14 +53,14 @@ export function ComingUpCard() {
 
   if (runs.loading) {
     return (
-      <Card title="Coming up" className="insights-card">
-        <p className="hint-text">Checking the planner…</p>
+      <Card title={t('comingUp.title')} className="insights-card">
+        <p className="hint-text">{t('comingUp.loading')}</p>
       </Card>
     );
   }
   if (runs.error) {
     return (
-      <Card title="Coming up" className="insights-card">
+      <Card title={t('comingUp.title')} className="insights-card">
         <ErrorMessage message={runs.error.message} />
       </Card>
     );
@@ -69,27 +69,34 @@ export function ComingUpCard() {
 
   const overduePresent = rows.some((r) => r.due_date < today);
 
+  const dueLabel = (due: string): string => {
+    if (due < today) return t('comingUp.due.overdue');
+    if (due === today) return t('comingUp.due.today');
+    const days = daysUntil(due, today);
+    return days === 1 ? t('comingUp.due.tomorrow') : t('comingUp.due.inDays', { count: days });
+  };
+
   return (
-    <Card title="Coming up" className="insights-card">
+    <Card title={t('comingUp.title')} className="insights-card">
       <div className="insight-list">
         {rows.map((run) => (
           <div key={run.id} className="insight-row">
-            <span className={run.due_date < today ? 'badge danger' : 'badge'}>{dueLabel(run.due_date, today)}</span>
+            <span className={run.due_date < today ? 'badge danger' : 'badge'}>{dueLabel(run.due_date)}</span>
             <div className="insight-body">
               <span className="insight-message">
                 <strong>{run.action_name}</strong>
                 {' — '}
                 {run.kind === 'purchase'
-                  ? 'checklist item'
+                  ? t('comingUp.kind.purchase')
                   : run.kind === 'account_transfer'
-                    ? 'account transfer'
+                    ? t('comingUp.kind.transfer')
                     : run.kind === 'transaction'
-                      ? (run.schedule.transaction_kind ?? 'transaction')
+                      ? (run.schedule.transaction_kind ?? t('comingUp.kind.transaction'))
                       : run.kind === 'bag_funding'
-                        ? 'bag funding'
-                        : 'bag rebalance'}
+                        ? t('comingUp.kind.bag_funding')
+                        : t('comingUp.kind.bag_rebalance')}
               </span>
-              <span className="hint-inline">Planned via Scheduled · Planning</span>
+              <span className="hint-inline">{t('comingUp.plannedHint')}</span>
             </div>
             <div className="budget-actions">
               <Button
@@ -98,11 +105,11 @@ export function ComingUpCard() {
                 disabled={busy}
                 onClick={() => void act(run, 'apply')}
               >
-                {run.kind === 'purchase' ? 'Done' : 'Apply'}
+                {run.kind === 'purchase' ? t('comingUp.done') : t('comingUp.apply')}
               </Button>
               {!VIRTUAL_KINDS.includes(run.kind) && (
                 <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => void act(run, 'dismiss')}>
-                  Dismiss
+                  {t('comingUp.dismiss')}
                 </Button>
               )}
             </div>
@@ -110,8 +117,10 @@ export function ComingUpCard() {
         ))}
       </div>
       <p className="hint-text">
-        {overduePresent ? 'Overdue items nudge until you deal with them. ' : ''}
-        Full list on the <Link to="/planning?tab=schedules">Scheduled</Link> planning page.
+        {overduePresent ? `${t('comingUp.footerOverdue')} ` : ''}
+        <Trans i18nKey="comingUp.footer">
+          Full list on the <Link to="/planning?tab=schedules">Scheduled</Link> planning page.
+        </Trans>
       </p>
     </Card>
   );

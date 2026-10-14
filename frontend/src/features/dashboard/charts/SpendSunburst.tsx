@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { CategorySunburst } from '../../../types/analytics';
 import { formatCents } from '../../../lib/money';
 import { sunburstArcs } from '../../../lib/analytics';
@@ -32,6 +33,7 @@ const CENTER = SIZE / 2;
 /** Two-ring donut: inner = section, outer = product category. Hovering a
  *  slice dims the rest; every slice carries an accessible <title>. */
 export function SpendSunburst({ data, loading, error }: Props) {
+  const { t } = useTranslation('dashboard');
   const segments = useMemo(() => data?.segments ?? [], [data]);
   const [hover, setHover] = useState<number | null>(null);
 
@@ -39,12 +41,12 @@ export function SpendSunburst({ data, loading, error }: Props) {
 
   return (
     <ChartCard
-      title="Micro-Category Distribution"
-      subtitle="Accepted bill lines by section and category."
+      title={t('sunburst.title')}
+      subtitle={t('sunburst.subtitle')}
       window={data ? rangeLabel(data.from, data.to) : undefined}
       loading={loading}
       error={error}
-      emptyMessage="No accepted bills in this period yet."
+      emptyMessage={t('sunburst.empty')}
       empty={segments.length === 0}
     >
       <div className="sunburst-wrap">
@@ -53,7 +55,7 @@ export function SpendSunburst({ data, loading, error }: Props) {
           height={SIZE}
           viewBox={`0 0 ${SIZE} ${SIZE}`}
           role="img"
-          aria-label="Spending by category section and category"
+          aria-label={t('sunburst.aria')}
         >
           <g transform={`translate(${CENTER} ${CENTER})`}>
             {inner.map((slice, i) => {

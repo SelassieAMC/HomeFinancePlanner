@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { storesApi } from '../../api/stores';
 import type { Store, StoreInput } from '../../types/domain';
 import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
 
 export function StoresPage() {
+  const { t } = useTranslation('stores');
   const { data, loading, error, reload } = useAsync(() => storesApi.list(), []);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -23,7 +25,7 @@ export function StoresPage() {
     e.preventDefault();
     setFormError(null);
     if (!name.trim()) {
-      setFormError('Store name is required.');
+      setFormError(t('errors.nameRequired'));
       return;
     }
     const input: StoreInput = { name, description, location };
@@ -34,7 +36,7 @@ export function StoresPage() {
       setLocation('');
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create store.');
+      setFormError(err instanceof Error ? err.message : t('errors.create'));
     }
   }
 
@@ -58,7 +60,7 @@ export function StoresPage() {
       setEditingId(null);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save store.');
+      setFormError(err instanceof Error ? err.message : t('errors.save'));
     }
   }
 
@@ -69,7 +71,7 @@ export function StoresPage() {
       await storesApi.uploadLogo(storeId, file);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to upload logo.');
+      setFormError(err instanceof Error ? err.message : t('errors.uploadLogo'));
     }
   }
 
@@ -79,7 +81,7 @@ export function StoresPage() {
       await storesApi.removeLogo(storeId);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to remove logo.');
+      setFormError(err instanceof Error ? err.message : t('errors.removeLogo'));
     }
   }
 
@@ -89,7 +91,7 @@ export function StoresPage() {
       await storesApi.remove(id);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to delete store.');
+      setFormError(err instanceof Error ? err.message : t('errors.delete'));
     }
   }
 
@@ -100,33 +102,33 @@ export function StoresPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Stores</h2>
+      <h2 className="page-title">{t('title')}</h2>
 
-      <Card title="Add store">
+      <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
           <input
-            placeholder="Name"
+            placeholder={t('add.namePlaceholder')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
           />
           <input
-            placeholder="Description (optional)"
+            placeholder={t('add.descriptionPlaceholder')}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
           <input
-            placeholder="Location (optional)"
+            placeholder={t('add.locationPlaceholder')}
             value={location}
             onChange={(e) => setLocation(e.target.value)}
           />
-          <Button type="submit">Add</Button>
+          <Button type="submit">{t('add.submit')}</Button>
         </form>
         {formError && <ErrorMessage message={formError} />}
       </Card>
 
       {stores.length === 0 ? (
-        <EmptyState message="No stores yet — add your first one above, or scan a bill with a new market name." />
+        <EmptyState message={t('list.empty')} />
       ) : (
         <ItemPanels>
           {stores.map((store) => (
@@ -134,12 +136,12 @@ export function StoresPage() {
               key={store.id}
               title={store.name}
               subtitle={store.location || store.description || ''}
-              value={`${store.bill_count} ${store.bill_count === 1 ? 'bill' : 'bills'}`}
+              value={t('list.bills', { count: store.bill_count })}
             >
               {editingId === store.id ? (
                 <form className="form-grid" onSubmit={handleSaveEdit}>
                   <label>
-                    Name
+                    {t('labels.name')}
                     <input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
@@ -147,23 +149,23 @@ export function StoresPage() {
                     />
                   </label>
                   <label>
-                    Description
+                    {t('labels.description')}
                     <input
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
                     />
                   </label>
                   <label>
-                    Location
+                    {t('labels.location')}
                     <input
                       value={editLocation}
                       onChange={(e) => setEditLocation(e.target.value)}
                     />
                   </label>
                   <div className="camera-row">
-                    <Button type="submit">Save</Button>
+                    <Button type="submit">{t('actions.save')}</Button>
                     <Button variant="ghost" onClick={() => setEditingId(null)}>
-                      Cancel
+                      {t('actions.cancel')}
                     </Button>
                   </div>
                 </form>
@@ -173,26 +175,26 @@ export function StoresPage() {
                     <img
                       className="store-logo"
                       src={storesApi.logoUrl(store)}
-                      alt={`${store.name} logo`}
+                      alt={t('list.logoAlt', { name: store.name })}
                     />
                   )}
                   <div className="item-field-grid">
                     <div className="item-field">
-                      <span>Description</span>
+                      <span>{t('labels.description')}</span>
                       <span>{store.description || '—'}</span>
                     </div>
                     <div className="item-field">
-                      <span>Location</span>
+                      <span>{t('labels.location')}</span>
                       <span>{store.location || '—'}</span>
                     </div>
                     <div className="item-field">
-                      <span>Bills</span>
+                      <span>{t('labels.bills')}</span>
                       <strong>{store.bill_count}</strong>
                     </div>
                   </div>
                   <div className="camera-row">
                     <Button variant="secondary" onClick={() => startEdit(store)}>
-                      Edit
+                      {t('actions.edit')}
                     </Button>
                     <Button
                       variant="secondary"
@@ -201,15 +203,15 @@ export function StoresPage() {
                         logoInputRef.current?.click();
                       }}
                     >
-                    {store.has_logo ? 'Replace logo' : 'Upload logo'}
+                    {store.has_logo ? t('actions.replaceLogo') : t('actions.uploadLogo')}
                     </Button>
                   {store.has_logo && (
                       <Button variant="secondary" onClick={() => handleRemoveLogo(store.id)}>
-                        Remove logo
+                        {t('actions.removeLogo')}
                       </Button>
                     )}
                     <Button variant="danger" onClick={() => handleDelete(store.id)}>
-                      Delete store
+                      {t('actions.delete')}
                     </Button>
                   </div>
                 </>

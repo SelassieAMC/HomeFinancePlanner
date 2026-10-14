@@ -9,6 +9,8 @@ import {
 } from 'react';
 import { authApi } from '../../api/auth';
 import { onUnauthorized } from '../../api/client';
+import i18n from '../../i18n';
+import { detectPreLoginLocale, isSupportedLocale } from '../../i18n/core';
 import type { User } from '../../types/domain';
 
 interface AuthState {
@@ -41,6 +43,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // The UI language follows the user's stored preference: on login we switch
+  // to users.locale (unknown values fall back to english); on logout we
+  // return to the browser-language default the login page showed.
+  useEffect(() => {
+    const lng = user ? (isSupportedLocale(user.locale) ? user.locale : 'en') : detectPreLoginLocale();
+    if (i18n.language !== lng) {
+      void i18n.changeLanguage(lng);
+    }
+  }, [user]);
 
   // 401s land here once this provider is mounted. The login endpoint can
   // 401 on a wrong password too — user is already null then, no-op.

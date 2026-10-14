@@ -889,6 +889,7 @@ export interface User {
   username: string;
   full_name: string;
   has_photo: boolean;
+  locale: string;
   is_admin: boolean;
   created_at: string;
   updated_at: string;

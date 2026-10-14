@@ -8,6 +8,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../../i18n';
+import { intlLocale } from '../../../i18n/core';
 import type { RunRate, RunRatePoint } from '../../../types/analytics';
 import { formatCents } from '../../../lib/money';
 import { ChartCard } from './ChartCard';
@@ -45,17 +48,18 @@ function toRows(points: RunRatePoint[]): Row[] {
  *  linear budget pace. Reference lines are dashed and muted; the current
  *  month is the only emphasized series. */
 export function RunRateChart({ data, loading, error }: Props) {
+  const { t } = useTranslation('dashboard');
   const rows = toRows(data?.points ?? []);
   const currency = data?.currency ?? '';
   const hasPace = data !== null && data.budget_total_cents > 0;
   return (
     <ChartCard
-      title="Monthly Run Rate vs. Budget"
+      title={t('runRate.title')}
       window={data && data.month ? monthTitle(data.month) : undefined}
-      subtitle="Cumulative spend by day of month. The pace line spreads open budget envelopes linearly — a target, not a monthly cap."
+      subtitle={t('runRate.subtitle')}
       loading={loading}
       error={error}
-      emptyMessage="No expenses in this month yet."
+      emptyMessage={t('runRate.empty')}
       empty={rows.every((r) => r.current === undefined)}
     >
       <div className="chart-body">
@@ -76,7 +80,7 @@ export function RunRateChart({ data, loading, error }: Props) {
             <Tooltip
               content={
                 <ChartTooltip
-                  title={(l) => `Day ${l}`}
+                  title={(l) => t('runRate.tooltipDay', { count: l })}
                   format={(v) => formatCents(Number(v), currency)}
                 />
               }
@@ -87,7 +91,7 @@ export function RunRateChart({ data, loading, error }: Props) {
             <Line
               type="monotone"
               dataKey="previous"
-              name="Last month"
+              name={t('runRate.series.lastMonth')}
               stroke="var(--text-muted)"
               strokeWidth={1.5}
               strokeDasharray="5 4"
@@ -97,7 +101,7 @@ export function RunRateChart({ data, loading, error }: Props) {
             <Line
               type="monotone"
               dataKey="average"
-              name="3-month avg"
+              name={t('runRate.series.avg3')}
               stroke="var(--chart-4)"
               strokeWidth={1.5}
               strokeDasharray="5 4"
@@ -107,7 +111,7 @@ export function RunRateChart({ data, loading, error }: Props) {
             <Line
               type="monotone"
               dataKey="pace"
-              name="Budget pace"
+              name={t('runRate.series.pace')}
               stroke="var(--chart-2)"
               strokeWidth={1.5}
               strokeDasharray="2 4"
@@ -117,7 +121,7 @@ export function RunRateChart({ data, loading, error }: Props) {
             <Line
               type="monotone"
               dataKey="current"
-              name="This month"
+              name={t('runRate.series.thisMonth')}
               stroke="var(--chart-1)"
               strokeWidth={2.5}
               dot={false}
@@ -127,10 +131,10 @@ export function RunRateChart({ data, loading, error }: Props) {
         </ResponsiveContainer>
       </div>
       <div className="chart-legend">
-        <span><span className="chart-legend-swatch" style={{ background: 'var(--chart-1)' }} />This month</span>
-        <span><span className="chart-legend-swatch" style={{ background: 'var(--text-muted)' }} />Last month</span>
-        <span><span className="chart-legend-swatch" style={{ background: 'var(--chart-4)' }} />3-month avg</span>
-        {hasPace && <span><span className="chart-legend-swatch" style={{ background: 'var(--chart-2)' }} />Budget pace</span>}
+        <span><span className="chart-legend-swatch" style={{ background: 'var(--chart-1)' }} />{t('runRate.series.thisMonth')}</span>
+        <span><span className="chart-legend-swatch" style={{ background: 'var(--text-muted)' }} />{t('runRate.series.lastMonth')}</span>
+        <span><span className="chart-legend-swatch" style={{ background: 'var(--chart-4)' }} />{t('runRate.series.avg3')}</span>
+        {hasPace && <span><span className="chart-legend-swatch" style={{ background: 'var(--chart-2)' }} />{t('runRate.series.pace')}</span>}
       </div>
     </ChartCard>
   );
@@ -140,7 +144,7 @@ export function RunRateChart({ data, loading, error }: Props) {
 function monthTitle(month: string): string {
   const m = /^(\d{4})-(\d{2})$/.exec(month);
   if (!m) return month;
-  return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString('en-US', {
+  return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString(intlLocale(i18n.language), {
     year: 'numeric',
     month: 'long',
   });

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { accountsApi } from '../../api/accounts';
 import { settingsApi } from '../../api/settings';
@@ -19,6 +20,7 @@ function currencyOptions(current: string): CurrencyOption[] {
 }
 
 export function AccountsPage() {
+  const { t } = useTranslation('accounts');
   const { data, loading, error, reload } = useAsync(() => accountsApi.list(), []);
   // New accounts default to the user's base display currency.
   const baseCurrency = useAsync(() => settingsApi.getBaseCurrency(), []);
@@ -68,7 +70,7 @@ export function AccountsPage() {
 
     const cents = dollarsToCents(editBalance);
     if (Number.isNaN(cents) || cents < 0) {
-      setFormError('Enter a valid non-negative balance.');
+      setFormError(t('errors.invalidBalance'));
       return;
     }
     const input: AccountInput = {
@@ -83,7 +85,7 @@ export function AccountsPage() {
       setEditingId(null);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to update account.');
+      setFormError(err instanceof Error ? err.message : t('errors.update'));
     }
   }
 
@@ -93,7 +95,7 @@ export function AccountsPage() {
 
     const cents = dollarsToCents(balance);
     if (Number.isNaN(cents) || cents < 0) {
-      setFormError('Enter a valid non-negative starting balance.');
+      setFormError(t('errors.invalidStartingBalance'));
       return;
     }
     const input: AccountInput = { name, type, currency, balance_cents: cents };
@@ -103,7 +105,7 @@ export function AccountsPage() {
       setBalance('');
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create account.');
+      setFormError(err instanceof Error ? err.message : t('errors.create'));
     }
   }
 
@@ -112,7 +114,7 @@ export function AccountsPage() {
       await accountsApi.remove(id);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to delete account.');
+      setFormError(err instanceof Error ? err.message : t('errors.delete'));
     }
   }
 
@@ -123,20 +125,20 @@ export function AccountsPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Accounts</h2>
+      <h2 className="page-title">{t('title')}</h2>
 
-      <Card title="Add account">
+      <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
           <input
-            placeholder="Name"
+            placeholder={t('add.namePlaceholder')}
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
           />
           <select value={type} onChange={(e) => setType(e.target.value as AccountType)}>
-            {ACCOUNT_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            {ACCOUNT_TYPES.map((ty) => (
+              <option key={ty} value={ty}>
+                {t(`types.${ty}`)}
               </option>
             ))}
           </select>
@@ -146,7 +148,7 @@ export function AccountsPage() {
               setCurrency(e.target.value);
               setCurrencyTouched(true);
             }}
-            aria-label="Account currency"
+            aria-label={t('add.currencyAria')}
           >
             {COMMON_CURRENCIES.map((c) => (
               <option key={c.code} value={c.code}>
@@ -155,32 +157,32 @@ export function AccountsPage() {
             ))}
           </select>
           <input
-            placeholder={`Starting balance (${currency})`}
+            placeholder={t('add.balancePlaceholder', { currency })}
             inputMode="decimal"
             value={balance}
             onChange={(e) => setBalance(e.target.value)}
             required
           />
-          <Button type="submit">Add</Button>
+          <Button type="submit">{t('actions.add')}</Button>
         </form>
         {formError && <ErrorMessage message={formError} />}
       </Card>
 
       {accounts.length === 0 ? (
-        <EmptyState message="No accounts yet — add your first one above." />
+        <EmptyState message={t('empty')} />
       ) : (
         <ItemPanels>
           {accounts.map((a) => (
             <ItemPanel
               key={a.id}
               title={a.name}
-              subtitle={a.type}
+              subtitle={t(`types.${a.type}`)}
               value={formatCents(a.balance_cents, a.currency)}
             >
               {editingId === a.id ? (
                 <form className="form-stack" onSubmit={handleUpdate}>
                   <input
-                    placeholder="Name"
+                    placeholder={t('add.namePlaceholder')}
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     required
@@ -188,18 +190,18 @@ export function AccountsPage() {
                   <select
                     value={editType}
                     onChange={(e) => setEditType(e.target.value as AccountType)}
-                    aria-label="Account type"
+                    aria-label={t('edit.typeAria')}
                   >
-                    {ACCOUNT_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
+                    {ACCOUNT_TYPES.map((ty) => (
+                      <option key={ty} value={ty}>
+                        {t(`types.${ty}`)}
                       </option>
                     ))}
                   </select>
                   <select
                     value={editCurrency}
                     onChange={(e) => setEditCurrency(e.target.value)}
-                    aria-label="Account currency"
+                    aria-label={t('add.currencyAria')}
                   >
                     {currencyOptions(editCurrency).map((c) => (
                       <option key={c.code} value={c.code}>
@@ -208,23 +210,23 @@ export function AccountsPage() {
                     ))}
                   </select>
                   <input
-                    placeholder={`Balance (${editCurrency})`}
+                    placeholder={t('edit.balancePlaceholder', { currency: editCurrency })}
                     inputMode="decimal"
                     value={editBalance}
                     onChange={(e) => setEditBalance(e.target.value)}
                     required
                   />
                   <input
-                    placeholder="Card last digits (optional)"
+                    placeholder={t('edit.cardDigitsPlaceholder')}
                     inputMode="numeric"
                     maxLength={4}
                     value={editCardDigits}
                     onChange={(e) => setEditCardDigits(e.target.value.replace(/\D/g, ''))}
                   />
                   <div className="camera-row">
-                    <Button type="submit">Save</Button>
+                    <Button type="submit">{t('actions.save')}</Button>
                     <Button type="button" variant="secondary" onClick={cancelEdit}>
-                      Cancel
+                      {t('actions.cancel')}
                     </Button>
                   </div>
                 </form>
@@ -232,28 +234,28 @@ export function AccountsPage() {
                 <>
                   <div className="item-field-grid">
                     <div className="item-field">
-                      <span>Type</span>
-                      <span>{a.type}</span>
+                      <span>{t('labels.type')}</span>
+                      <span>{t(`types.${a.type}`)}</span>
                     </div>
                     <div className="item-field">
-                      <span>Currency</span>
+                      <span>{t('labels.currency')}</span>
                       <span>{a.currency}</span>
                     </div>
                     <div className="item-field">
-                      <span>Balance</span>
+                      <span>{t('labels.balance')}</span>
                       <strong>{formatCents(a.balance_cents, a.currency)}</strong>
                     </div>
                   </div>
                   {a.card_last_digits && (
                     <div className="item-field">
-                      <span>Card</span>
+                      <span>{t('labels.card')}</span>
                       <span>•••• {a.card_last_digits}</span>
                     </div>
                   )}
                   <div className="camera-row">
-                    <Button onClick={() => startEdit(a)}>Edit</Button>
+                    <Button onClick={() => startEdit(a)}>{t('actions.edit')}</Button>
                     <Button variant="danger" onClick={() => handleDelete(a.id)}>
-                      Delete account
+                      {t('actions.delete')}
                     </Button>
                   </div>
                 </>

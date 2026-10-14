@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { usersApi } from '../../api/users';
 import { avatarUrl } from '../../api/auth';
 import type { User, UserInput, UserUpdateInput } from '../../types/domain';
@@ -12,6 +13,7 @@ import { useAuth } from '../auth/AuthContext';
 // server-side too. The household data (accounts, bills, budgets) stays shared
 // between everyone — one planner, not one per person.
 export function UsersTab() {
+  const { t } = useTranslation('settings');
   const { user: me } = useAuth();
   const list = useAsync(() => usersApi.list(), []);
 
@@ -39,11 +41,11 @@ export function UsersTab() {
       is_admin: isAdmin,
     };
     if (!input.username || !password || !input.full_name) {
-      setError('Username, full name and password are required.');
+      setError(t('users.requiredFields'));
       return;
     }
     if (password !== passwordConfirm) {
-      setError('Passwords do not match.');
+      setError(t('users.pwMismatch'));
       return;
     }
     setCreating(true);
@@ -57,7 +59,7 @@ export function UsersTab() {
       setIsAdmin(false);
       list.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Creating the user failed.');
+      setError(err instanceof Error ? err.message : t('users.createError'));
     } finally {
       setCreating(false);
     }
@@ -75,37 +77,32 @@ export function UsersTab() {
 
   return (
     <>
-      <p className="hint-text">
-        Members appear in the login dropdown and each carry their own password
-        and avatar. The household data (accounts, bills, budgets) stays shared
-        between everyone — there is one planner, not one per person. Resetting
-        a password signs that member out of every device.
-      </p>
+      <p className="hint-text">{t('users.hint')}</p>
 
-      <Card title="Add a family member">
+      <Card title={t('users.addTitle')}>
         <form className="profile-pw-form" onSubmit={create}>
           <label>
-            Username
+            {t('users.username')}
             <input
               value={username}
-              placeholder="anna"
+              placeholder={t('users.usernamePlaceholder')}
               maxLength={32}
               disabled={creating}
               onChange={(e) => setUsername(e.target.value)}
             />
           </label>
           <label>
-            Full name
+            {t('users.fullName')}
             <input
               value={fullName}
-              placeholder="Anna Weber"
+              placeholder={t('users.fullNamePlaceholder')}
               maxLength={80}
               disabled={creating}
               onChange={(e) => setFullName(e.target.value)}
             />
           </label>
           <label>
-            Password
+            {t('users.password')}
             <input
               type="password"
               value={password}
@@ -115,7 +112,7 @@ export function UsersTab() {
             />
           </label>
           <label>
-            Repeat password
+            {t('users.repeatPassword')}
             <input
               type="password"
               value={passwordConfirm}
@@ -125,7 +122,7 @@ export function UsersTab() {
             />
           </label>
           <label className="default-radio">
-            Administrator
+            {t('users.administrator')}
             <input
               type="checkbox"
               checked={isAdmin}
@@ -136,21 +133,23 @@ export function UsersTab() {
           {password.length > 0 &&
             passwordConfirm.length > 0 &&
             password !== passwordConfirm ? (
-            <span className="form-error-inline">Passwords do not match.</span>
+            <span className="form-error-inline">{t('users.pwMismatch')}</span>
           ) : null}
           {error && <ErrorMessage message={error} />}
-          {created && <div className="hint-banner">User {created} created ✓</div>}
+          {created && (
+            <div className="hint-banner">{t('users.created', { name: created })}</div>
+          )}
           <div className="camera-row">
             <Button type="submit" disabled={creating}>
-              {creating ? 'Creating…' : 'Create user'}
+              {creating ? t('users.creating') : t('users.createUser')}
             </Button>
           </div>
         </form>
       </Card>
 
-      <h3 className="section-heading">Members</h3>
+      <h3 className="section-heading">{t('users.members')}</h3>
       {users.length === 0 ? (
-        <EmptyState message="No users yet." />
+        <EmptyState message={t('users.empty')} />
       ) : (
         <ItemPanels>
           {users.map((u) =>
@@ -163,8 +162,12 @@ export function UsersTab() {
                 subtitle={
                   <>
                     @{u.username}
-                    {u.is_admin && <span className="default-badge"> admin</span>}
-                    {me?.id === u.id && <span className="hint-inline"> (you)</span>}
+                    {u.is_admin && (
+                      <span className="default-badge"> {t('users.adminBadge')}</span>
+                    )}
+                    {me?.id === u.id && (
+                      <span className="hint-inline"> {t('users.youBadge')}</span>
+                    )}
                   </>
                 }
               >
@@ -180,11 +183,13 @@ export function UsersTab() {
                       {(u.full_name || u.username).charAt(0).toUpperCase()}
                     </div>
                   )}
-                  <span className="hint-inline">Created {new Date(u.created_at).toLocaleDateString()}</span>
+                  <span className="hint-inline">
+                    {t('users.createdOn', { date: new Date(u.created_at).toLocaleDateString() })}
+                  </span>
                 </div>
                 <div className="camera-row">
                   <Button variant="secondary" onClick={() => setEditingId(u.id)}>
-                    Edit
+                    {t('users.edit')}
                   </Button>
                   {me?.id !== u.id && (
                     deletingId === u.id ? (
@@ -195,7 +200,7 @@ export function UsersTab() {
                       />
                     ) : (
                       <Button variant="danger" onClick={() => setDeletingId(u.id)}>
-                        Delete
+                        {t('users.delete')}
                       </Button>
                     )
                   )}
@@ -212,6 +217,7 @@ export function UsersTab() {
 // EditMemberForm swaps in for a member's panel: names/flags plus an optional
 // password reset. Empty password fields keep the current password.
 function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
+  const { t } = useTranslation('settings');
   const { user: me } = useAuth();
   const [username, setUsername] = useState(user.username);
   const [fullName, setFullName] = useState(user.full_name);
@@ -225,7 +231,7 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
     e.preventDefault();
     setError(null);
     if (password !== passwordConfirm) {
-      setError('Passwords do not match.');
+      setError(t('users.pwMismatch'));
       return;
     }
     const input: UserUpdateInput = {
@@ -239,7 +245,7 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
       await usersApi.update(user.id, input);
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed.');
+      setError(err instanceof Error ? err.message : t('usersEdit.saveError'));
       setSaving(false);
     }
   }
@@ -247,10 +253,14 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
   const selfDemote = me?.id === user.id && user.is_admin && !isAdmin;
 
   return (
-    <ItemPanel key={`editing-${user.id}`} title={`Edit ${user.full_name || user.username}`} subtitle={<>&nbsp;</>}>
+    <ItemPanel
+      key={`editing-${user.id}`}
+      title={t('usersEdit.editTitle', { name: user.full_name || user.username })}
+      subtitle={<>&nbsp;</>}
+    >
       <form className="profile-pw-form" onSubmit={save}>
         <label>
-          Username
+          {t('users.username')}
           <input
             value={username}
             maxLength={32}
@@ -259,7 +269,7 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
           />
         </label>
         <label>
-          Full name
+          {t('users.fullName')}
           <input
             value={fullName}
             maxLength={80}
@@ -268,7 +278,7 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
           />
         </label>
         <label className="default-radio">
-          Administrator
+          {t('users.administrator')}
           <input
             type="checkbox"
             checked={isAdmin}
@@ -277,10 +287,11 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
           />
         </label>
         {me?.id === user.id && user.is_admin && (
-          <span className="hint-inline">You cannot remove your own admin role.</span>
+          <span className="hint-inline">{t('usersEdit.selfDemoteNote')}</span>
         )}
         <label>
-          New password <span className="hint-inline">(leave empty to keep current)</span>
+          {t('usersEdit.newPassword')}{' '}
+          <span className="hint-inline">{t('usersEdit.keepCurrent')}</span>
           <input
             type="password"
             value={password}
@@ -290,7 +301,7 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
           />
         </label>
         <label>
-          Repeat new password
+          {t('usersEdit.repeatNewPassword')}
           <input
             type="password"
             value={passwordConfirm}
@@ -302,20 +313,18 @@ function EditMemberForm({ user, onDone }: { user: User; onDone: () => void }) {
         {password.length > 0 &&
           passwordConfirm.length > 0 &&
           password !== passwordConfirm && (
-            <span className="form-error-inline">Passwords do not match.</span>
+            <span className="form-error-inline">{t('users.pwMismatch')}</span>
           )}
         {selfDemote && (
-          <span className="form-error-inline">
-            You are the only administrator — ask another admin to demote you.
-          </span>
+          <span className="form-error-inline">{t('usersEdit.selfDemoteError')}</span>
         )}
         {error && <ErrorMessage message={error} />}
         <div className="camera-row">
           <Button onClick={() => onDone()} variant="secondary" disabled={saving}>
-            Cancel
+            {t('usersEdit.cancel')}
           </Button>
           <Button type="submit" disabled={saving || selfDemote}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('usersEdit.saving') : t('usersEdit.save')}
           </Button>
         </div>
       </form>
@@ -333,6 +342,7 @@ function DeleteConfirm({
   onCancel: () => void;
   onConfirmed: () => void;
 }) {
+  const { t } = useTranslation('settings');
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -343,19 +353,21 @@ function DeleteConfirm({
       await usersApi.delete(user.id);
       onConfirmed();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Deleting failed.');
+      setError(err instanceof Error ? err.message : t('usersDelete.deleteError'));
       setDeleting(false);
     }
   }
 
   return (
     <div className="delete-confirm-row">
-      <span className="hint-inline">Delete @{user.username}?</span>
+      <span className="hint-inline">
+        {t('usersDelete.confirmPrompt', { name: user.username })}
+      </span>
       <Button variant="secondary" onClick={onCancel} disabled={deleting}>
-        No
+        {t('usersDelete.no')}
       </Button>
       <Button variant="danger" onClick={confirm} disabled={deleting}>
-        {deleting ? 'Deleting…' : 'Yes, delete'}
+        {deleting ? t('usersDelete.deleting') : t('usersDelete.yesDelete')}
       </Button>
       {error && <ErrorMessage message={error} />}
     </div>

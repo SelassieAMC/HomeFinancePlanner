@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../i18n';
+import { intlLocale } from '../../i18n/core';
 import { useAsync } from '../../hooks/useAsync';
 import { budgetsApi } from '../../api/budgets';
 import { dollarsToCents } from '../../lib/money';
@@ -16,9 +19,10 @@ import {
   EmptyState,
 } from '../../components/ui';
 
-/** Short month label for a monthly budget's period ("2026-10" → "Oct 2026"). */
+/** Short month label for a monthly budget's period ("2026-10" → "Oct 2026",
+ *  localized to the active UI language). */
 function monthTag(month: string): string {
-  return new Date(`${month}-01T00:00:00`).toLocaleDateString('en-US', {
+  return new Date(`${month}-01T00:00:00`).toLocaleDateString(intlLocale(i18n.language), {
     month: 'short',
     year: 'numeric',
   });
@@ -32,6 +36,7 @@ function monthTag(month: string): string {
 // current month's successor with the same amount (leftovers never roll
 // over), so the list doubles as the Jan-vs-Feb history.
 export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
+  const { t } = useTranslation('budgets');
   const { data, loading, error, reload } = useAsync(() => budgetsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
   // Lifetime spend per budget (month-bounded for monthly rows). The
@@ -68,7 +73,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
     if (!editing) return;
     const cents = dollarsToCents(editAmount);
     if (!Number.isFinite(cents) || cents <= 0) {
-      setEditError('Enter a positive budget amount.');
+      setEditError(t('validation.positive_amount'));
       return;
     }
     setBusy(true);
@@ -78,7 +83,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       setEditing(null);
       reload();
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Failed to update budget.');
+      setEditError(err instanceof Error ? err.message : t('errors.update'));
     } finally {
       setBusy(false);
     }
@@ -90,11 +95,11 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
 
     const cents = dollarsToCents(amount); // parses the comma decimal separator too
     if (!Number.isFinite(cents) || cents <= 0) {
-      setFormError('Enter a positive budget amount.');
+      setFormError(t('validation.positive_amount'));
       return;
     }
     if (!categoryId) {
-      setFormError('Choose a category.');
+      setFormError(t('validation.choose_category'));
       return;
     }
     try {
@@ -106,7 +111,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       setAmount('');
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create budget.');
+      setFormError(err instanceof Error ? err.message : t('errors.create'));
     }
   }
 
@@ -115,7 +120,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       await budgetsApi.setStatus(id, status);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to update budget.');
+      setFormError(err instanceof Error ? err.message : t('errors.update'));
     }
   }
 
@@ -124,7 +129,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       await budgetsApi.remove(id);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to delete budget.');
+      setFormError(err instanceof Error ? err.message : t('errors.delete'));
     }
   }
 
@@ -148,18 +153,18 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
 
   const content = (
     <>
-      <Card title="Add budget">
+      <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
           <CategorySelect
             categories={categories.data ?? []}
             kind="expense"
             value={categoryId ? Number(categoryId) : null}
             onChange={(id) => setCategoryId(id ? String(id) : '')}
-            ariaLabel="Budget category"
-            emptyLabel="Category…"
+            ariaLabel={t('add.category_aria')}
+            emptyLabel={t('add.category_empty')}
           />
           <input
-            placeholder={`Budget amount (${currency})`}
+            placeholder={t('add.amount_placeholder', { currency })}
             inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
@@ -168,18 +173,18 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
           <select
             value={cadence}
             onChange={(e) => setCadence(e.target.value as BudgetCadence)}
-            aria-label="Budget cadence"
+            aria-label={t('add.cadence_aria')}
           >
-            <option value="monthly">Monthly</option>
-            <option value="open">Open envelope</option>
+            <option value="monthly">{t('add.cadence_monthly')}</option>
+            <option value="open">{t('add.cadence_open')}</option>
           </select>
-          <Button type="submit">Add</Button>
+          <Button type="submit">{t('add.submit')}</Button>
         </form>
         {formError && <ErrorMessage message={formError} />}
       </Card>
 
       {budgets.length === 0 ? (
-        <EmptyState message="No budgets yet — add your first one above." />
+        <EmptyState message={t('empty')} />
       ) : (
         <div className="budget-list">
           {budgets.map((b) => {
@@ -204,28 +209,31 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {editing && (
-        <Dialog title={`Edit budget${editing.cadence === 'monthly' ? ` · ${monthTag(editing.month ?? '')}` : ''}`}>
+        <Dialog
+          title={
+            editing.cadence === 'monthly'
+              ? t('edit.title_monthly', { month: monthTag(editing.month ?? '') })
+              : t('edit.title')
+          }
+        >
           <form className="form-row" onSubmit={handleEdit}>
             <input
-              placeholder={`Budget amount (${currency})`}
+              placeholder={t('add.amount_placeholder', { currency })}
               inputMode="decimal"
               value={editAmount}
               onChange={(e) => setEditAmount(e.target.value)}
               autoFocus
-              aria-label="Budget amount"
+              aria-label={t('add.amount_aria')}
               required
             />
-            <p className="hint-text">
-              The category and cadence are fixed. Closed budgets keep their
-              amount — reopen before editing.
-            </p>
+            <p className="hint-text">{t('edit.hint')}</p>
             {editError && <ErrorMessage message={editError} />}
             <div className="dialog-actions">
               <Button variant="ghost" onClick={() => setEditing(null)} disabled={busy}>
-                Cancel
+                {t('edit.cancel')}
               </Button>
               <Button variant="primary" type="submit" disabled={busy}>
-                Save
+                {t('edit.save')}
               </Button>
             </div>
           </form>
@@ -238,7 +246,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
 
   return (
     <div className="page">
-      <h2 className="page-title">Budgets</h2>
+      <h2 className="page-title">{t('title')}</h2>
       {content}
     </div>
   );
@@ -266,6 +274,7 @@ function BudgetCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation('budgets');
   const isClosed = budget.status === 'closed';
   const over = lifetimeSpent > budget.amount_cents;
   const remaining = budget.amount_cents - lifetimeSpent;
@@ -285,7 +294,7 @@ function BudgetCard({
         </span>
         {budget.cadence === 'monthly' && (
           <span className="stat-label">
-            Monthly{budget.month ? ` · ${monthTag(budget.month)}` : ''}
+            {t('card.monthly')}{budget.month ? ` · ${monthTag(budget.month)}` : ''}
           </span>
         )}
         <span className="budget-amounts">
@@ -306,29 +315,29 @@ function BudgetCard({
         }
       >
         {isClosed
-          ? `Closed · spent ${formatCents(lifetimeSpent, currency)} of ${formatCents(
-              budget.amount_cents,
-              currency,
-            )}`
+          ? t('card.closed', {
+              spent: formatCents(lifetimeSpent, currency),
+              amount: formatCents(budget.amount_cents, currency),
+            })
           : over
-            ? `Over by ${formatCents(-remaining, currency)}`
-            : `${formatCents(remaining, currency)} left`}
+            ? t('card.over_by', { amount: formatCents(-remaining, currency) })
+            : t('card.left', { amount: formatCents(remaining, currency) })}
       </div>
       <div className="budget-actions">
         {isClosed ? (
-          <Button onClick={() => onSetStatus('open')}>Reopen</Button>
+          <Button onClick={() => onSetStatus('open')}>{t('card.reopen')}</Button>
         ) : (
           <>
             <Button variant="secondary" className="btn-sm" onClick={onEdit}>
-              Edit
+              {t('card.edit')}
             </Button>
             <Button variant="secondary" className="btn-sm" onClick={() => onSetStatus('closed')}>
-              Mark finished
+              {t('card.mark_finished')}
             </Button>
           </>
         )}
         <Button variant="danger" className="btn-sm" onClick={onDelete}>
-          Delete
+          {t('card.delete')}
         </Button>
       </div>
     </Card>

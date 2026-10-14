@@ -102,6 +102,23 @@ fixed: backend `:8080`, nginx `:80`.
 - Server data types live in `src/types/domain.ts` and must mirror the backend
   DTO field names exactly (snake_case on the wire).
 
+### i18n (react-i18next)
+- All UI text goes through `t()`; the supported locales are the closed set
+  `en` (default) / `de` / `es`, kept in `src/i18n/core.ts` and mirrored in
+  `backend/internal/domain.ValidLocales` (users.locale column defaults to
+  'en'; per-user preference, switched in the profile's Language card, and the
+  pre-login default is the browser language).
+- Each feature namespace is one bundle file in `src/i18n/locales/<ns>.ts`
+  (shape `{ en, de, es }`) with identical key structure across languages;
+  namespace per feature folder, `common` for shared layout/ui primitives.
+- Count strings use the `key_one`/`key_other` plural pair in all three
+  languages; weekday/month names come from `Intl` via
+  `intlLocale(i18n.language)`, never hardcoded English.
+- New keys must be added to all three languages — verify with
+  `node tools/check-i18n.mjs` (key + placeholder parity check).
+- Backend error strings (`err.message`) are intentionally NOT translated.
+- Month/day formatting through `lib/date.ts` is already locale-aware.
+
 ### Database
 - SQLite runs in WAL mode with `busy_timeout` and `foreign_keys=ON`
   (set via DSN pragmas in `repository/db.go`).

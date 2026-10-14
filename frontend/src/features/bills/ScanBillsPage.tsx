@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { billsApi } from '../../api/bills';
 import { settingsApi } from '../../api/settings';
 import { accountsApi } from '../../api/accounts';
@@ -39,6 +40,7 @@ interface UploadOutcome {
 }
 
 export function ScanBillsPage() {
+  const { t } = useTranslation('bills');
   const providers = useAsync(() => settingsApi.listAIProviders(), []);
   const accounts = useAsync(() => accountsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
@@ -111,8 +113,9 @@ export function ScanBillsPage() {
     if (phase === 'analyzing' && scanPoll.error instanceof ApiError && scanPoll.error.status === 404) {
       setScan(null);
       setPhase('capture');
-      setError('scan not found or expired — scan the receipt again');
+      setError(t('errors.scanExpired'));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanPoll.error, phase]);
 
   // Resume a scan reached from the bills view (?token=…).
@@ -136,8 +139,9 @@ export function ScanBillsPage() {
       .catch((err: unknown) => {
         setScan(null);
         setPhase('capture');
-        setError(err instanceof Error ? err.message : 'Scan not found.');
+        setError(err instanceof Error ? err.message : t('errors.scanNotFound'));
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   // Stages the newly chosen files without uploading: the user collects
@@ -235,7 +239,7 @@ export function ScanBillsPage() {
           results.push({
             name: file.name,
             ok: false,
-            message: `skipped — larger than the ${MAX_BILL_IMAGE_BYTES >> 20} MB limit`,
+            message: t('scan.skipOversize', { limit: MAX_BILL_IMAGE_BYTES >> 20 }),
           });
           continue;
         }
@@ -248,7 +252,7 @@ export function ScanBillsPage() {
           results.push({
             name: file.name,
             ok: false,
-            message: err instanceof Error ? err.message : 'Upload failed.',
+            message: err instanceof Error ? err.message : t('errors.upload'),
           });
         }
       }
@@ -265,12 +269,12 @@ export function ScanBillsPage() {
   // part. Pre-checks reject the whole group before it is sent (a partial
   // receipt would lose lines), naming each offending file.
   async function uploadGrouped(list: File[], results: UploadOutcome[]) {
-    const groupLabel = `${list.length} photos — one bill`;
+    const groupLabel = t('scan.groupPhotos', { n: list.length });
     if (list.length > MAX_BILL_SCAN_FILES) {
       results.push({
         name: groupLabel,
         ok: false,
-        message: `skipped — a receipt can be uploaded in at most ${MAX_BILL_SCAN_FILES} files`,
+        message: t('scan.skipTooMany', { max: MAX_BILL_SCAN_FILES }),
       });
       return;
     }
@@ -280,10 +284,10 @@ export function ScanBillsPage() {
         results.push({
           name: file.name,
           ok: false,
-          message: `skipped — larger than the ${MAX_BILL_IMAGE_BYTES >> 20} MB limit`,
+          message: t('scan.skipOversize', { limit: MAX_BILL_IMAGE_BYTES >> 20 }),
         });
       }
-      results.push({ name: groupLabel, ok: false, message: 'not sent — remove the skipped files and pick the full set again' });
+      results.push({ name: groupLabel, ok: false, message: t('scan.groupNotSent') });
       return;
     }
     try {
@@ -294,7 +298,7 @@ export function ScanBillsPage() {
       results.push({
         name: groupLabel,
         ok: false,
-        message: err instanceof Error ? err.message : 'Upload failed.',
+        message: err instanceof Error ? err.message : t('errors.upload'),
       });
     }
   }
@@ -333,7 +337,7 @@ export function ScanBillsPage() {
       setAccepted(bill);
       setPhase('done');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to confirm the bill.');
+      setError(err instanceof Error ? err.message : t('errors.confirm'));
     } finally {
       setBusy(null);
     }
@@ -350,7 +354,7 @@ export function ScanBillsPage() {
       // user goes where the result will be (or stays to upload more).
       setRereadSent(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Re-read failed.');
+      setError(err instanceof Error ? err.message : t('errors.reread'));
     } finally {
       setBusy(null);
     }
@@ -379,7 +383,7 @@ export function ScanBillsPage() {
     try {
       setScan(await billsApi.cancelScan(scan.scan_token));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to cancel the analysis.');
+      setError(err instanceof Error ? err.message : t('errors.cancel'));
     } finally {
       setBusy(null);
     }
@@ -393,7 +397,7 @@ export function ScanBillsPage() {
       await billsApi.discardScan(scan.scan_token);
       reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to discard the scan.');
+      setError(err instanceof Error ? err.message : t('errors.discard'));
     } finally {
       setBusy(null);
     }
@@ -414,18 +418,18 @@ export function ScanBillsPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Scan a bill</h2>
+      <h2 className="page-title">{t('scan.title')}</h2>
 
       {noProviderConfigured && (
         <div className="hint-banner">
-          No AI connector configured yet — set one up in{' '}
-          <Link to="/settings">Settings</Link> first. (Ollama runs locally and
-          needs no API key.)
+          {t('scan.noProviderBefore')}
+          <Link to="/settings">{t('scan.settings')}</Link>
+          {t('scan.noProviderAfter')}
         </div>
       )}
 
       {phase === 'capture' && (
-        <Card title="Receipt photos or PDFs">
+        <Card title={t('scan.cardTitle')}>
           <input
             ref={cameraInputRef}
             type="file"
@@ -450,14 +454,14 @@ export function ScanBillsPage() {
           />
           <div className="camera-row">
             <Button onClick={() => cameraInputRef.current?.click()} disabled={busy !== null}>
-              Take photo
+              {t('scan.takePhoto')}
             </Button>
             <Button
               variant="secondary"
               onClick={() => fileInputRef.current?.click()}
               disabled={busy !== null}
             >
-              Choose files
+              {t('scan.chooseFiles')}
             </Button>
           </div>
           <label className="default-radio">
@@ -466,23 +470,17 @@ export function ScanBillsPage() {
               checked={groupAsOneBill}
               onChange={(e) => setGroupAsOneBill(e.target.checked)}
             />
-            All selected files are parts of one long receipt (merged into a
-            single bill)
+            {t('scan.groupLabel')}
           </label>
           {groupAsOneBill && (
             <p className="hint-inline">
-              Photos are sent in the order they appear below — add them
-              top-to-bottom (part 1 = top of the receipt).
+              {t('scan.groupHint')}
             </p>
           )}
           <p className="hint-text">
-            Take or choose as many photos as you need — they are collected
-            below and only sent when you press “Confirm &amp; scan”. Photos
-            (JPEG, HEIC) and PDF receipts are accepted — each file up to{' '}
-            {MAX_BILL_IMAGE_BYTES >> 20} MB, at most {MAX_BILL_SCAN_FILES}{' '}
-            files per grouped receipt. Flat, well-lit receipts read best, and
-            the receipt text must run <em>horizontally</em> like reading lines —
-            turn a photo upright with the ↻ button before scanning.
+            {t('scan.hint', { sizeLimit: MAX_BILL_IMAGE_BYTES >> 20, maxFiles: MAX_BILL_SCAN_FILES })}
+            <em>{t('scan.hintHorizontal')}</em>
+            {t('scan.hintTail')}
           </p>
           {picked.length > 0 && (
             <ul className="upload-results">
@@ -492,7 +490,7 @@ export function ScanBillsPage() {
                     <img
                       className="picked-thumb"
                       src={thumbs[index] as string}
-                      alt={`Preview of ${file.name}`}
+                      alt={t('scan.previewAlt', { name: file.name })}
                     />
                   ) : (
                     <span className="picked-thumb picked-thumb-blank" aria-hidden="true" />
@@ -509,8 +507,8 @@ export function ScanBillsPage() {
                       className="btn btn-ghost remove-picked"
                       onClick={() => rotatePicked(index)}
                       disabled={busy !== null || thumbs[index] === null}
-                      aria-label={`Turn ${file.name} upright`}
-                      title="Turn the photo one quarter-turn — the receipt text must read horizontally"
+                      aria-label={t('scan.turnAria', { name: file.name })}
+                      title={t('scan.rotateTitle')}
                     >
                       ↻
                     </button>
@@ -519,7 +517,7 @@ export function ScanBillsPage() {
                       className="btn btn-ghost remove-picked"
                       onClick={() => removePicked(index)}
                       disabled={busy !== null}
-                      aria-label={`Remove ${file.name}`}
+                      aria-label={t('scan.removeAria', { name: file.name })}
                     >
                       ✕
                     </button>
@@ -534,22 +532,22 @@ export function ScanBillsPage() {
               disabled={busy !== null || picked.length === 0}
               title={
                 picked.length === 0
-                  ? 'Take or choose photos first'
+                  ? t('scan.emptyTitle')
                   : undefined
               }
             >
-              Confirm &amp; scan{picked.length > 0 ? ` (${picked.length})` : ''}
+              {t('scan.confirmScan')}{picked.length > 0 ? ` (${picked.length})` : ''}
             </Button>
             <Button
               variant="ghost"
               onClick={() => setPicked([])}
               disabled={busy !== null || picked.length === 0}
             >
-              Clear
+              {t('scan.clear')}
             </Button>
           </div>
           {busy === 'extract' && (
-            <Spinner label="Uploading receipts — they are analysed in the background…" />
+            <Spinner label={t('scan.uploading')} />
           )}
           {error && <ErrorMessage message={error} />}
           {uploadResults.length > 0 && !busy && (
@@ -564,15 +562,13 @@ export function ScanBillsPage() {
               </ul>
               {acceptedCount > 0 ? (
                 <div className="hint-banner">
-                  {acceptedCount} receipt{acceptedCount === 1 ? '' : 's'} accepted
-                  for analysis — this can take a few minutes per receipt. Check the
-                  status later in <Link to="/bills">Bills &amp; analysis</Link> and
-                  review each extracted draft there.
+                  {t('scan.accepted', { count: acceptedCount })}
+                  <Link to="/bills">{t('common.nav')}</Link>
+                  {t('scan.acceptedTail')}
                 </div>
               ) : (
                 <div className="hint-banner">
-                  No receipts were accepted for analysis — see the reasons above
-                  and try again.
+                  {t('scan.noneAccepted')}
                 </div>
               )}
             </>
@@ -581,54 +577,52 @@ export function ScanBillsPage() {
       )}
 
       {phase === 'analyzing' && (
-        <Card title="Receipt">
+        <Card title={t('analyzing.cardTitle')}>
           {scan?.status === 'failed' ? (
             <>
-              <ErrorMessage message={scan.error || 'Analysis failed.'} />
+              <ErrorMessage message={scan.error || t('errors.analysisFailed')} />
               <div className="camera-row">
                 <Button onClick={handleRetry} disabled={busy !== null}>
-                  Try again
+                  {t('action.tryAgain')}
                 </Button>
                 <Button variant="secondary" onClick={handleDiscard} disabled={busy !== null}>
-                  Discard
+                  {t('action.discard')}
                 </Button>
               </div>
             </>
           ) : scan?.status === 'cancelled' ? (
             <>
               <div className="hint-banner">
-                Analysis cancelled. The photos are kept with the request until
-                it is deleted — you can read the receipt again or remove the
-                request entirely.
+                {t('analyzing.cancelledBanner')}
               </div>
               <div className="camera-row">
                 <Button onClick={handleRetry} disabled={busy !== null}>
-                  Try again
+                  {t('action.tryAgain')}
                 </Button>
                 <Button variant="danger" onClick={handleDiscard} disabled={busy !== null}>
-                  Delete request
+                  {t('action.deleteRequest')}
                 </Button>
               </div>
             </>
           ) : scanPoll.timedOut ? (
             <>
               <div className="hint-banner">
-                Still analyzing — large receipts can take a while. You can leave
-                this page; the scan keeps running and appears under{' '}
-                <Link to="/bills">Bills &amp; analysis</Link> once it finishes.
+                {t('analyzing.stillRunning')}
+                <Link to="/bills">{t('common.nav')}</Link>
+                {t('analyzing.stillTail')}
               </div>
               <div className="camera-row">
                 <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
-                  Cancel analysis
+                  {t('action.cancelAnalysis')}
                 </Button>
               </div>
             </>
           ) : (
             <>
-              <Spinner label="Reading the receipt — you can leave this page; the scan is kept in the Bills view." />
+              <Spinner label={t('analyzing.readingLong')} />
               <div className="camera-row">
                 <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
-                  Cancel analysis
+                  {t('action.cancelAnalysis')}
                 </Button>
               </div>
             </>
@@ -638,7 +632,7 @@ export function ScanBillsPage() {
       )}
 
       {phase === 'review' && draft && (
-        <Card title="Extracted draft — please review before confirming">
+        <Card title={t('review.cardTitle')}>
           <BillDraftEditor
             key={draftKey}
             draft={draft}
@@ -663,36 +657,35 @@ export function ScanBillsPage() {
       )}
 
       {phase === 'done' && accepted && (
-        <Card title="Saved">
+        <Card title={t('done.title')}>
           <p>
-            Bill <strong>{accepted.market_name || `#${accepted.id}`}</strong> (
-            {formatCents(accepted.total_cents, accepted.currency)}) accepted and
-            stored for analysis.
+            {t('done.prefix')}
+            <strong>{accepted.market_name || `#${accepted.id}`}</strong> (
+            {formatCents(accepted.total_cents, accepted.currency)})
+            {t('done.tail')}
           </p>
           <div className="hint-banner">
-            I'm analyzing your spending patterns in the background — new
-            purchase insights will appear on the dashboard.
+            {t('done.insightHint')}
           </div>
           <div className="camera-row">
-            <Button onClick={reset}>Scan another bill</Button>
+            <Button onClick={reset}>{t('done.scanAnother')}</Button>
             <Link className="btn btn-secondary" to="/bills">
-              View bills &amp; analysis
+              {t('done.viewBills')}
             </Link>
           </div>
         </Card>
       )}
 
       {rereadSent && (
-        <Dialog title="Re-read request sent">
+        <Dialog title={t('rereadDialog.title')}>
           <p className="hint-text">
-            The receipt has been queued for analysis in the background — this
-            can take a few minutes.{' '}
+            {t('rereadDialog.scanIntro')}{' '}
             {rereadReturnsToBills
-              ? "The result will appear under Bills & analysis once it's ready."
-              : 'You can keep uploading receipts in the meantime — the result will appear under Bills & analysis.'}
+              ? t('rereadDialog.scanReturns')
+              : t('rereadDialog.scanKeep')}
           </p>
           <div className="dialog-actions">
-            <Button onClick={dismissReread}>OK</Button>
+            <Button onClick={dismissReread}>{t('common.ok')}</Button>
           </div>
         </Dialog>
       )}

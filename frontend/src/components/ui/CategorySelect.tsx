@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { categoriesBySection } from '../../lib/categories';
 import type { Category, CategoryKind } from '../../types/domain';
 
@@ -35,8 +36,12 @@ export function CategorySelect({
   value,
   onChange,
   ariaLabel,
-  emptyLabel = 'No category',
+  emptyLabel,
 }: CategorySelectProps) {
+  const { t } = useTranslation('common');
+  // The "no category" choice falls back to the translated default when the
+  // caller does not supply a filter-style label ("All categories", …).
+  const empty = emptyLabel ?? t('categories.none');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -70,7 +75,7 @@ export function CategorySelect({
   // sections into one list (each row carries its section as context).
   const q = query.trim().toLowerCase();
   const rows: CategoryRow[] = [];
-  if (!q || emptyLabel.toLowerCase().includes(q)) rows.push({ id: null, icon: '', name: emptyLabel });
+  if (!q || empty.toLowerCase().includes(q)) rows.push({ id: null, icon: '', name: empty });
   for (const [section, cats] of categoriesBySection(categories, kind)) {
     for (const c of cats) {
       if (q && !`${c.name} ${c.description ?? ''} ${section}`.toLowerCase().includes(q)) continue;
@@ -120,7 +125,7 @@ export function CategorySelect({
         }}
       >
         <span className="category-select-value">
-          {current ? `${current.icon} ${current.name}`.trim() : emptyLabel}
+          {current ? `${current.icon} ${current.name}`.trim() : empty}
         </span>
         <span className="category-select-caret" aria-hidden="true">
           ▾
@@ -132,8 +137,8 @@ export function CategorySelect({
             className="category-select-search"
             autoFocus
             value={query}
-            placeholder="Search categories…"
-            aria-label={`Search, ${ariaLabel}`}
+            placeholder={t('categories.search_placeholder')}
+            aria-label={t('categories.search_aria', { field: ariaLabel })}
             role="combobox"
             aria-expanded
             aria-controls={listId}
@@ -146,7 +151,9 @@ export function CategorySelect({
           />
           <ul id={listId} className="category-select-list" role="listbox">
             {rows.length === 0 ? (
-              <li className="category-select-empty">No category matches “{query.trim()}”</li>
+              <li className="category-select-empty">
+                {t('categories.no_match', { query: query.trim() })}
+              </li>
             ) : (
               rows.map((row, i) => (
                 <li

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { productsApi } from '../../api/products';
 import { categoriesApi } from '../../api/categories';
@@ -18,12 +19,12 @@ import {
 
 const PAGE_SIZE = 20;
 
-const SORT_OPTIONS: { value: ProductSort; label: string }[] = [
-  { value: 'name', label: 'Name' },
-  { value: 'updated_at', label: 'Recently updated' },
-  { value: 'times_bought', label: 'Times bought' },
-  { value: 'last_purchase', label: 'Last purchase' },
-  { value: 'avg_price', label: 'Average price' },
+const SORT_OPTIONS: { value: ProductSort; labelKey: string }[] = [
+  { value: 'name', labelKey: 'sort.name' },
+  { value: 'updated_at', labelKey: 'sort.recentlyUpdated' },
+  { value: 'times_bought', labelKey: 'sort.timesBought' },
+  { value: 'last_purchase', labelKey: 'sort.lastPurchase' },
+  { value: 'avg_price', labelKey: 'sort.avgPrice' },
 ];
 
 /**
@@ -33,6 +34,7 @@ const SORT_OPTIONS: { value: ProductSort; label: string }[] = [
  * the group's generic name; the price column is the family average.
  */
 export function ProductsPage() {
+  const { t } = useTranslation('products');
   const categories = useAsync(() => categoriesApi.list(), []);
 
   // Filters. The name input is debounced; everything else commits directly.
@@ -44,11 +46,11 @@ export function ProductsPage() {
   const [offset, setOffset] = useState(0);
 
   useEffect(() => {
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       setName(nameInput.trim());
       setOffset(0);
     }, 300);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [nameInput]);
 
   const { data, loading, error, reload } = useAsync(
@@ -89,8 +91,8 @@ export function ProductsPage() {
   const [justAdded, setJustAdded] = useState<number | null>(null);
   useEffect(() => {
     if (justAdded === null) return;
-    const t = setTimeout(() => setJustAdded(null), 1200);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setJustAdded(null), 1200);
+    return () => clearTimeout(timer);
   }, [justAdded]);
 
   const groups = data?.items ?? [];
@@ -103,11 +105,11 @@ export function ProductsPage() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Products</h2>
+      <h2 className="page-title">{t('title')}</h2>
 
       <div className="filter-row">
         <input
-          placeholder="Search generic name"
+          placeholder={t('search.placeholder')}
           value={nameInput}
           onChange={(e) => setNameInput(e.target.value)}
         />
@@ -115,8 +117,8 @@ export function ProductsPage() {
           categories={categories.data ?? []}
           kind="product"
           value={categoryId}
-          ariaLabel="Filter by category"
-          emptyLabel="All categories"
+          ariaLabel={t('search.categoryAria')}
+          emptyLabel={t('search.allCategories')}
           onChange={(id) => {
             setCategoryId(id);
             setOffset(0);
@@ -124,7 +126,7 @@ export function ProductsPage() {
         />
         <select
           value={sort}
-          aria-label="Sort by"
+          aria-label={t('sort.orderBy')}
           onChange={(e) => {
             setSort(e.target.value as ProductSort);
             setOffset(0);
@@ -132,7 +134,7 @@ export function ProductsPage() {
         >
           {SORT_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
-              Sort: {o.label}
+              {t('sort.prefix')} {t(o.labelKey)}
             </option>
           ))}
         </select>
@@ -142,7 +144,7 @@ export function ProductsPage() {
             setOrder(order === 'asc' ? 'desc' : 'asc');
             setOffset(0);
           }}
-          title={order === 'asc' ? 'Ascending' : 'Descending'}
+          title={order === 'asc' ? t('sort.ascending') : t('sort.descending')}
         >
           {order === 'asc' ? '↑' : '↓'}
         </button>
@@ -152,8 +154,8 @@ export function ProductsPage() {
         <EmptyState
           message={
             name || categoryId
-              ? 'No products match these filters.'
-              : 'No products yet — confirm a scanned bill and its items appear here.'
+              ? t('empty.filtered')
+              : t('empty.none')
           }
         />
       ) : (
@@ -161,10 +163,10 @@ export function ProductsPage() {
           <table className="data-table products-table">
             <thead>
               <tr>
-                <th>Product</th>
-                <th>Category</th>
-                <th className="num">Avg price</th>
-                <th aria-label="Actions" />
+                <th>{t('columns.product')}</th>
+                <th>{t('columns.category')}</th>
+                <th className="num">{t('columns.avgPrice')}</th>
+                <th aria-label={t('columns.actions')} />
               </tr>
             </thead>
             <tbody>
@@ -179,8 +181,8 @@ export function ProductsPage() {
                           <button
                             type="button"
                             className="icon-btn group-toggle"
-                            title={isOpen ? 'Hide the products of this family' : 'Show the products of this family'}
-                            aria-label={`${isOpen ? 'Hide' : 'Show'} the products of ${group.generic_name}`}
+                            title={isOpen ? t('family.hide') : t('family.show')}
+                            aria-label={isOpen ? t('family.ariaHide', { name: group.generic_name }) : t('family.ariaShow', { name: group.generic_name })}
                             aria-expanded={isOpen}
                             onClick={() => toggleExpanded(key)}
                           >
@@ -189,7 +191,7 @@ export function ProductsPage() {
                           <span className="product-name">{group.generic_name}</span>
                           <span
                             className="group-count"
-                            title={`${group.product_count} product${group.product_count === 1 ? '' : 's'} in this family`}
+                            title={t('family.countTitle', { count: group.product_count })}
                           >
                             {group.product_count}
                           </span>
@@ -206,11 +208,11 @@ export function ProductsPage() {
                           <button
                             type="button"
                             className="btn btn-ghost btn-sm"
-                            title="Edit the generic product name of this family"
-                            aria-label={`Edit the generic product name of ${group.generic_name}`}
+                            title={t('family.renameTitle')}
+                            aria-label={t('family.renameAria', { name: group.generic_name })}
                             onClick={() => setEditingGroup(group)}
                           >
-                            Rename
+                            {t('actions.rename')}
                           </button>
                         </div>
                       </td>
@@ -221,11 +223,11 @@ export function ProductsPage() {
                           <table className="data-table group-members-table">
                             <thead>
                               <tr>
-                                <th>Product</th>
-                                <th>Standardized name</th>
-                                <th className="num">Latest price</th>
-                                <th>Store</th>
-                                <th aria-label="Actions" />
+                                <th>{t('columns.product')}</th>
+                                <th>{t('columns.standardName')}</th>
+                                <th className="num">{t('columns.latestPrice')}</th>
+                                <th>{t('columns.store')}</th>
+                                <th aria-label={t('columns.actions')} />
                               </tr>
                             </thead>
                             <tbody>
@@ -260,32 +262,36 @@ export function ProductsPage() {
                                       <button
                                         type="button"
                                         className="btn btn-ghost btn-sm"
-                                        title="View details"
-                                        aria-label={`View details of ${product.name}`}
+                                        title={t('actions.detailsTitle')}
+                                        aria-label={t('actions.detailsAria', { name: product.name })}
                                         onClick={() => setDetailsProduct(product)}
                                       >
-                                        Details
+                                        {t('actions.details')}
                                       </button>
                                       <button
                                         type="button"
                                         className="btn btn-ghost btn-sm"
-                                        title={cart.has(product.id) ? 'Already in the cart — tap to add another' : 'Add to the purchase cart'}
-                                        aria-label={`Add ${product.name} to the purchase cart`}
+                                        title={cart.has(product.id) ? t('addToCart.titleInCart') : t('addToCart.title')}
+                                        aria-label={t('addToCart.aria', { name: product.name })}
                                         onClick={() => {
                                           cart.add(product);
                                           setJustAdded(product.id);
                                         }}
                                       >
-                                        {justAdded === product.id ? 'In cart' : cart.has(product.id) ? 'Add' : 'Add to cart'}
+                                        {justAdded === product.id
+                                          ? t('addToCart.added')
+                                          : cart.has(product.id)
+                                            ? t('addToCart.add')
+                                            : t('addToCart.addLong')}
                                       </button>
                                       <button
                                         type="button"
                                         className="btn btn-ghost btn-sm"
-                                        title="Edit product"
-                                        aria-label={`Edit ${product.name}`}
+                                        title={t('actions.editTitle')}
+                                        aria-label={t('actions.editAria', { name: product.name })}
                                         onClick={() => setEditingId(product.id)}
                                       >
-                                        Edit
+                                        {t('actions.edit')}
                                       </button>
                                     </div>
                                   </td>
