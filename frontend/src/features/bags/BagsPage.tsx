@@ -21,6 +21,17 @@ import {
   ErrorMessage,
   EmptyState,
   Spinner,
+  IconButton,
+  IconCloseCircle,
+  IconEdit,
+  IconFund,
+  IconLedger,
+  IconMoveBetween,
+  IconReopen,
+  IconSliders,
+  IconTrash,
+  IconWithdraw,
+  ProgressBar,
 } from '../../components/ui';
 
 // Bags are named reserves INSIDE one account ("allocation envelopes"): the
@@ -246,40 +257,141 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
             {view.bags.length === 0 ? (
               <p className="hint-text">{t('list.noBagsOnAccount')}</p>
             ) : (
-              <div className="budget-list">
-                {view.bags.map((b) => (
-                  <BagCard
-                    key={b.id}
-                    bag={b}
-                    account={{
-                      account_id: view.account_id,
-                      currency: view.currency,
-                      bags: view.bags,
-                    }}
-                    currency={view.currency}
-                    busy={busy}
-                    onFund={() => {
-                      setAllocateKind('fund');
-                      setAllocating(b);
-                    }}
-                    onWithdraw={() => {
-                      setAllocateKind('withdraw');
-                      setAllocating(b);
-                    }}
-                    onMoveMoney={() => {
-                      setAllocateKind('fund');
-                      setAllocating(b);
-                    }}
-                    onRebalance={() => {
-                      setRebalanceFrom(b.id);
-                      setRebalancing(String(view.account_id));
-                    }}
-                    onHistory={() => void openHistory(b)}
-                    onEdit={() => setEditing(b)}
-                    onToggleStatus={() => void handleStatus(b, b.status === 'open' ? 'closed' : 'open')}
-                    onDelete={() => setConfirmDelete(b)}
-                  />
-                ))}
+              <div className="table-scroll">
+                <table className="plan-table">
+                  <thead>
+                    <tr>
+                      <th>{t('table.bag')}</th>
+                      <th className="num">{t('table.target')}</th>
+                      <th className="num">{t('table.balance')}</th>
+                      <th className="num">{t('table.spent')}</th>
+                      <th className="cell-progress-header">{t('table.progress')}</th>
+                      <th>{t('table.status')}</th>
+                      <th aria-hidden="true" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {view.bags.map((b) => {
+                      const health = bagHealth(b);
+                      const pct =
+                        b.target_cents != null && b.target_cents > 0
+                          ? (b.balance_cents / b.target_cents) * 100
+                          : 0;
+                      const openSiblings =
+                        view.bags.filter((o) => o.status === 'open').length > 1;
+                      return (
+                        <tr key={b.id}>
+                          <td>
+                            <span className="cell-entity">
+                              <span
+                                className={
+                                  health === 'ok'
+                                    ? 'budget-dot ok'
+                                    : health === 'over'
+                                      ? 'budget-dot over'
+                                      : 'budget-dot'
+                                }
+                                aria-hidden="true"
+                              />
+                              <span className="entity-name">{b.name}</span>
+                              {b.status === 'closed' && <BagClosedTag label={t('status.closed')} />}
+                            </span>
+                          </td>
+                          <td className="num">
+                            {b.target_cents != null ? formatCents(b.target_cents, view.currency) : '—'}
+                          </td>
+                          <td className="num">
+                            <strong>{formatCents(b.balance_cents, view.currency)}</strong>
+                          </td>
+                          <td className="num cell-muted-num">
+                            {formatCents(b.tagged_spend_cents, view.currency)}
+                          </td>
+                          <td className="cell-progress">
+                            {b.target_cents != null && b.target_cents > 0 ? (
+                              <ProgressBar pct={pct} done={health === 'ok'} over={health === 'over'} />
+                            ) : (
+                              ''
+                            )}
+                          </td>
+                          <td>
+                            <BagStatusCell bag={b} currency={view.currency} />
+                          </td>
+                          <td className="cell-actions">
+                            {b.status === 'open' && (
+                              <>
+                                <IconButton
+                                  icon={<IconFund />}
+                                  label={t('actions.fund')}
+                                  disabled={busy}
+                                  onClick={() => {
+                                    setAllocateKind('fund');
+                                    setAllocating(b);
+                                  }}
+                                />
+                                <IconButton
+                                  icon={<IconWithdraw />}
+                                  label={t('actions.withdraw')}
+                                  disabled={busy}
+                                  onClick={() => {
+                                    setAllocateKind('withdraw');
+                                    setAllocating(b);
+                                  }}
+                                />
+                                {openSiblings && (
+                                  <IconButton
+                                    icon={<IconMoveBetween />}
+                                    label={t('actions.moveToBag')}
+                                    disabled={busy}
+                                    onClick={() => {
+                                      setRebalanceFrom(b.id);
+                                      setRebalancing(String(view.account_id));
+                                    }}
+                                  />
+                                )}
+                                <IconButton
+                                  icon={<IconSliders />}
+                                  label={t('actions.adjust')}
+                                  disabled={busy}
+                                  onClick={() => {
+                                    setAllocateKind('fund');
+                                    setAllocating(b);
+                                  }}
+                                />
+                              </>
+                            )}
+                            <IconButton
+                              icon={<IconLedger />}
+                              label={t('actions.ledger')}
+                              disabled={busy}
+                              onClick={() => void openHistory(b)}
+                            />
+                            <IconButton
+                              icon={<IconEdit />}
+                              label={t('actions.edit')}
+                              disabled={busy}
+                              onClick={() => setEditing(b)}
+                            />
+                            <IconButton
+                              icon={b.status === 'open' ? <IconCloseCircle /> : <IconReopen />}
+                              label={b.status === 'open' ? t('actions.closeBag') : t('actions.reopen')}
+                              disabled={busy}
+                              onClick={() =>
+                                void handleStatus(b, b.status === 'open' ? 'closed' : 'open')
+                              }
+                            />
+                            <IconButton
+                              icon={<IconTrash />}
+                              label={t('actions.delete')}
+                              variant="danger"
+                              disabled={busy}
+                              onClick={() => setConfirmDelete(b)}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>
@@ -397,110 +509,44 @@ function bagHealth(b: BagStatus): string | undefined {
   return 'spent-out';
 }
 
-// BagCard mirrors the budget progress-card: dot + name + balance amounts,
-// target progress bar, a status line, and the action row. The money actions
-// are explicit: Fund and Withdraw post the two everyday ledger entries; "Move
-// to bag" preselects this bag as the rebalance source; Adjust (a rare drift
-// correction) lives behind "Move money" with the kind selector.
-function BagCard({
-  bag,
-  account,
-  currency,
-  busy,
-  onFund,
-  onWithdraw,
-  onMoveMoney,
-  onRebalance,
-  onHistory,
-  onEdit,
-  onToggleStatus,
-  onDelete,
-}: {
-  bag: BagStatus;
-  account: { account_id: number; currency: string; bags: BagStatus[] };
-  currency: string;
-  busy: boolean;
-  onFund: () => void;
-  onWithdraw: () => void;
-  onMoveMoney: () => void;
-  onRebalance: () => void;
-  onHistory: () => void;
-  onEdit: () => void;
-  onToggleStatus: () => void;
-  onDelete: () => void;
-}) {
+// The BagCard progress-card became one table row per bag under its account
+// section: aligned figure cells, a bar cell, and icon actions — Fund and
+// Withdraw post the everyday ledger entries, "Move to bag" preselects the
+// rebalance source, Adjust (a rare drift correction) opens the kind selector.
+/** Closed-bag inline tag beside the bag name. */
+function BagClosedTag({ label }: { label: string }) {
+  return <span className="cell-tag stat-label">{label}</span>;
+}
+
+/** The derived health wording of a bag row, colored by state. */
+function BagStatusCell({ bag, currency }: { bag: BagStatus; currency: string }) {
   const { t } = useTranslation('bags');
-  const health = bagHealth(bag);
-  const pct =
-    bag.target_cents != null && bag.target_cents > 0
-      ? (bag.balance_cents / bag.target_cents) * 100
-      : 0;
-  const dotLabel =
-    health === 'ok' ? 'budget-dot ok' : health === 'over' ? 'budget-dot over' : 'budget-dot';
   return (
-    <Card className="budget-card">
-      <div className="budget-head">
-        <span className={dotLabel} aria-hidden="true" />
-        <span className="budget-name">{bag.name}</span>
-        <span className="stat-label">{bag.account_name}</span>
-        <span className="budget-amounts">
-          <strong>{formatCents(bag.balance_cents, currency)}</strong>
-          {bag.target_cents != null && (
-            <span aria-label={t('card.targetAria')}>{' / '}{formatCents(bag.target_cents, currency)}</span>
-          )}
-        </span>
-      </div>
-      {bag.target_cents != null && bag.target_cents > 0 && (
-        <div className="progress-track">
-          <div
-            className={health === 'ok' ? 'progress-fill done' : 'progress-fill'}
-            style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-          />
-        </div>
-      )}
-      <div className="budget-status">
-        {t('status.spent', { amount: formatCents(bag.tagged_spend_cents, currency) })} ·{' '}
-        {bag.status === 'closed'
-          ? t('status.closed')
-          : bag.balance_cents < 0
-            ? t('status.overspent', { amount: formatCents(-bag.balance_cents, currency) })
-            : bag.balance_cents === 0
-              ? t('status.spentOut')
-              : t('status.holdsReserve')}
-      </div>
-      <div className="camera-row">
-        {bag.status === 'open' && (
-          <>
-            <Button variant="secondary" className="btn-sm" onClick={onFund} disabled={busy}>
-              {t('actions.fund')}
-            </Button>
-            <Button variant="secondary" className="btn-sm" onClick={onWithdraw} disabled={busy}>
-              {t('actions.withdraw')}
-            </Button>
-            {(account.bags.filter((o) => o.status === 'open').length > 1) && (
-              <Button variant="secondary" className="btn-sm" onClick={onRebalance} disabled={busy}>
-                {t('actions.moveToBag')}
-              </Button>
-            )}
-            <Button variant="ghost" className="btn-sm" onClick={onMoveMoney} disabled={busy}>
-              {t('actions.adjust')}
-            </Button>
-          </>
-        )}
-        <Button variant="ghost" className="btn-sm" onClick={onHistory}>
-          {t('actions.ledger')}
-        </Button>
-        <Button variant="ghost" className="btn-sm" onClick={onEdit} disabled={busy}>
-          {t('actions.edit')}
-        </Button>
-        <Button variant="ghost" className="btn-sm" onClick={onToggleStatus} disabled={busy}>
-          {bag.status === 'open' ? t('actions.closeBag') : t('actions.reopen')}
-        </Button>
-        <Button variant="danger" className="btn-sm" onClick={onDelete} disabled={busy}>
-          {t('actions.delete')}
-        </Button>
-      </div>
-    </Card>
+    <span
+      className={
+bag.balance_cents < 0
+          ? 'cell-status over'
+          : 'cell-status'
+      }
+    >
+      <span
+        className={
+          bag.balance_cents < 0
+            ? 'budget-dot over'
+            : bag.status === 'closed'
+              ? 'budget-dot closed'
+              : 'budget-dot'
+        }
+        aria-hidden="true"
+      />
+      {bag.status === 'closed'
+        ? t('status.closed')
+        : bag.balance_cents < 0
+          ? t('status.overspent', { amount: formatCents(-bag.balance_cents, currency) })
+          : bag.balance_cents === 0
+            ? t('status.spentOut')
+            : t('status.holdsReserve')}
+    </span>
   );
 }
 

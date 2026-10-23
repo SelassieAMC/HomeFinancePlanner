@@ -5,6 +5,16 @@ import type { LocaleBundle } from '../core';
 export const budgets: LocaleBundle = {
   en: {
     title: 'Budgets',
+    table: {
+      budget: 'Budget',
+      period: 'Period',
+      spent: 'Spent',
+      cap: 'Cap',
+      progress: 'Progress',
+      status: 'Status',
+      envelope: 'Envelope',
+      closed: 'Closed',
+    },
     add: {
       title: 'Add budget',
       category_aria: 'Budget category',
@@ -46,6 +56,16 @@ export const budgets: LocaleBundle = {
   },
   de: {
     title: 'Budgets',
+    table: {
+      budget: 'Budget',
+      period: 'Zeitraum',
+      spent: 'Ausgegeben',
+      cap: 'Limit',
+      progress: 'Fortschritt',
+      status: 'Status',
+      envelope: 'Umschlag',
+      closed: 'Abgeschlossen',
+    },
     add: {
       title: 'Budget anlegen',
       category_aria: 'Budget-Kategorie',
@@ -87,6 +107,16 @@ export const budgets: LocaleBundle = {
   },
   es: {
     title: 'Presupuestos',
+    table: {
+      budget: 'Presupuesto',
+      period: 'Periodo',
+      spent: 'Gastado',
+      cap: 'Límite',
+      progress: 'Progreso',
+      status: 'Estado',
+      envelope: 'Sobre',
+      closed: 'Cerrado',
+    },
     add: {
       title: 'Añadir presupuesto',
       category_aria: 'Categoría del presupuesto',

@@ -5,6 +5,7 @@ import { productsApi } from '../../api/products';
 import { bagsApi } from '../../api/bags';
 import { crossRate, convertCents, fxApi } from '../../api/fx';
 import { dollarsToCents, formatCents, parseDecimalInput } from '../../lib/money';
+import { incomeCategories } from '../../lib/categories';
 import { useAsync } from '../../hooks/useAsync';
 import {
   Button,
@@ -248,6 +249,24 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
     setLines((ls) => ls.map((line) => (line.key === key ? { ...line, ...patch } : line)));
   }
 
+  // The kind decides what the form carries: expenses take item lines, a
+  // market and expense categories; incomes carry only an amount, an account
+  // and an income category; transfers carry neither category nor market.
+  // Item lines pin the kind to expense (the buttons disable themselves), so
+  // switching only clears everything the new kind refuses — the category
+  // families differ per direction, so it always re-picks.
+  function switchKind(next: TransactionKind) {
+    if (next === kind) return;
+    setKind(next);
+    setCategoryId('');
+    if (next !== 'expense') {
+      setStoreId('');
+      setCustomStore(false);
+      setCustomStoreName('');
+      setBagId('');
+    }
+  }
+
   // Normalization-memory lookup when the name field is left: shows the
   // standardized name the raw text maps to and fills the product category
   // when unset. The typed name is never changed — unknown names are recorded
@@ -379,12 +398,12 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         amount_cents: amountCents,
         description,
         date,
-        store_name: isTransfer ? '' : (customStore ? customStoreName : (pickedStore?.name ?? '')),
+        store_name: kind === 'expense' ? (customStore ? customStoreName : (pickedStore?.name ?? '')) : '',
         counter_account_id: isTransfer ? Number(counterAccountId) : undefined,
         fee_cents: isTransfer && fee.trim() !== '' ? feeCentsValue : undefined,
         fx_rate: fxRateValue,
         bag_id: kind === 'expense' && bagId ? Number(bagId) : undefined,
-        items: items.length > 0 && !isTransfer ? items : undefined,
+        items: items.length > 0 && kind === 'expense' ? items : undefined,
       });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : t('form.error.save'));
@@ -396,13 +415,14 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       {/* The kind toggle replaces the old kind select — expense/income/transfer
-          is a three-way switch, and item lines pin it to expense. */}
+          is a three-way switch, and item lines pin it to expense. Switching
+          drops the inputs the new kind does not carry. */}
       <div className="segmented" role="group" aria-label={t('form.kindAria')}>
         <button
           type="button"
           className={kind === 'expense' ? 'active' : ''}
           aria-pressed={kind === 'expense'}
-          onClick={() => setKind('expense')}
+          onClick={() => switchKind('expense')}
         >
           {t('form.kindExpense')}
         </button>
@@ -411,7 +431,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           className={kind === 'income' ? 'active' : ''}
           aria-pressed={kind === 'income'}
           disabled={hasLines}
-          onClick={() => setKind('income')}
+          onClick={() => switchKind('income')}
         >
           {t('form.kindIncome')}{hasLines ? t('form.noItems') : ''}
         </button>
@@ -420,7 +440,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           className={kind === 'transfer' ? 'active' : ''}
           aria-pressed={kind === 'transfer'}
           disabled={hasLines}
-          onClick={() => setKind('transfer')}
+          onClick={() => switchKind('transfer')}
         >
           {t('form.kindTransfer')}{hasLines ? t('form.noItems') : ''}
         </button>
@@ -498,7 +518,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           <label>
             {t('form.label.category')}
             <CategorySelect
-              categories={categories}
+              categories={kind === 'income' ? incomeCategories(categories) : categories}
               kind="expense"
               value={categoryId ? Number(categoryId) : null}
               onChange={(id) => setCategoryId(id ? String(id) : '')}
@@ -524,7 +544,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             </select>
           </label>
         )}
-        {!isTransfer && (
+        {kind === 'expense' && (
           <label>
             {t('form.label.store')}
           {customStore ? (
@@ -609,8 +629,9 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           </>
         )}
 
-      {/* Transfers move money, they do not buy anything: no item lines. */}
-      {!isTransfer && (
+      {/* Only expenses buy things: incomes and transfers carry no item lines,
+          no product autocomplete and no per-product categories. */}
+      {kind === 'expense' && (
       <div className="transaction-lines">
         <div className="transaction-lines-header">
           <span>{t('form.lines.header')} {hasLines ? '' : t('form.lines.optional')}</span>

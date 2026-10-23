@@ -4,10 +4,10 @@ import type { AsyncState } from '../../hooks/useAsync';
 import i18n from '../../i18n';
 import { intlLocale } from '../../i18n/core';
 import { categoriesApi } from '../../api/categories';
-import { Card } from '../../components/ui';
 import { formatCents } from '../../lib/money';
 import { todayISO } from '../../lib/date';
 import type { BudgetStatus, Summary } from '../../types/domain';
+import { PlanRow } from './PlanRow';
 
 /** Short month label for the section title / a monthly row ("2026-10" → "Oct 2026"). */
 function monthTag(month: string): string {
@@ -72,80 +72,59 @@ export function BudgetsBody({ summary }: { summary: AsyncState<Summary> }) {
   );
 
   return (
-    <div className="budget-list">
-        {rows.map((b) => {
-          const cat = catById.get(b.category_id);
-          const isClosed = b.status === 'closed';
-          const over = b.remaining_cents < 0;
-          const pct = b.amount_cents > 0 ? (b.lifetime_spent_cents / b.amount_cents) * 100 : 0;
+    <div className="plan-list">
+      {rows.map((b) => {
+        const cat = catById.get(b.category_id);
+        const isClosed = b.status === 'closed';
+        const over = b.remaining_cents < 0;
+        const pct = b.amount_cents > 0 ? (b.lifetime_spent_cents / b.amount_cents) * 100 : 0;
 
-          // Only for capped rows in the current month, mid-month, still under
-          // the cap: would the month's pace so far exhaust the remaining
-          // budget before the month ends?
-          let paceWarning = '';
-          if (b.cadence === 'monthly' && b.month === currentMonth && !isClosed && !over && elapsedDays >= 2) {
-            const pace = b.spent_cents / elapsedDays;
-            const daysToExhaust = pace > 0 ? b.remaining_cents / pace : Infinity;
-            if (daysToExhaust < monthDays - elapsedDays) {
-              paceWarning = t('budgets.paceWarning', { count: Math.max(1, Math.floor(daysToExhaust)) });
-            }
+        // Only for capped rows in the current month, mid-month, still under
+        // the cap: would the month's pace so far exhaust the remaining
+        // budget before the month ends?
+        let paceWarning = '';
+        if (b.cadence === 'monthly' && b.month === currentMonth && !isClosed && !over && elapsedDays >= 2) {
+          const pace = b.spent_cents / elapsedDays;
+          const daysToExhaust = pace > 0 ? b.remaining_cents / pace : Infinity;
+          if (daysToExhaust < monthDays - elapsedDays) {
+            paceWarning = t('budgets.paceWarning', { count: Math.max(1, Math.floor(daysToExhaust)) });
           }
+        }
 
-          return (
-            <Card className="budget-card" key={b.id}>
-              <div className="budget-head">
-                <span
-                  className={
-                    isClosed ? 'budget-dot closed' : over ? 'budget-dot over' : 'budget-dot'
-                  }
-                  aria-hidden="true"
-                />
-                <span className="budget-name">
-                  {cat?.icon && <span aria-hidden="true">{cat.icon} </span>}
-                  {cat?.name ?? `#${b.category_id}`}
-                </span>
-                {b.cadence === 'monthly' && (
-                  <span className="stat-label">
-                    {t('budgets.monthly')}{b.month ? ` · ${monthTag(b.month)}` : ''}
-                  </span>
-                )}
-                <span className="budget-amounts">
-                  <strong>{formatCents(b.lifetime_spent_cents, currency)}</strong>
-                  {' / '}
-                  {formatCents(b.amount_cents, currency)}
-                </span>
-              </div>
-              <div className="progress-track">
-                <div
-                  className={over ? 'progress-fill over' : 'progress-fill'}
-                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-                />
-              </div>
-              <div
-                className={
-                  isClosed ? 'budget-status' : over ? 'budget-status over' : 'budget-status ok'
-                }
-              >
-                {isClosed
-                  ? t('budgets.closed', {
-                      spent: formatCents(b.lifetime_spent_cents, currency),
-                      total: formatCents(b.amount_cents, currency),
-                    })
-                  : over
-                    ? t('budgets.over', { amount: formatCents(-b.remaining_cents, currency) })
-                    : t('budgets.left', { amount: formatCents(b.remaining_cents, currency) })}
-              </div>
-              {paceWarning && <div className="hint-inline">{paceWarning}</div>}
-              {/* Envelopes get lifetime progress; the in-range figure shows
-                  what this month alone added to the pool. */}
-              {b.cadence === 'open' && b.spent_cents > 0 && (
-                <div className="hint-inline">
-                  {t('budgets.spentInMonth', { spent: formatCents(b.spent_cents, currency), month: monthTag(month) })}
-                </div>
-              )}
-            </Card>
-          );
-        })}
-      </div>
+        return (
+          <PlanRow
+            key={b.id}
+            tone={isClosed ? 'closed' : over ? 'over' : 'normal'}
+            icon={cat?.icon}
+            name={cat?.name ?? `#${b.category_id}`}
+            context={b.cadence === 'monthly' ? `${t('budgets.monthly')}${b.month ? ` · ${monthTag(b.month)}` : ''}` : undefined}
+            primary={formatCents(b.lifetime_spent_cents, currency)}
+            target={formatCents(b.amount_cents, currency)}
+            pct={pct}
+            status={
+              isClosed
+                ? t('budgets.closed', {
+                    spent: formatCents(b.lifetime_spent_cents, currency),
+                    total: formatCents(b.amount_cents, currency),
+                  })
+                : over
+                  ? t('budgets.over', { amount: formatCents(-b.remaining_cents, currency) })
+                  : t('budgets.left', { amount: formatCents(b.remaining_cents, currency) })
+            }
+            statusTone={over ? 'over' : 'normal'}
+            // Envelopes get lifetime progress; the in-range figure shows what
+            // this month alone added to the pool.
+            hint={
+              [
+                paceWarning,
+                b.cadence === 'open' && b.spent_cents > 0
+                  ? t('budgets.spentInMonth', { spent: formatCents(b.spent_cents, currency), month: monthTag(month) })
+                  : '',
+              ].filter(Boolean).join(' ') || undefined
+            }
+          />
+        );
+      })}
+    </div>
   );
 }

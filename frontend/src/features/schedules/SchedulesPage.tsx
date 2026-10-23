@@ -29,6 +29,10 @@ import {
   ErrorMessage,
   EmptyState,
   Spinner,
+  IconButton,
+  IconArchive,
+  IconEdit,
+  IconTrash,
 } from '../../components/ui';
 
 // Scheduled actions are the unified scheduler: virtual kinds (bag funding /
@@ -345,34 +349,65 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
         {active.length === 0 ? (
           <EmptyState message={t('list.empty')} />
         ) : (
-          <div className="budget-list">
-            {active.map((s) => (
-              <div key={s.id} className="budget-card">
-                <div className="budget-head">
-                  <span className="budget-dot" aria-hidden="true" />
-                  <span className="budget-name">{s.name}</span>
-                  <span className="badge">{t(RECURRENCE_KEYS[s.recurrence])}</span>
-                  <span className="budget-amounts">{formatDate(s.start_date)}</span>
-                </div>
-                <div className="budget-status">
-                  {t(KIND_KEYS[s.kind])} · {payloadSummary(s.payload, lookup)}
-                  {s.recurrence !== 'once' && s.day_of_month
-                    ? ` · ${t('list.day', { count: s.day_of_month })}${s.recurrence === 'yearly' && s.month_of_year ? ` ${t('list.month_of', { count: s.month_of_year })}` : ''}`
-                    : ''}
-                </div>
-                <div className="budget-actions">
-                  <Button variant="secondary" className="btn-sm" onClick={() => { setFormError(null); setEditing(s); }}>
-                    {t('list.edit')}
-                  </Button>
-                  <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => handleArchive(s)}>
-                    {t('list.archive')}
-                  </Button>
-                  <Button variant="danger" className="btn-sm" onClick={() => { setFormError(null); setConfirmDelete(s); }}>
-                    {t('list.delete')}
-                  </Button>
-                </div>
-              </div>
-            ))}
+          <div className="table-scroll">
+            <table className="plan-table">
+              <thead>
+                <tr>
+                  <th>{t('table.schedule')}</th>
+                  <th>{t('table.kind')}</th>
+                  <th>{t('table.recurrence')}</th>
+                  <th>{t('table.starts')}</th>
+                  <th aria-hidden="true" />
+                </tr>
+              </thead>
+              <tbody>
+                {active.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      <span className="cell-entity">
+                        <span className="budget-dot" aria-hidden="true" />
+                        <span className="entity-name">{s.name}</span>
+                      </span>
+                    </td>
+                    <td className="cell-muted">
+                      {t(KIND_KEYS[s.kind])} · {payloadSummary(s.payload, lookup)}
+                    </td>
+                    <td className="cell-muted">
+                      {t(RECURRENCE_KEYS[s.recurrence])}
+                      {s.recurrence !== 'once' && s.day_of_month
+                        ? ` · ${t('list.day', { count: s.day_of_month })}${s.recurrence === 'yearly' && s.month_of_year ? ` ${t('list.month_of', { count: s.month_of_year })}` : ''}`
+                        : ''}
+                    </td>
+                    <td className="cell-muted">{formatDate(s.start_date)}</td>
+                    <td className="cell-actions">
+                      <IconButton
+                        icon={<IconEdit />}
+                        label={t('list.edit')}
+                        onClick={() => {
+                          setFormError(null);
+                          setEditing(s);
+                        }}
+                      />
+                      <IconButton
+                        icon={<IconArchive />}
+                        label={t('list.archive')}
+                        disabled={busy}
+                        onClick={() => handleArchive(s)}
+                      />
+                      <IconButton
+                        icon={<IconTrash />}
+                        label={t('list.delete')}
+                        variant="danger"
+                        onClick={() => {
+                          setFormError(null);
+                          setConfirmDelete(s);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
         <p className="hint-text">{t('list.hint')}</p>

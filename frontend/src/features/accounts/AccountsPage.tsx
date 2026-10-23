@@ -12,11 +12,14 @@ const ACCOUNT_TYPES: AccountType[] = ['checking', 'savings', 'credit', 'cash', '
 
 // The backend accepts any 3-letter ISO currency, which can be wider than the
 // picklist — always include the account's current currency so it stays
-// selectable instead of rendering as a blank option.
+// selectable instead of rendering as a blank option. The account dropdown is
+// alphabetical by code (unlike the bill/base selects, which keep EUR/USD on
+// top).
 function currencyOptions(current: string): CurrencyOption[] {
-  return COMMON_CURRENCIES.some((c) => c.code === current)
+  const all = COMMON_CURRENCIES.some((c) => c.code === current)
     ? COMMON_CURRENCIES
     : [{ code: current, label: current }, ...COMMON_CURRENCIES];
+  return [...all].sort((a, b) => a.code.localeCompare(b.code));
 }
 
 export function AccountsPage() {
@@ -190,7 +193,7 @@ export function AccountsPage() {
             }}
             aria-label={t('add.currencyAria')}
           >
-            {COMMON_CURRENCIES.map((c) => (
+            {currencyOptions(currency).map((c) => (
               <option key={c.code} value={c.code}>
                 {c.code}
               </option>

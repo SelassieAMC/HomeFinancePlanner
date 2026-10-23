@@ -30,6 +30,7 @@ export const COMMON_CURRENCIES: CurrencyOption[] = [
   { code: 'HKD', label: 'Hong Kong Dollar' },
   { code: 'SGD', label: 'Singapore Dollar' },
   { code: 'MXN', label: 'Mexican Peso' },
+  { code: 'COP', label: 'Colombian Peso' },
   { code: 'BRL', label: 'Brazilian Real' },
   { code: 'ZAR', label: 'South African Rand' },
   { code: 'INR', label: 'Indian Rupee' },

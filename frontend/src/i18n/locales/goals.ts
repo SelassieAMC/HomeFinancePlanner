@@ -5,6 +5,12 @@ import type { LocaleBundle } from '../core';
 export const goals: LocaleBundle = {
   en: {
     title: 'Goals',
+    table: {
+      goal: 'Goal',
+      account: 'Account',
+      progress: 'Progress / Target',
+      status: 'Status',
+    },
     add: {
       title: 'Add goal',
       name_placeholder: 'Goal name',
@@ -58,6 +64,12 @@ export const goals: LocaleBundle = {
   },
   de: {
     title: 'Ziele',
+    table: {
+      goal: 'Ziel',
+      account: 'Konto',
+      progress: 'Fortschritt / Ziel',
+      status: 'Status',
+    },
     add: {
       title: 'Ziel anlegen',
       name_placeholder: 'Zielname',
@@ -111,6 +123,12 @@ export const goals: LocaleBundle = {
   },
   es: {
     title: 'Metas',
+    table: {
+      goal: 'Meta',
+      account: 'Cuenta',
+      progress: 'Progreso / Objetivo',
+      status: 'Estado',
+    },
     add: {
       title: 'Añadir meta',
       name_placeholder: 'Nombre de la meta',

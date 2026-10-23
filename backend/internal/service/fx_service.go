@@ -27,6 +27,15 @@ const settingsKeyFXRates = "fx_rates"
 // fetch per TTL window, lazily on read.
 const fxCacheTTL = 24 * time.Hour
 
+// fxCacheVersion invalidates caches that predate a fetcher upgrade. The cache
+// lives in the settings table and survives restarts, but the TTL alone cannot
+// know that the fetcher started covering more currencies (version 2 added the
+// fallback source that fills COP — the ECB table stopped publishing it, and a
+// pre-2 cached snapshot kept every peso converting 1:1 until the 24h TTL ran
+// out). Any cached entry below the current version is treated as stale and
+// refetched on the next read. Bump with every fetcher behavior change.
+const fxCacheVersion = 2
+
 // FXService supplies exchange-rate snapshots with caching and offline
 // tolerance. It never hard-fails on network errors — callers keep converting
 // with whatever data exists and report missing currencies as warnings.
@@ -88,6 +97,14 @@ func freshSnapshot(s domain.RateSnapshot) bool {
 	return s.Pivot != "" && len(s.Rates) > 0 && time.Since(s.FetchedAt) < fxCacheTTL
 }
 
+// cachedFX is the cache format: the snapshot plus the fetcher-behavior
+// version that produced it. Legacy entries (pre-versioning) carry no version
+// field and read as 0 — always stale.
+type cachedFX struct {
+	domain.RateSnapshot
+	Version int `json:"version"`
+}
+
 func (s *FXService) cachedSnapshot(ctx context.Context) (domain.RateSnapshot, error) {
 	raw, err := s.settings.Get(ctx, settingsKeyFXRates)
 	if err != nil {
@@ -96,16 +113,21 @@ func (s *FXService) cachedSnapshot(ctx context.Context) (domain.RateSnapshot, er
 		}
 		return domain.RateSnapshot{}, fmt.Errorf("read fx cache: %w", err)
 	}
-	var snap domain.RateSnapshot
-	if err := json.Unmarshal([]byte(raw), &snap); err != nil {
+	var cached cachedFX
+	if err := json.Unmarshal([]byte(raw), &cached); err != nil {
 		// Corrupt cache behaves like no cache: refresh overwrites it.
 		return domain.RateSnapshot{}, nil
 	}
-	return snap, nil
+	if cached.Version < fxCacheVersion {
+		// A snapshot from an older fetcher generation (e.g. missing the
+		// fallback-filled currencies) is not "fresh" — force a refetch.
+		return domain.RateSnapshot{}, nil
+	}
+	return cached.RateSnapshot, nil
 }
 
 func (s *FXService) persistSnapshot(ctx context.Context, snap domain.RateSnapshot) error {
-	raw, err := json.Marshal(snap)
+	raw, err := json.Marshal(cachedFX{RateSnapshot: snap, Version: fxCacheVersion})
 	if err != nil {
 		return fmt.Errorf("encode fx cache: %w", err)
 	}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -119,5 +120,34 @@ func mustCacheSnapshot(t *testing.T, store *fakeSettingsStore, snap domain.RateS
 	svc := NewFXService(store, &fakeRateFetcher{snapshots: []domain.RateSnapshot{snap}}, nil)
 	if _, err := svc.Snapshot(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestFXServiceLegacyCacheRefetches pins the cache-version rule: a snapshot
+// cached by an older fetcher generation (no version marker — e.g. the table
+// that still lacked COP) must NOT be served as fresh across a restart. The
+// restart alone never refreshes, because the TTL runs from the original
+// fetch — the version bump is what forces the refetch.
+func TestFXServiceLegacyCacheRefetches(t *testing.T) {
+	legacy, err := json.Marshal(testSnapshot(time.Now().UTC())) // no "version" field
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeSettingsStore{data: map[string]string{"fx_rates": string(legacy)}}
+
+	fresh := testSnapshot(time.Now().UTC())
+	fresh.Rates["COP"] = 4100
+	fetcher := &fakeRateFetcher{snapshots: []domain.RateSnapshot{fresh}}
+	svc := NewFXService(store, fetcher, nil)
+
+	snap, err := svc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetcher.calls != 1 {
+		t.Fatalf("fetches = %d, want 1 (legacy cache must refetch)", fetcher.calls)
+	}
+	if snap.Rates["COP"] != 4100 {
+		t.Errorf("Rates[COP] = %v, want the freshly fetched rate", snap.Rates["COP"])
 	}
 }

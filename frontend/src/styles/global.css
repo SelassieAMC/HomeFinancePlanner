@@ -279,6 +279,111 @@ body {
   }
 }
 
+/* Net-worth tile: the tile's whole header is the toggle; the per-account
+   balances it rolls up expand inside the tile (collapsed by default, so the
+   strip keeps its height until the reader asks). */
+.glance-net-tile {
+  align-self: start;
+}
+
+.glance-net-toggle {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.glance-net-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.glance-net-value {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.glance-chev {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.glance-chev.open {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glance-chev {
+    transition: none;
+  }
+}
+
+.glance-accounts {
+  margin-top: 0.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--hairline);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.glance-account-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.glance-account-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glance-account-amount {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Foreign-currency accounts trail their raw balance muted; the converted
+   amount (base currency) is what adds up to the tile's net worth. */
+.glance-account-native {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.glance-account-norate {
+  flex: none;
+}
+
+.glance-accounts-link {
+  font-size: 0.8rem;
+  color: var(--accent);
+  text-decoration: none;
+  padding-top: 0.25rem;
+}
+
+.glance-accounts-link:hover,
+.glance-accounts-link:focus-visible {
+  text-decoration: underline;
+}
+
 /* Currency-tile tint (accent family, matching the tile rhythm). */
 .stat-currency {
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
@@ -705,6 +810,319 @@ textarea:focus,
 
 .budget-actions .btn {
   flex: 1 1 auto;
+}
+
+/* --- Compact planning rows ------------------------------------------------- */
+/* The dashboard planning bodies render one line + a hairline bar per budget /
+   goal / bag instead of a stacked card each — a wall of entities shrinks to a
+   scannable column. Visual language (dot, fill, tabular amounts) matches the
+   envelope cards above. */
+.plan-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.plan-row {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.plan-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.plan-icon {
+  flex: none;
+  font-size: 0.95rem;
+}
+
+.plan-name {
+  flex: 1 1 auto;
+  min-width: 8rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-context {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plan-status {
+  flex: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plan-status.ok {
+  color: var(--positive);
+}
+
+.plan-status.over {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+/* When a row has no bar (bags without target), its status rides the name
+   line instead of the bar row. */
+.plan-status-inline {
+  margin-left: auto;
+}
+
+.plan-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.plan-bar-row .progress-track {
+  flex: 1 1 auto;
+  height: 5px;
+  border-radius: 3px;
+}
+
+.plan-bar-row .progress-fill {
+  border-radius: 3px;
+}
+
+/* Bags group under their account: the header carries the account's balance
+   and unbagged remainder once, not repeated in every bag. */
+.plan-account {
+  display: grid;
+  gap: 0.45rem;
+  padding-top: 0.35rem;
+}
+
+.plan-account + .plan-account {
+  margin-top: 0.35rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.plan-account-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.plan-account-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.plan-account-figures {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.plan-flag {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--negative) 12%, transparent);
+  color: var(--negative);
+}
+
+/* --- Icon-only action buttons ---------------------------------------------- */
+/* Actions in tables collapse to icons; the string (title + aria-label) is the
+   accessible name, the icon is decoration. */
+.icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+/* The tooltip: anchored so its right edge meets the button's (actions sit at
+   the table's right edge, so it always extends inward, never out of the scroll
+   container), shown on hover AND keyboard focus after a short delay so
+   traversing a table doesn't pop bubbles on every row. */
+.icon-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 5px);
+  right: 0;
+  padding: 0.28rem 0.55rem;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 0.12s ease 0.35s, transform 0.12s ease 0.35s;
+  z-index: 30;
+}
+
+.icon-btn:hover::after,
+.icon-btn:focus-visible::after,
+.icon-btn:active::after {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.icon-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--negative) 12%, transparent);
+  color: var(--negative);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn {
+    transition: none;
+  }
+}
+
+/* --- Planning tables -------------------------------------------------------- */
+/* The management lists of the planning tabs (budgets, goals, bags, schedules)
+   read as tables: aligned columns for the figures, one hairline per row, and
+   a trailing icon-action cell. Scrolled horizontally on narrow screens. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-table th {
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
+.plan-table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+  font-size: 0.92rem;
+  min-width: 0;
+}
+
+.plan-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.plan-table td.num,
+.plan-table th.num {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.plan-table .cell-actions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.plan-table .cell-actions .icon-btn {
+  margin-left: 0.15rem;
+}
+
+.plan-table .cell-progress {
+  min-width: 120px;
+  width: 12%;
+}
+
+/* Entity cell: state dot + display name. */
+.plan-table .cell-entity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.plan-table .cell-entity .plan-name,
+.plan-table .cell-entity {
+  overflow: hidden;
+}
+
+.plan-table .cell-entity .entity-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-table .cell-muted {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.plan-table .cell-tag {
+  margin-left: 0.35rem;
+  padding: 0.02rem 0.45rem;
+  border-radius: 999px;
+  background: var(--bg-raised);
+}
+
+.plan-table .cell-status .ok {
+  color: var(--positive);
+}
+
+/* Status cell: colored dot + short text (or dot alone when the color is enough). */
+.plan-table .cell-status {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.plan-table .cell-status.over {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.plan-table .cell-status.ok {
+  color: var(--positive);
 }
 
 /* --- Feedback -------------------------------------------------------------- */
@@ -2881,10 +3299,6 @@ textarea:focus,
   gap: 0.4rem;
 }
 
-.bag-section {
-  display: contents;
-}
-
 .ledger-list {
   display: flex;
   flex-direction: column;
@@ -2927,6 +3341,7 @@ textarea:focus,
 }
 
 .planning-pane .budget-list:first-child,
+.planning-pane .plan-list:first-child,
 .planning-pane .empty-state:first-child {
   margin-top: 0.25rem;
 }

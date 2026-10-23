@@ -17,3 +17,15 @@ export function categoriesBySection(
   }
   return [...map.entries()];
 }
+
+/**
+ * Categories meaningful for an income transaction: the seeded 'Income'
+ * section family (Salary, Freelance & Side Income, Refunds & Interest).
+ * Category kind distinguishes the product/expense storage families, not
+ * transaction direction — the section is what marks income spend-families.
+ */
+export function incomeCategories(categories: Category[]): Category[] {
+  return categories.filter(
+    (c) => (c.kind ?? 'expense') === 'expense' && (c.section ?? '').trim().toLowerCase() === 'income',
+  );
+}

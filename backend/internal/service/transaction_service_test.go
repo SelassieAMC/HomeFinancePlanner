@@ -769,6 +769,33 @@ func TestTransferFeeAndFxRate(t *testing.T) {
 	}
 }
 
+// TestIncomeRefusesStoreAndKeepsCategory pins the kind-aware inputs: an
+// income carries a category from the income family but never a store — the
+// paying source is description material, not a market in the store catalogue.
+func TestIncomeRefusesStoreAndKeepsCategory(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _ := newTestTransactionService(t)
+
+	withStore := validTransactionInput()
+	withStore.Kind = domain.TransactionIncome
+	withStore.StoreName = "Employer GmbH"
+	if _, err := svc.Create(ctx, withStore); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("income with store = %v; want ErrValidation", err)
+	}
+
+	cat8 := int64(8)
+	withCategory := validTransactionInput()
+	withCategory.Kind = domain.TransactionIncome
+	withCategory.CategoryID = &cat8
+	created, err := svc.Create(ctx, withCategory)
+	if err != nil {
+		t.Fatalf("income with category: %v", err)
+	}
+	if created.Currency == "" || created.AmountCents != withCategory.AmountCents {
+		t.Errorf("income row = %+v; want a plain amount row", created)
+	}
+}
+
 // int64p is the test-side pointer helper for optional cent fields.
 func int64p(v int64) *int64 { return &v }
 

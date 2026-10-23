@@ -12,6 +12,10 @@ import {
   ErrorMessage,
   EmptyState,
   Spinner,
+  IconButton,
+  IconEdit,
+  IconTrash,
+  ProgressBar,
 } from '../../components/ui';
 
 // Goals are named savings targets tracked against one account: the account's
@@ -147,15 +151,77 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       {goals.length === 0 ? (
         <EmptyState message={t('empty')} />
       ) : (
-        <div className="budget-list">
-          {goals.map((g) => (
-            <GoalCard
-              key={g.id}
-              goal={g}
-              onEdit={() => setEditing(g)}
-              onDelete={() => setConfirmDelete(g)}
-            />
-          ))}
+        <div className="table-scroll">
+          <table className="plan-table">
+            <thead>
+              <tr>
+                <th>{t('table.goal')}</th>
+                <th>{t('table.account')}</th>
+                <th className="num">{t('table.progress')}</th>
+                <th aria-hidden="true" />
+                <th>{t('table.status')}</th>
+                <th aria-hidden="true" />
+              </tr>
+            </thead>
+            <tbody>
+              {goals.map((g) => {
+                const pct = g.target_cents > 0 ? (g.progress_cents / g.target_cents) * 100 : 0;
+                const remaining = Math.max(0, g.target_cents - g.progress_cents);
+                return (
+                  <tr key={g.id}>
+                    <td>
+                      <span className="cell-entity">
+                        <span
+                          className={g.achieved ? 'budget-dot ok' : 'budget-dot'}
+                          aria-hidden="true"
+                        />
+                        <span className="entity-name">{g.name}</span>
+                      </span>
+                    </td>
+                    <td className="cell-muted">{g.account_name}</td>
+                    <td className="num">
+                      <strong>{formatCents(g.progress_cents, g.currency)}</strong>
+                      {' / '}
+                      {formatCents(g.target_cents, g.currency)}
+                    </td>
+                    <td className="cell-progress">
+                      <ProgressBar pct={pct} done={g.achieved} />
+                    </td>
+                    <td>
+                      {g.achieved ? (
+                        <span className="cell-status ok">
+                          <span className="budget-dot ok" aria-hidden="true" />
+                          {t('card.reached')}
+                        </span>
+                      ) : (
+                        <span className="cell-status">
+                          {g.target_date
+                            ? t('card.to_go_by', {
+                                amount: formatCents(remaining, g.currency),
+                                date: g.target_date,
+                              })
+                            : t('card.to_go', { amount: formatCents(remaining, g.currency) })}
+                        </span>
+                      )}
+                    </td>
+                    <td className="cell-actions">
+                      <IconButton
+                        icon={<IconEdit />}
+                        label={t('card.edit')}
+                        onClick={() => setEditing(g)}
+                      />
+                      <IconButton
+                        icon={<IconTrash />}
+                        label={t('card.delete')}
+                        variant="danger"
+                        onClick={() => setConfirmDelete(g)}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -204,60 +270,6 @@ function input(name: string, cents: number, accountId: string, targetDate: strin
     account_id: Number(accountId),
     target_date: targetDate || null,
   };
-}
-
-// GoalCard mirrors the budget progress-card style: dot + name + progress/target
-// up top, the bar, and a status line (remaining / achieved / milestone).
-function GoalCard({
-  goal,
-  onEdit,
-  onDelete,
-}: {
-  goal: GoalStatus;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const { t } = useTranslation('goals');
-  const pct = goal.target_cents > 0 ? (goal.progress_cents / goal.target_cents) * 100 : 0;
-  const remaining = Math.max(0, goal.target_cents - goal.progress_cents);
-  return (
-    <Card className="budget-card">
-      <div className="budget-head">
-        <span className={goal.achieved ? 'budget-dot ok' : 'budget-dot'} aria-hidden="true" />
-        <span className="budget-name">{goal.name}</span>
-        <span className="stat-label">{goal.account_name}</span>
-        <span className="budget-amounts">
-          <strong>{formatCents(goal.progress_cents, goal.currency)}</strong>
-          {' / '}
-          {formatCents(goal.target_cents, goal.currency)}
-        </span>
-      </div>
-      <div className="progress-track">
-        <div
-          className={goal.achieved ? 'progress-fill done' : 'progress-fill'}
-          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-        />
-      </div>
-      <div className={goal.achieved ? 'budget-status ok' : 'budget-status'}>
-        {goal.achieved
-          ? t('card.reached')
-          : goal.target_date
-            ? t('card.to_go_by', {
-                amount: formatCents(remaining, goal.currency),
-                date: goal.target_date,
-              })
-            : t('card.to_go', { amount: formatCents(remaining, goal.currency) })}
-      </div>
-      <div className="camera-row">
-        <Button variant="secondary" className="btn-sm" onClick={onEdit}>
-          {t('card.edit')}
-        </Button>
-        <Button variant="danger" className="btn-sm" onClick={onDelete}>
-          {t('card.delete')}
-        </Button>
-      </div>
-    </Card>
-  );
 }
 
 // GoalEditForm is the modal's body: a full-replace PUT of the editable fields.

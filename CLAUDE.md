@@ -492,8 +492,13 @@ api module → feature page.
 number is set through `POST /accounts/{id}/reconcile`, which adjusts the opening
 seed (the ledger's facts stay untouched). **Currency handling** (0041):
 accounts are single-currency ISO-4217 rows; the reference rates come from the
-public Frankfurter/ECB table (cached 24h in the settings row `fx_rates`,
-served to the UI at `GET /api/v1/fx/rates` and shown/prefilled in the UI).
+public Frankfurter/ECB table with `open.er-api.com` filling the currencies the
+ECB does not publish (COP, … — without the fill every peso amount silently
+converted 1:1) and taking over the whole table when the ECB source is down
+(cached 24h in the settings row `fx_rates`, served to the UI at
+`GET /api/v1/fx/rates` and shown/prefilled in the UI; the cache carries an
+`fxCacheVersion` marker — bump it when the fetcher's behavior changes, or
+restarts keep serving a pre-change cached snapshot until the TTL expires).
 Cross-currency conversions are **recorded once at save time and never
 re-derived**: a cross-currency transfer stores the receiving leg
 (`counter_amount_cents`/`counter_currency`, rate in `fx_rate`), its optional

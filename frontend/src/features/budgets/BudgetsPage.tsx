@@ -17,7 +17,14 @@ import {
   Spinner,
   ErrorMessage,
   EmptyState,
+  IconButton,
+  IconCloseCircle,
+  IconEdit,
+  IconReopen,
+  IconTrash,
+  ProgressBar,
 } from '../../components/ui';
+import type { TFunction } from 'i18next';
 
 /** Short month label for a monthly budget's period ("2026-10" → "Oct 2026",
  *  localized to the active UI language). */
@@ -186,25 +193,101 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       {budgets.length === 0 ? (
         <EmptyState message={t('empty')} />
       ) : (
-        <div className="budget-list">
-          {budgets.map((b) => {
-            const lifetime = lifetimeSpentByBudget.get(b.id) ?? 0;
-            return (
-              <BudgetCard
-                key={b.id}
-                budget={b}
-                categoryName={categoryNames.get(b.category_id) ?? `#${b.category_id}`}
-                categoryIcon={
-                  (categories.data ?? []).find((c) => c.id === b.category_id)?.icon
-                }
-                lifetimeSpent={lifetime}
-                currency={currency}
-                onSetStatus={(status) => handleStatus(b.id, status)}
-                onEdit={() => openEdit(b)}
-                onDelete={() => handleDelete(b.id)}
-              />
-            );
-          })}
+        <div className="table-scroll">
+          <table className="plan-table">
+            <thead>
+              <tr>
+                <th>{t('table.budget')}</th>
+                <th>{t('table.period')}</th>
+                <th className="num">{t('table.spent')}</th>
+                <th className="num">{t('table.cap')}</th>
+                <th>{t('table.progress')}</th>
+                <th>{t('table.status')}</th>
+                <th aria-hidden="true" />
+              </tr>
+            </thead>
+            <tbody>
+              {budgets.map((b) => {
+                const lifetime = lifetimeSpentByBudget.get(b.id) ?? 0;
+                return (
+                  <tr key={b.id}>
+                    <td>
+                      <span className="cell-entity">
+                        {(categories.data ?? []).find((c) => c.id === b.category_id)?.icon && (
+                          <span aria-hidden="true">
+                            {(categories.data ?? []).find((c) => c.id === b.category_id)?.icon}
+                          </span>
+                        )}
+                        <span className="entity-name">
+                          {categoryNames.get(b.category_id) ?? `#${b.category_id}`}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="cell-muted">
+                      {b.cadence === 'monthly'
+                        ? budgetPeriodLabel(t, b.month ?? '')
+                        : t('table.envelope')}
+                    </td>
+                    <td className="num">
+                      <strong>{formatCents(lifetime, currency)}</strong>
+                    </td>
+                    <td className="num">
+                      <span className={b.status === 'closed' ? 'cell-muted' : undefined}>
+                        {formatCents(b.amount_cents, currency)}
+                      </span>
+                    </td>
+                    <td className="cell-progress">
+                      <ProgressBar
+                        pct={b.amount_cents > 0 ? (lifetime / b.amount_cents) * 100 : 0}
+                        over={lifetime > b.amount_cents}
+                      />
+                    </td>
+                    <td>
+                      <BudgetStatusCell
+                        isClosed={b.status === 'closed'}
+                        over={lifetime > b.amount_cents}
+                        remaining={b.amount_cents - lifetime}
+                        currency={currency}
+                      />
+                    </td>
+                    <td className="cell-actions">
+                      {b.status !== 'closed' && (
+                        <>
+                          <IconButton
+                            icon={<IconEdit />}
+                            label={t('card.edit')}
+                            disabled={busy}
+                            onClick={() => openEdit(b)}
+                          />
+                          <IconButton
+                            icon={<IconCloseCircle />}
+                            label={t('card.mark_finished')}
+                            disabled={busy}
+                            onClick={() => handleStatus(b.id, 'closed')}
+                          />
+                        </>
+                      )}
+                      {b.status === 'closed' && (
+                        <IconButton
+                          icon={<IconReopen />}
+                          label={t('card.reopen')}
+                          disabled={busy}
+                          onClick={() => handleStatus(b.id, 'open')}
+                        />
+                      )}
+                      <IconButton
+                        icon={<IconTrash />}
+                        label={t('card.delete')}
+                        variant="danger"
+                        disabled={busy}
+                        onClick={() => handleDelete(b.id)}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -252,94 +335,40 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   );
 }
 
-// BudgetCard renders one envelope in the always-visible progress-card style of
-// the reference design: dot + category + spent/amount up top, the bar, a
-// "left"/"over by" line, and the status/delete actions underneath.
-function BudgetCard({
-  budget,
-  categoryName,
-  categoryIcon,
-  lifetimeSpent,
+// BudgetCard's progress-card became a table row: the cadence/month cell,
+// aligned figure cells, a bar cell and the icon actions.
+function budgetPeriodLabel(t: TFunction, month: string): string {
+  return month ? `${monthTag(month)}` : t('card.monthly');
+}
+
+/** Status wording of a budget row, colored by state. */
+function BudgetStatusCell({
+  isClosed,
+  over,
+  remaining,
   currency,
-  onSetStatus,
-  onEdit,
-  onDelete,
 }: {
-  budget: Budget;
-  categoryName: string;
-  categoryIcon?: string;
-  lifetimeSpent: number;
+  isClosed: boolean;
+  over: boolean;
+  remaining: number;
   currency: string;
-  onSetStatus: (status: 'open' | 'closed') => void;
-  onEdit: () => void;
-  onDelete: () => void;
 }) {
   const { t } = useTranslation('budgets');
-  const isClosed = budget.status === 'closed';
-  const over = lifetimeSpent > budget.amount_cents;
-  const remaining = budget.amount_cents - lifetimeSpent;
-  const pct = budget.amount_cents > 0 ? (lifetimeSpent / budget.amount_cents) * 100 : 0;
+  const label = over
+    ? t('card.over_by', { amount: formatCents(-remaining, currency) })
+    : t('card.left', { amount: formatCents(remaining, currency) });
+  if (isClosed) {
+    return (
+      <span className="cell-status">
+        <span className="budget-dot closed" aria-hidden="true" />
+        {t('table.closed')}
+      </span>
+    );
+  }
   return (
-    <Card className="budget-card">
-      <div className="budget-head">
-        <span
-          className={
-            isClosed ? 'budget-dot closed' : over ? 'budget-dot over' : 'budget-dot'
-          }
-          aria-hidden="true"
-        />
-        <span className="budget-name">
-          {categoryIcon && <span aria-hidden="true">{categoryIcon} </span>}
-          {categoryName}
-        </span>
-        {budget.cadence === 'monthly' && (
-          <span className="stat-label">
-            {t('card.monthly')}{budget.month ? ` · ${monthTag(budget.month)}` : ''}
-          </span>
-        )}
-        <span className="budget-amounts">
-          <strong>{formatCents(lifetimeSpent, currency)}</strong>
-          {' / '}
-          {formatCents(budget.amount_cents, currency)}
-        </span>
-      </div>
-      <div className="progress-track">
-        <div
-          className={over ? 'progress-fill over' : 'progress-fill'}
-          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-        />
-      </div>
-      <div
-        className={
-          isClosed ? 'budget-status' : over ? 'budget-status over' : 'budget-status ok'
-        }
-      >
-        {isClosed
-          ? t('card.closed', {
-              spent: formatCents(lifetimeSpent, currency),
-              amount: formatCents(budget.amount_cents, currency),
-            })
-          : over
-            ? t('card.over_by', { amount: formatCents(-remaining, currency) })
-            : t('card.left', { amount: formatCents(remaining, currency) })}
-      </div>
-      <div className="budget-actions">
-        {isClosed ? (
-          <Button onClick={() => onSetStatus('open')}>{t('card.reopen')}</Button>
-        ) : (
-          <>
-            <Button variant="secondary" className="btn-sm" onClick={onEdit}>
-              {t('card.edit')}
-            </Button>
-            <Button variant="secondary" className="btn-sm" onClick={() => onSetStatus('closed')}>
-              {t('card.mark_finished')}
-            </Button>
-          </>
-        )}
-        <Button variant="danger" className="btn-sm" onClick={onDelete}>
-          {t('card.delete')}
-        </Button>
-      </div>
-    </Card>
+    <span className={`cell-status${over ? ' over' : ''}`}>
+      <span className={over ? 'budget-dot over' : 'budget-dot'} aria-hidden="true" />
+      {over ? label : <span className="ok">{label}</span>}
+    </span>
   );
 }

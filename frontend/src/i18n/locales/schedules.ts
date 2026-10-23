@@ -5,6 +5,12 @@ import type { LocaleBundle } from '../core';
 export const schedules: LocaleBundle = {
   en: {
     title: 'Scheduled actions',
+    table: {
+      schedule: 'Schedule',
+      kind: 'Kind',
+      recurrence: 'Recurrence',
+      starts: 'Starts',
+    },
     kinds: {
       bag_funding: 'Fund bag',
       bag_rebalance: 'Rebalance bags',
@@ -162,6 +168,12 @@ export const schedules: LocaleBundle = {
   },
   de: {
     title: 'Terminierte Aktionen',
+    table: {
+      schedule: 'Termin',
+      kind: 'Art',
+      recurrence: 'Wiederholung',
+      starts: 'Beginnt',
+    },
     kinds: {
       bag_funding: 'Umschlag finanzieren',
       bag_rebalance: 'Umschläge umverteilen',
@@ -319,6 +331,12 @@ export const schedules: LocaleBundle = {
   },
   es: {
     title: 'Acciones programadas',
+    table: {
+      schedule: 'Programación',
+      kind: 'Tipo',
+      recurrence: 'Repetición',
+      starts: 'Comienza',
+    },
     kinds: {
       bag_funding: 'Aportar a un bolsillo',
       bag_rebalance: 'Reequilibrar bolsillos',

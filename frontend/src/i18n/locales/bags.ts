@@ -5,6 +5,14 @@ import type { LocaleBundle } from '../core';
 export const bags: LocaleBundle = {
   en: {
     title: 'Bags',
+    table: {
+      bag: 'Bag',
+      target: 'Target',
+      balance: 'Balance',
+      spent: 'Spent',
+      progress: 'Progress',
+      status: 'Status',
+    },
     add: {
       title: 'Add bag',
       namePlaceholder: 'Bag name',
@@ -145,6 +153,14 @@ export const bags: LocaleBundle = {
   },
   de: {
     title: 'Umschläge',
+    table: {
+      bag: 'Umschlag',
+      target: 'Ziel',
+      balance: 'Saldo',
+      spent: 'Ausgegeben',
+      progress: 'Fortschritt',
+      status: 'Status',
+    },
     add: {
       title: 'Umschlag anlegen',
       namePlaceholder: 'Name des Umschlags',
@@ -285,6 +301,14 @@ export const bags: LocaleBundle = {
   },
   es: {
     title: 'Bolsillos',
+    table: {
+      bag: 'Bolsillo',
+      target: 'Meta',
+      balance: 'Saldo',
+      spent: 'Gastado',
+      progress: 'Progreso',
+      status: 'Estado',
+    },
     add: {
       title: 'Crear bolsillo',
       namePlaceholder: 'Nombre del bolsillo',

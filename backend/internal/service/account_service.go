@@ -343,6 +343,12 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	if in.Kind == domain.TransactionTransfer && (in.CategoryID != nil || in.StoreName != "") {
 		return domain.Transaction{}, validationError("transfers carry no category or store")
 	}
+	// A store is where goods were bought; an income (salary, refund, interest)
+	// arrives from a source that belongs in the description, not in the store
+	// catalogue.
+	if in.Kind == domain.TransactionIncome && in.StoreName != "" {
+		return domain.Transaction{}, validationError("income carries no store — name the paying source in the description")
+	}
 	if in.Kind == domain.TransactionTransfer {
 		if in.CounterAccountID == nil {
 			return domain.Transaction{}, validationError("a transfer needs a destination account (counter_account_id)")

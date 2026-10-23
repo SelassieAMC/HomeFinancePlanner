@@ -54,6 +54,10 @@ export const dashboard: LocaleBundle = {
       receiptsTitle: 'Receipts to review',
       nothingWaiting: 'nothing waiting',
       awaitingReview: '{{amount}} awaiting review',
+      accountsEmpty: 'No accounts yet.',
+      accountsError: 'Account balances unavailable.',
+      manageAccounts: 'Manage accounts',
+      noRate: 'No exchange rate — converted 1:1',
     },
     insights: {
       title: 'Purchase insights',
@@ -139,7 +143,8 @@ export const dashboard: LocaleBundle = {
       spentInMonth: '{{spent}} in {{month}}',
     },
     bags: {
-      spentUnbagged: 'Spent {{spent}} · unbagged {{unbagged}}',
+      spent: 'Spent {{spent}}',
+      unbagged: 'unbagged {{unbagged}}',
       oversubscribed: 'Bags claim more than the account holds',
     },
     goals: {
@@ -304,6 +309,10 @@ export const dashboard: LocaleBundle = {
       receiptsTitle: 'Belege zu prüfen',
       nothingWaiting: 'nichts wartet',
       awaitingReview: '{{amount}} wartet auf Prüfung',
+      accountsEmpty: 'Noch keine Konten.',
+      accountsError: 'Kontosalden nicht verfügbar.',
+      manageAccounts: 'Konten verwalten',
+      noRate: 'Kein Wechselkurs — 1:1 umgerechnet',
     },
     insights: {
       title: 'Kauf-Insights',
@@ -389,7 +398,8 @@ export const dashboard: LocaleBundle = {
       spentInMonth: '{{spent}} im {{month}}',
     },
     bags: {
-      spentUnbagged: 'Ausgegeben {{spent}} · unzugeordnet {{unbagged}}',
+      spent: 'Ausgegeben {{spent}}',
+      unbagged: 'unzugeordnet {{unbagged}}',
       oversubscribed: 'Die Belegungen übersteigen den Kontostand',
     },
     goals: {
@@ -554,6 +564,10 @@ export const dashboard: LocaleBundle = {
       receiptsTitle: 'Recibos por revisar',
       nothingWaiting: 'nada pendiente',
       awaitingReview: '{{amount}} pendiente de revisar',
+      accountsEmpty: 'Aún no hay cuentas.',
+      accountsError: 'Saldos de cuentas no disponibles.',
+      manageAccounts: 'Gestionar cuentas',
+      noRate: 'Sin tipo de cambio — convertido 1:1',
     },
     insights: {
       title: 'Avisos de compra',
@@ -639,7 +653,8 @@ export const dashboard: LocaleBundle = {
       spentInMonth: '{{spent}} en {{month}}',
     },
     bags: {
-      spentUnbagged: 'Gastado {{spent}} · sin bolsillo {{unbagged}}',
+      spent: 'Gastado {{spent}}',
+      unbagged: 'sin bolsillo {{unbagged}}',
       oversubscribed: 'Las bolsillos superan el saldo de la cuenta',
     },
     goals: {
