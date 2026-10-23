@@ -38,13 +38,3 @@ export function intlLocale(language: string): string {
       return 'en-US';
   }
 }
-
-/** Pre-login default: the browser language when it is one we ship, else 'en'.
- *  After login the user's stored locale (users.locale) always wins. */
-export function detectPreLoginLocale(): LocaleCode {
-  for (const candidate of navigator.languages ?? []) {
-    const base = candidate.split('-')[0]?.toLowerCase();
-    if (isSupportedLocale(base ?? '')) return base as LocaleCode;
-  }
-  return DEFAULT_LOCALE;
-}

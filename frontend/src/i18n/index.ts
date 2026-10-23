@@ -21,7 +21,7 @@ import { products } from './locales/products';
 import { stores } from './locales/stores';
 import { cart } from './locales/cart';
 import { prompts } from './locales/prompts';
-import { detectPreLoginLocale, type LocaleBundle } from './core';
+import { DEFAULT_LOCALE, type LocaleBundle } from './core';
 
 // One entry per namespace file — a namespace is translated as a unit by one
 // feature folder's components.
@@ -53,10 +53,19 @@ for (const [ns, bundle] of Object.entries(NAMESPACES)) {
 
 i18next.use(initReactI18next).init({
   resources,
-  lng: detectPreLoginLocale(),
+  // The default is english; the logged-in user's stored locale (users.locale)
+  // takes over in AuthContext. No browser sniffing: surprising language flips
+  // on the login screen were worse than a plain, predictable default.
+  lng: DEFAULT_LOCALE,
   fallbackLng: 'en',
   interpolation: { escapeValue: false }, // React escapes on its own
   returnEmptyString: false,
+  // All resources are bundled inline, so nothing ever needs suspending.
+  // The default `useSuspense: true` suspends every useTranslation consumer on
+  // a language change and, with no <Suspense> boundary in the app tree, that
+  // intermittently wedged the UI (frozen renders, stray wrong-language
+  // screens) until a manual reload — hence explicitly off.
+  react: { useSuspense: false },
 });
 
 export default i18next;

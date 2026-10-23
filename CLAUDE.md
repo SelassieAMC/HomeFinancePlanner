@@ -106,8 +106,12 @@ fixed: backend `:8080`, nginx `:80`.
 - All UI text goes through `t()`; the supported locales are the closed set
   `en` (default) / `de` / `es`, kept in `src/i18n/core.ts` and mirrored in
   `backend/internal/domain.ValidLocales` (users.locale column defaults to
-  'en'; per-user preference, switched in the profile's Language card, and the
-  pre-login default is the browser language).
+  'en'; per-user preference, switched in the profile's Language card; the
+  login screen is always english — no browser sniffing, which caused stray
+  language flips before).
+- i18next init keeps `react: { useSuspense: false }` (resources are bundled —
+  the default suspense behavior wedged the UI on language changes; with a
+  Suspense boundary absent that freezes the app).
 - Each feature namespace is one bundle file in `src/i18n/locales/<ns>.ts`
   (shape `{ en, de, es }`) with identical key structure across languages;
   namespace per feature folder, `common` for shared layout/ui primitives.
