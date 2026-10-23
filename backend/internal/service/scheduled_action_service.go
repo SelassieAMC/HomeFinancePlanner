@@ -103,8 +103,14 @@ func (s *ScheduledActionService) Runs(ctx context.Context, today string, f Sched
 }
 
 // Create validates and stores a new schedule.
-func (s *ScheduledActionService) Create(ctx context.Context, in ScheduledActionInput) (domain.ScheduledAction, error) {
-	a, err := s.build(ctx, domain.ScheduledAction{}, in)
+// Create validates and stores a schedule. today comes from the handler
+// (server clock): the once-recurrence's lookback bound is tested against it,
+// keeping the service deterministic like every other read.
+func (s *ScheduledActionService) Create(ctx context.Context, today string, in ScheduledActionInput) (domain.ScheduledAction, error) {
+	if err := validateDate(today, "today"); err != nil {
+		return domain.ScheduledAction{}, err
+	}
+	a, err := s.build(ctx, domain.ScheduledAction{}, in, today)
 	if err != nil {
 		return domain.ScheduledAction{}, err
 	}
@@ -118,7 +124,19 @@ func (s *ScheduledActionService) Create(ctx context.Context, in ScheduledActionI
 // due_date) uniqueness blocks a regenerated pending run from overwriting
 // them). Payloads a run already consumed re-validate at apply time, so a
 // deleted bag or account surfaces there with an actionable message.
-func (s *ScheduledActionService) Update(ctx context.Context, id int64, in ScheduledActionInput) (domain.ScheduledAction, error) {
+// Update reshapes a schedule. Future occurrences only: still-pending runs are
+// deleted and regenerated from the new definition; applied runs and their
+// materialized effects (allocations, transactions) are never rewritten, and
+// dismissed/skipped acknowledgements stay on their dates (their (action,
+// due_date) uniqueness blocks a regenerated pending run from overwriting
+// them). Payloads a run already consumed re-validate at apply time, so a
+// deleted bag or account surfaces there with an actionable message. today
+// comes from the handler (server clock like List) — the regenerated window is
+// pinned to the same clock the reads use.
+func (s *ScheduledActionService) Update(ctx context.Context, id int64, today string, in ScheduledActionInput) (domain.ScheduledAction, error) {
+	if err := validateDate(today, "today"); err != nil {
+		return domain.ScheduledAction{}, err
+	}
 	existing, err := s.actions.GetActionByID(ctx, id)
 	if err != nil {
 		return domain.ScheduledAction{}, err
@@ -127,7 +145,7 @@ func (s *ScheduledActionService) Update(ctx context.Context, id int64, in Schedu
 		return domain.ScheduledAction{}, conflictError(
 			"schedule %q is archived — archived schedules keep their history and take no edits", existing.Name)
 	}
-	a, err := s.build(ctx, existing, in)
+	a, err := s.build(ctx, existing, in, today)
 	if err != nil {
 		return domain.ScheduledAction{}, err
 	}
@@ -141,7 +159,7 @@ func (s *ScheduledActionService) Update(ctx context.Context, id int64, in Schedu
 	if err := s.actions.DeletePendingRuns(ctx, id); err != nil {
 		return domain.ScheduledAction{}, err
 	}
-	dates := dueDates(updated, s.today(), s.horizon(s.today()))
+	dates := dueDates(updated, today, s.horizon(today))
 	if _, err := s.actions.MaterializeRuns(ctx, id, dates); err != nil {
 		return domain.ScheduledAction{}, err
 	}
@@ -362,7 +380,7 @@ func descriptionOrDefault(desc, name string) string {
 
 // build validates an action payload over the existing row (zero for create).
 // Kind-field mismatches are refused so an ignored field never hides a mistake.
-func (s *ScheduledActionService) build(ctx context.Context, existing domain.ScheduledAction, in ScheduledActionInput) (domain.ScheduledAction, error) {
+func (s *ScheduledActionService) build(ctx context.Context, existing domain.ScheduledAction, in ScheduledActionInput, today string) (domain.ScheduledAction, error) {
 	if err := validateRequiredString(strings.TrimSpace(in.Name), "name", 100); err != nil {
 		return domain.ScheduledAction{}, err
 	}
@@ -384,7 +402,6 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 		if day != nil || month != nil {
 			return domain.ScheduledAction{}, validationError("day_of_month/month_of_year belong to monthly and yearly recurrences, not once")
 		}
-		today := s.today()
 		// A once-schedule more than the lookback window in the past would
 		// never materialize a run (the catch-up never touches it) — refuse the
 		// input instead of storing a plan that silently does nothing.
@@ -563,8 +580,6 @@ func (s *ScheduledActionService) validateTransactionAccount(ctx context.Context,
 
 // today is the server-local date — the same reference the transaction
 // future-date rule and the budget rollover use.
-func (s *ScheduledActionService) today() string { return time.Now().Format("2006-01-02") }
-
 // horizon returns the forward materialization bound: today + aheadMonths.
 func (s *ScheduledActionService) horizon(today string) string {
 	return timeParseDateOr(today).AddDate(0, aheadMonths, 0).Format("2006-01-02")

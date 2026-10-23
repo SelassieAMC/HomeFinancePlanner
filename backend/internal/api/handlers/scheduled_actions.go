@@ -61,7 +61,7 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	a, err := h.Svc.Create(r.Context(), h.input(req))
+	a, err := h.Svc.Create(r.Context(), serverToday(), h.input(req))
 	if err != nil {
 		respondServiceError(w, r, err)
 		return
@@ -81,7 +81,7 @@ func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	a, err := h.Svc.Update(r.Context(), id, h.input(req))
+	a, err := h.Svc.Update(r.Context(), id, serverToday(), h.input(req))
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

@@ -11,12 +11,21 @@ import (
 // AccountHandler handles /api/v1/accounts.
 type AccountHandler struct{ Svc *service.AccountService }
 
+// accountRequest is the account create/update payload. The money field is the
+// OPENING balance (the pre-ledger seed) — balance_cents is derived per read
+// and never writable here; drift is fixed through the reconcile endpoint.
 type accountRequest struct {
-	Name           string             `json:"name"`
-	Type           domain.AccountType `json:"type"`
-	Currency       string             `json:"currency"`
-	BalanceCents   int64              `json:"balance_cents"`
-	CardLastDigits string             `json:"card_last_digits,omitempty"`
+	Name                string             `json:"name"`
+	Type                domain.AccountType `json:"type"`
+	Currency            string             `json:"currency"`
+	OpeningBalanceCents int64              `json:"opening_balance_cents"`
+	CardLastDigits      string             `json:"card_last_digits,omitempty"`
+}
+
+// accountReconcileRequest is the payload of POST /accounts/{id}/reconcile:
+// the balance the bank actually reports for that account right now.
+type accountReconcileRequest struct {
+	BalanceCents int64 `json:"balance_cents"`
 }
 
 // List returns all accounts.
@@ -51,11 +60,11 @@ func (h *AccountHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a, err := h.Svc.Create(r.Context(), service.AccountInput{
-		Name:           req.Name,
-		Type:           req.Type,
-		Currency:       req.Currency,
-		BalanceCents:   req.BalanceCents,
-		CardLastDigits: req.CardLastDigits,
+		Name:                req.Name,
+		Type:                req.Type,
+		Currency:            req.Currency,
+		OpeningBalanceCents: req.OpeningBalanceCents,
+		CardLastDigits:      req.CardLastDigits,
 	})
 	if err != nil {
 		respondServiceError(w, r, err)
@@ -76,12 +85,32 @@ func (h *AccountHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a, err := h.Svc.Update(r.Context(), id, service.AccountInput{
-		Name:           req.Name,
-		Type:           req.Type,
-		Currency:       req.Currency,
-		BalanceCents:   req.BalanceCents,
-		CardLastDigits: req.CardLastDigits,
+		Name:                req.Name,
+		Type:                req.Type,
+		Currency:            req.Currency,
+		OpeningBalanceCents: req.OpeningBalanceCents,
+		CardLastDigits:      req.CardLastDigits,
 	})
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, a)
+}
+
+// Reconcile aligns the derived balance with what the bank reports: POST
+// {balance_cents} (any integer — credit accounts run negative).
+func (h *AccountHandler) Reconcile(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req accountReconcileRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	a, err := h.Svc.Reconcile(r.Context(), id, req.BalanceCents)
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

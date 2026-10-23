@@ -1902,6 +1902,91 @@ func eurSnapshot() domain.RateSnapshot {
 	}
 }
 
+// TestConfirmConvertsForeignCurrencyBill pins the currency-audit fix: a bill
+// in one currency paid by a card in another records the conversion — the
+// linked transaction carries account_amount_cents (the paying account's
+// currency amount) and the rate actually applied, so the derived balance folds
+// the converted value instead of the raw bill amount. The user's rate override
+// wins over the snapshot; an fx_rate on a same-currency pair is refused.
+func TestConfirmConvertsForeignCurrencyBill(t *testing.T) {
+	ctx := context.Background()
+	accounts := newFakeAccountStore()
+	card, err := accounts.Create(ctx, domain.Account{Name: "Card", Type: domain.AccountCredit, Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("seed card: %v", err)
+	}
+	txs := newFakeTxStore()
+	// 1 EUR = 4200 COP (pivot EUR): a COP bill converts into the EUR account
+	// at 1/4200.
+	snap := eurSnapshot()
+	snap.Rates = map[string]float64{"COP": 4200}
+	svc, scanStore, _, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, stubRateSource{snap: snap}, accounts, txs,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "Exito", Currency: "COP", TotalCents: 84000}, nil
+		})
+
+	res, err := svc.Scan(ctx, scanFile(testImage()), "")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, res.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+
+	cardID := card.ID
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{
+		MarketName: "Exito", Currency: "COP", AccountID: &cardID,
+		Items: []domain.BillItemDraft{{Name: "Cafe", Quantity: 1, UnitPriceCents: 84000}},
+	})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if bill.TotalCents != 84000 {
+		t.Fatalf("bill total = %d; want 84000 (recomputed from the lines)", bill.TotalCents)
+	}
+	if len(txs.items) != 1 {
+		t.Fatalf("expected one recorded transaction, got %d", len(txs.items))
+	}
+
+	tx := txs.items[1]
+	if tx.Currency != "COP" {
+		t.Errorf("transaction currency = %s; want the bill's COP", tx.Currency)
+	}
+	// 84000 COP × (1/4200) = 20 EUR — folded into the EUR card's balance.
+	if tx.AccountAmountCents == nil || *tx.AccountAmountCents != 20 {
+		t.Errorf("account amount = %v; want 20 EUR", tx.AccountAmountCents)
+	}
+	if tx.FxRate == nil || *tx.FxRate != 1.0/4200 {
+		t.Errorf("stored rate = %v; want 1/4200 (snapshot)", tx.FxRate)
+	}
+
+	// The user's rate wins on an edit ("banks don't follow the TRM").
+	bank := 1.0 / 4000
+	if _, err := svc.Update(ctx, bill.ID, domain.BillConfirmInput{
+		MarketName: "Exito", Currency: "COP", AccountID: &cardID,
+		Items:  []domain.BillItemDraft{{Name: "Cafe", Quantity: 1, UnitPriceCents: 84000}},
+		FxRate: &bank,
+	}); err != nil {
+		t.Fatalf("Update with override: %v", err)
+	}
+	tx = txs.items[1]
+	if tx.AccountAmountCents == nil || *tx.AccountAmountCents != 21 {
+		t.Errorf("updated account amount = %v; want 21 EUR (84000/4000)", tx.AccountAmountCents)
+	}
+	if tx.FxRate == nil || *tx.FxRate != bank {
+		t.Errorf("updated rate = %v; want the bank's 1/4000", tx.FxRate)
+	}
+
+	// An fx_rate on a same-currency pair is refused, not silently dropped.
+	if _, err := svc.Update(ctx, bill.ID, domain.BillConfirmInput{
+		MarketName: "Rewe", Currency: "EUR", AccountID: &cardID, FxRate: &bank,
+	}); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("fx_rate on same-currency pair = %v; want ErrValidation", err)
+	}
+}
+
 func TestExtractDraftFallsBackToBaseCurrency(t *testing.T) {
 	svc, scanStore, _, _ := newTestBillServiceCustom(t,
 		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
@@ -2121,7 +2206,7 @@ func TestSyncBillTransactionUpdatesCurrency(t *testing.T) {
 		})
 
 	bill := domain.Bill{MarketName: "REWE", TotalCents: 300, Currency: "EUR"}
-	if err := svc.syncBillTransaction(context.Background(), created.ID, bill, 0); err != nil {
+	if err := svc.syncBillTransaction(context.Background(), created.ID, bill, 0, nil); err != nil {
 		t.Fatalf("syncBillTransaction: %v", err)
 	}
 	tx, _ := txs.GetByID(context.Background(), created.ID)
@@ -2145,7 +2230,7 @@ func TestSyncBillTransactionRepointsAccount(t *testing.T) {
 		})
 
 	bill := domain.Bill{MarketName: "REWE", TotalCents: 250, Currency: "EUR"}
-	if err := svc.syncBillTransaction(context.Background(), created.ID, bill, 7); err != nil {
+	if err := svc.syncBillTransaction(context.Background(), created.ID, bill, 7, nil); err != nil {
 		t.Fatalf("syncBillTransaction: %v", err)
 	}
 	tx, _ := txs.GetByID(context.Background(), created.ID)

@@ -37,6 +37,9 @@ func (f *fakeAccountStore) GetByID(_ context.Context, id int64) (domain.Account,
 func (f *fakeAccountStore) Create(_ context.Context, a domain.Account) (domain.Account, error) {
 	a.ID = f.next
 	f.next++
+	// The fake derives like the real store with an empty ledger: the balance
+	// equals the opening balance until transactions exist.
+	a.BalanceCents = a.OpeningBalanceCents
 	f.items[a.ID] = a
 	return a, nil
 }
@@ -45,6 +48,7 @@ func (f *fakeAccountStore) Update(_ context.Context, a domain.Account) (domain.A
 	if _, ok := f.items[a.ID]; !ok {
 		return domain.Account{}, domain.ErrNotFound
 	}
+	a.BalanceCents = a.OpeningBalanceCents
 	f.items[a.ID] = a
 	return a, nil
 }
@@ -66,10 +70,10 @@ func TestAccountCreateValidatesInput(t *testing.T) {
 		input   AccountInput
 		wantErr bool
 	}{
-		{name: "valid", input: AccountInput{Name: "Checking", Type: domain.AccountChecking, BalanceCents: 1000}, wantErr: false},
+		{name: "valid", input: AccountInput{Name: "Checking", Type: domain.AccountChecking, OpeningBalanceCents: 1000}, wantErr: false},
 		{name: "empty name", input: AccountInput{Name: "  ", Type: domain.AccountChecking}, wantErr: true},
 		{name: "bad type", input: AccountInput{Name: "X", Type: "crypto"}, wantErr: true},
-		{name: "negative balance", input: AccountInput{Name: "X", Type: domain.AccountCash, BalanceCents: -1}, wantErr: true},
+		{name: "negative opening is allowed (credit accounts)", input: AccountInput{Name: "Y", Type: domain.AccountCredit, OpeningBalanceCents: -1}, wantErr: false},
 		{name: "bad currency", input: AccountInput{Name: "X", Type: domain.AccountCash, Currency: "DOLLAR"}, wantErr: true},
 	}
 

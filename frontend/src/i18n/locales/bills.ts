@@ -163,6 +163,9 @@ export const bills: LocaleBundle = {
       walletMoney: 'wallet money',
       recordedHere: 'expense recorded here',
       noAccountYet: 'no account yet',
+      fxRate: 'Exchange rate',
+      convertedTotal: 'Charged ≈ {{amount}} from {{currency}}',
+      fxRateHint: 'the rate your bank applies — edit it if it differs',
     },
     options: {
       wallet: 'Wallet (default)',
@@ -249,6 +252,8 @@ export const bills: LocaleBundle = {
       newMarketAria: 'New market name',
       dateAria: 'Bill date',
       accountAria: 'Account to record the expense (wallet by default)',
+      fxRateAria:
+        'Exchange rate the paying bank applies — the bill total converts into the account currency',
       currencyAria: 'Bill currency',
       budgetAria: 'Budget the bill counts toward',
       bagAria: 'Bag the bill is spent out of',
@@ -429,6 +434,9 @@ export const bills: LocaleBundle = {
       walletMoney: 'Bargeld',
       recordedHere: 'Ausgabe hier gebucht',
       noAccountYet: 'noch kein Konto',
+      fxRate: 'Wechselkurs',
+      convertedTotal: 'Belastet ≈ {{amount}} aus {{currency}}',
+      fxRateHint: 'der Kurs, den deine Bank ansetzt — bei Abweichung anpassen',
     },
     options: {
       wallet: 'Wallet (Standard)',
@@ -515,6 +523,8 @@ export const bills: LocaleBundle = {
       newMarketAria: 'Name des neuen Markts',
       dateAria: 'Belegdatum',
       accountAria: 'Konto, auf dem die Ausgabe erfasst wird (standardmäßig die Wallet)',
+      fxRateAria:
+        'Wechselkurs, den die zahlende Bank ansetzt — die Belegsumme wird in die Kontowährung umgerechnet',
       currencyAria: 'Belegwährung',
       budgetAria: 'Budget, auf das der Beleg angerechnet wird',
       bagAria: 'Umschlag, aus dem der Beleg ausgegeben wird',
@@ -695,6 +705,9 @@ export const bills: LocaleBundle = {
       walletMoney: 'dinero de la cartera',
       recordedHere: 'gasto registrado aquí',
       noAccountYet: 'aún sin cuenta',
+      fxRate: 'Tipo de cambio',
+      convertedTotal: 'Cobrado ≈ {{amount}} desde {{currency}}',
+      fxRateHint: 'el tipo que aplica tu banco — edítalo si difiere',
     },
     options: {
       wallet: 'Cartera (predeterminada)',
@@ -781,6 +794,8 @@ export const bills: LocaleBundle = {
       newMarketAria: 'Nombre del nuevo mercado',
       dateAria: 'Fecha del recibo',
       accountAria: 'Cuenta donde registrar el gasto (cartera por defecto)',
+      fxRateAria:
+        'Tipo de cambio que aplica el banco que paga — el total del recibo se convierte a la divisa de la cuenta',
       currencyAria: 'Divisa del recibo',
       budgetAria: 'Presupuesto al que cuenta el recibo',
       bagAria: 'Bolsillo del que se gasta el recibo',

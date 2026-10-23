@@ -485,6 +485,29 @@ When adding
 a new entity, follow the vertical slice:
 migration → domain model → repository → service → handler → route → frontend
 api module → feature page.
+**Account balances are derived, not stored** (migrations 0040 + 0041,
+`accountBalanceExpr` in `account_repository.go`):
+`opening_balance_cents + Σ(income) − Σ(expense) − Σ(transfers out incl. fee)
++ Σ(transfers in)`. Only the opening balance is editable — the bank-reported
+number is set through `POST /accounts/{id}/reconcile`, which adjusts the opening
+seed (the ledger's facts stay untouched). **Currency handling** (0041):
+accounts are single-currency ISO-4217 rows; the reference rates come from the
+public Frankfurter/ECB table (cached 24h in the settings row `fx_rates`,
+served to the UI at `GET /api/v1/fx/rates` and shown/prefilled in the UI).
+Cross-currency conversions are **recorded once at save time and never
+re-derived**: a cross-currency transfer stores the receiving leg
+(`counter_amount_cents`/`counter_currency`, rate in `fx_rate`), its optional
+`fee_cents` rides the row in the SOURCE account's currency (the sending side
+loses amount + fee; the receiver gains only the converted amount), and an
+expense/income row whose currency differs from its account (a bill paid by a
+foreign-currency card) stores `account_amount_cents` — the converting balance
+fold — instead of its raw amount. The user can override the reference rate on
+both forms (`fx_rate` in the inputs — banks don't always follow the reference);
+that override is stored per row and never re-applies globally. No rate known
+(offline or an unlisted currency) degrades that one conversion to 1:1 with a
+warning — never a failure. Migration 0041 intentionally does NOT backfill old
+rows (re-deriving against today's rate would rewrite history; 0040's opening
+balances already absorbed past effects).
 **Bags** (migration 0035) are **allocation envelopes — virtual partitions of one
 account's balance**: the money never moves or is copied into the ledger; a bag's
 balance is always derived per read as Σ `bag_allocations` − tagged spend.

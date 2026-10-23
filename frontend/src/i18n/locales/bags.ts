@@ -36,7 +36,10 @@ export const bags: LocaleBundle = {
     },
     actions: {
       add: 'Add',
-      allocate: 'Allocate',
+      fund: 'Fund',
+      withdraw: 'Withdraw',
+      moveToBag: 'Move to bag…',
+      adjust: 'Adjust…',
       ledger: 'Ledger',
       edit: 'Edit',
       closeBag: 'Close',
@@ -63,7 +66,7 @@ export const bags: LocaleBundle = {
         notice: 'The account never changes — a reserve lives where it was opened.',
       },
       allocate: {
-        title: 'Allocate — {{name}}',
+        title: 'Move money — {{name}}',
         actionLabel: 'Action',
         kindFund: 'Fund — reserve into the bag',
         kindWithdraw: 'Withdraw — release back to unbagged',
@@ -78,6 +81,7 @@ export const bags: LocaleBundle = {
       rebalance: {
         title: 'Rebalance leftovers',
         needTwo: 'Two open bags on the account are needed to rebalance between them.',
+        crossAccountHint: 'Bags on different accounts cannot be rebalanced directly — record a transfer between the accounts first, then move the money inside the account.',
         fromAria: 'From bag',
         fromPlaceholder: 'From bag…',
         toAria: 'To bag',
@@ -172,7 +176,10 @@ export const bags: LocaleBundle = {
     },
     actions: {
       add: 'Anlegen',
-      allocate: 'Zuteilen',
+      fund: 'Einzahlen',
+      withdraw: 'Auszahlen',
+      moveToBag: 'In Umschlag umbuchen…',
+      adjust: 'Korrigieren…',
       ledger: 'Journal',
       edit: 'Bearbeiten',
       closeBag: 'Schließen',
@@ -199,7 +206,7 @@ export const bags: LocaleBundle = {
         notice: 'Das Konto wechselt nie — eine Reserve bleibt, wo sie eröffnet wurde.',
       },
       allocate: {
-        title: 'Zuteilen — {{name}}',
+        title: 'Geld bewegen — {{name}}',
         actionLabel: 'Aktion',
         kindFund: 'Einzahlen — Reserve in den Umschlag',
         kindWithdraw: 'Auszahlen — Betrag wieder freigeben',
@@ -214,6 +221,7 @@ export const bags: LocaleBundle = {
       rebalance: {
         title: 'Restbeträge umbuchen',
         needTwo: 'Zum Umbuchen zwischen Umschlägen braucht es zwei offene Umschläge auf dem Konto.',
+        crossAccountHint: 'Umschläge auf verschiedenen Konten lassen sich nicht direkt umbuchen — buche zuerst eine Überweisung zwischen den Konten, dann das Geld im Konto um.',
         fromAria: 'Vom Umschlag',
         fromPlaceholder: 'Vom Umschlag…',
         toAria: 'Zum Umschlag',
@@ -308,7 +316,10 @@ export const bags: LocaleBundle = {
     },
     actions: {
       add: 'Crear',
-      allocate: 'Asignar',
+      fund: 'Abonar',
+      withdraw: 'Retirar',
+      moveToBag: 'Mover a otro bolsillo…',
+      adjust: 'Ajustar…',
       ledger: 'Historial',
       edit: 'Editar',
       closeBag: 'Cerrar',
@@ -335,7 +346,7 @@ export const bags: LocaleBundle = {
         notice: 'La cuenta nunca cambia: una reserva se queda donde se abrió.',
       },
       allocate: {
-        title: 'Asignar — {{name}}',
+        title: 'Mover dinero — {{name}}',
         actionLabel: 'Acción',
         kindFund: 'Abonar: reserva en el bolsillo',
         kindWithdraw: 'Retirar: vuelve al saldo sin bolsillo',
@@ -350,6 +361,7 @@ export const bags: LocaleBundle = {
       rebalance: {
         title: 'Reajustar restos',
         needTwo: 'Para reajustar entre bolsillos hacen falta dos bolsillos abiertos en la cuenta.',
+        crossAccountHint: 'Los bolsillos de cuentas distintas no se pueden reajustar directamente: registra primero una transferencia entre las cuentas y luego mueve el dinero dentro de la cuenta.',
         fromAria: 'Desde bolsillo',
         fromPlaceholder: 'Desde bolsillo…',
         toAria: 'Hacia bolsillo',

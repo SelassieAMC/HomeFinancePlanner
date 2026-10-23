@@ -11,8 +11,28 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// accountColumns is the column list used for SELECTs, in scan order.
-const accountColumns = `id, name, type, currency, balance_cents, card_last_digits, created_at, updated_at`
+// accountBalanceExpr is the derived-balance expression (migrations 0040 +
+// 0041): opening_balance_cents plus the signed transaction ledger — income +,
+// expense −, transfer sent − (amount + fee), transfer received + (the counter
+// leg: its own recorded amount/currency when stored, else the row's amount
+// 1:1 — the accepted degradation when no rate is known). Foreign-currency
+// income/expense rows (e.g. a bill in another currency paid by this card)
+// fold their account_amount_cents — the row converted into the account's
+// currency at save time — in place of the raw amount; NULL folds 1:1, the
+// same accepted degradation. The alias must stay balance_cents — scans and
+// cross-store reads (summary balances) key on it.
+const accountBalanceExpr = `a.opening_balance_cents
+	+ COALESCE((SELECT SUM(CASE t.kind WHEN 'income' THEN 1 ELSE -1 END * COALESCE(t.account_amount_cents, t.amount_cents))
+		FROM transactions t WHERE t.account_id = a.id AND t.kind IN ('income', 'expense')), 0)
+	- COALESCE((SELECT SUM(t.amount_cents + COALESCE(t.fee_cents, 0))
+		FROM transactions t WHERE t.account_id = a.id AND t.kind = 'transfer'), 0)
+	+ COALESCE((SELECT SUM(COALESCE(t.counter_amount_cents, t.amount_cents))
+		FROM transactions t WHERE t.counter_account_id = a.id AND t.kind = 'transfer'), 0)`
+
+// accountColumns is the column list used for SELECTs, in scan order. The
+// balance is computed, not stored.
+const accountColumns = `a.id, a.name, a.type, a.currency, ` + accountBalanceExpr + ` AS balance_cents,
+	a.opening_balance_cents, a.card_last_digits, a.created_at, a.updated_at`
 
 // AccountRepository is the SQLite-backed implementation of the account store.
 type AccountRepository struct{ db *sql.DB }
@@ -21,7 +41,7 @@ func NewAccountRepository(db *sql.DB) *AccountRepository { return &AccountReposi
 
 func (r *AccountRepository) List(ctx context.Context) ([]domain.Account, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+accountColumns+` FROM accounts ORDER BY name`)
+		`SELECT `+accountColumns+` FROM accounts a ORDER BY a.name`)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
@@ -40,7 +60,7 @@ func (r *AccountRepository) List(ctx context.Context) ([]domain.Account, error) 
 
 func (r *AccountRepository) GetByID(ctx context.Context, id int64) (domain.Account, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT `+accountColumns+` FROM accounts WHERE id = ?`, id)
+		`SELECT `+accountColumns+` FROM accounts a WHERE a.id = ?`, id)
 
 	a, err := scanAccount(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -55,9 +75,9 @@ func (r *AccountRepository) GetByID(ctx context.Context, id int64) (domain.Accou
 func (r *AccountRepository) Create(ctx context.Context, a domain.Account) (domain.Account, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO accounts (name, type, currency, balance_cents, card_last_digits, created_at, updated_at)
+		INSERT INTO accounts (name, type, currency, opening_balance_cents, card_last_digits, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, string(a.Type), a.Currency, a.BalanceCents, a.CardLastDigits, now, now)
+		a.Name, string(a.Type), a.Currency, a.OpeningBalanceCents, a.CardLastDigits, now, now)
 	if err != nil {
 		return domain.Account{}, mapWriteError("create account", err)
 	}
@@ -68,12 +88,15 @@ func (r *AccountRepository) Create(ctx context.Context, a domain.Account) (domai
 	return r.GetByID(ctx, id)
 }
 
+// Update replaces the user-editable fields. The opening balance is the only
+// money field (the balance itself is derived); reconciliation adjusts it —
+// never a direct balance write, which would silently fork the ledger.
 func (r *AccountRepository) Update(ctx context.Context, a domain.Account) (domain.Account, error) {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE accounts
-		SET name = ?, type = ?, currency = ?, balance_cents = ?, card_last_digits = ?, updated_at = ?
+		SET name = ?, type = ?, currency = ?, opening_balance_cents = ?, card_last_digits = ?, updated_at = ?
 		WHERE id = ?`,
-		a.Name, string(a.Type), a.Currency, a.BalanceCents, a.CardLastDigits, time.Now().Unix(), a.ID)
+		a.Name, string(a.Type), a.Currency, a.OpeningBalanceCents, a.CardLastDigits, time.Now().Unix(), a.ID)
 	if err != nil {
 		return domain.Account{}, mapWriteError("update account", err)
 	}
@@ -101,7 +124,7 @@ func scanAccount(row interface{ Scan(dest ...any) error }) (domain.Account, erro
 		typ            string
 		createdAt, upd int64
 	)
-	if err := row.Scan(&a.ID, &a.Name, &typ, &a.Currency, &a.BalanceCents, &a.CardLastDigits, &createdAt, &upd); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &typ, &a.Currency, &a.BalanceCents, &a.OpeningBalanceCents, &a.CardLastDigits, &createdAt, &upd); err != nil {
 		return domain.Account{}, err
 	}
 	a.Type = domain.AccountType(typ)

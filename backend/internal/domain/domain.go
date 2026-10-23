@@ -38,16 +38,21 @@ func (t AccountType) Valid() bool {
 	return false
 }
 
-// Account is a user-owned financial account.
+// Account is a user-owned financial account. BalanceCents is DERIVED per
+// read (migration 0040): opening_balance_cents plus the signed transaction
+// ledger (income +, expense −, transfers both legs). Only the opening balance
+// is editable — the reconciliation adjusts it so the derived balance matches
+// what the bank says.
 type Account struct {
-	ID             int64       `json:"id"`
-	Name           string      `json:"name"`
-	Type           AccountType `json:"type"`
-	Currency       string      `json:"currency"`
-	BalanceCents   int64       `json:"balance_cents"`
-	CardLastDigits string      `json:"card_last_digits,omitempty"` // card identifier for bill matching
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
+	ID                  int64       `json:"id"`
+	Name                string      `json:"name"`
+	Type                AccountType `json:"type"`
+	Currency            string      `json:"currency"`
+	OpeningBalanceCents int64       `json:"opening_balance_cents"`
+	BalanceCents        int64       `json:"balance_cents"`              // derived: opening + Σ transactions
+	CardLastDigits      string      `json:"card_last_digits,omitempty"` // card identifier for bill matching
+	CreatedAt           time.Time   `json:"created_at"`
+	UpdatedAt           time.Time   `json:"updated_at"`
 }
 
 // TransactionKind distinguishes money in vs money out.
@@ -100,6 +105,28 @@ type Transaction struct {
 	// expense rows (a NULL on a transfer violates validation).
 	CounterAccountID   *int64 `json:"counter_account_id,omitempty"`
 	CounterAccountName string `json:"counter_account_name,omitempty"` // display-only, joined from accounts
+	// The receiving leg of the transfer (migration 0040): what the destination
+	// account gains, recorded at transfer time from the FX snapshot when the
+	// two accounts differ in currency. NULL = same-currency (or no rate known):
+	// balance reads fold the row's amount 1:1 — the accepted degradation.
+	CounterAmountCents *int64 `json:"counter_amount_cents,omitempty"`
+	CounterCurrency    string `json:"counter_currency,omitempty"`
+	// FeeCents is a transfer's bank/intermediary fee, in the SOURCE account's
+	// currency: the sending side loses amount + fee, the receiving side gains
+	// only the converted amount. NULL = no fee. Refused on income/expense.
+	FeeCents *int64 `json:"fee_cents,omitempty"`
+	// FxRate is the exchange rate actually applied when the row was converted
+	// (units of `to` per 1 of `from`) — the public reference rate unless the
+	// user overrode it (banks don't always follow the reference). NULL = no
+	// conversion happened for this row.
+	FxRate *float64 `json:"fx_rate,omitempty"`
+	// AccountAmountCents appears on income/expense rows whose currency differs
+	// from the owning account's currency (e.g. a COP bill paid from a EUR
+	// card): the amount in the ACCOUNT's currency, converted at save time from
+	// the FX snapshot (or a user-overridden rate). Balance reads fold this in
+	// place of AmountCents; NULL folds 1:1 — the accepted degradation when no
+	// rate was known.
+	AccountAmountCents *int64 `json:"account_amount_cents,omitempty"`
 
 	// BagID tags an expense to a bag: the money was spent out of that
 	// reserve. Never set on income or transfer rows (validated); NULL for
@@ -215,14 +242,14 @@ type Budget struct {
 // that balance reaches TargetCents. TargetDate is an optional "by when"
 // milestone.
 type Goal struct {
-	ID         int64      `json:"id"`
-	Name       string     `json:"name"`
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
 	TargetCents int64     `json:"target_cents"`
-	Currency   string     `json:"currency"`      // the linked account's currency (decided at save time)
-	AccountID  int64      `json:"account_id"`
-	TargetDate *string    `json:"target_date,omitempty"` // YYYY-MM-DD, nullable
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	Currency    string    `json:"currency"` // the linked account's currency (decided at save time)
+	AccountID   int64     `json:"account_id"`
+	TargetDate  *string   `json:"target_date,omitempty"` // YYYY-MM-DD, nullable
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // GoalStatus is a goal with its live progress attached. ProgressCents is the

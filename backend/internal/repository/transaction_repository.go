@@ -15,11 +15,22 @@ import (
 // this package.
 type TransactionFilters = domain.TransactionFilters
 
+// nullString converts an optional string ("", meaning unset) into a driver
+// value — the counter-leg currency, which stays NULL for same-currency rows.
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 const transactionColumns = `
 	t.id, t.account_id, t.category_id, t.kind, t.amount_cents, t.currency, t.description, t.date,
 	t.created_at, t.updated_at,
 	t.bill_id, t.store_id, st.name AS store_name,
 	t.counter_account_id, ca.name AS counter_account_name,
+	t.counter_amount_cents, t.counter_currency,
+	t.fee_cents, t.fx_rate, t.account_amount_cents,
 	t.bag_id, bg.name AS bag_name,
 	(SELECT COUNT(*) FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count`
 
@@ -135,10 +146,11 @@ func (r *TransactionRepository) Create(ctx context.Context, t domain.Transaction
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO transactions
-			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, bill_id, store_id, counter_account_id, bag_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, bill_id, store_id, counter_account_id, counter_amount_cents, counter_currency, fee_cents, fx_rate, account_amount_cents, bag_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, now, now, nullableID(t.BillID), nullableID(t.StoreID), nullableID(t.CounterAccountID), nullableID(t.BagID))
+		t.Currency, t.Description, t.Date, now, now, nullableID(t.BillID), nullableID(t.StoreID), nullableID(t.CounterAccountID),
+		nullableID(t.CounterAmountCents), nullString(t.CounterCurrency), nullableID(t.FeeCents), nullableFloat(t.FxRate), nullableID(t.AccountAmountCents), nullableID(t.BagID))
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("create transaction", err)
 	}
@@ -162,10 +174,11 @@ func (r *TransactionRepository) CreateWithItems(ctx context.Context, t domain.Tr
 
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO transactions
-			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, store_id, counter_account_id, bag_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, store_id, counter_account_id, counter_amount_cents, counter_currency, fee_cents, fx_rate, account_amount_cents, bag_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, now, now, nullableID(t.StoreID), nullableID(t.CounterAccountID), nullableID(t.BagID))
+		t.Currency, t.Description, t.Date, now, now, nullableID(t.StoreID), nullableID(t.CounterAccountID),
+		nullableID(t.CounterAmountCents), nullString(t.CounterCurrency), nullableID(t.FeeCents), nullableFloat(t.FxRate), nullableID(t.AccountAmountCents), nullableID(t.BagID))
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("create transaction", err)
 	}
@@ -186,10 +199,11 @@ func (r *TransactionRepository) Update(ctx context.Context, t domain.Transaction
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE transactions
 		SET account_id = ?, category_id = ?, kind = ?, amount_cents = ?, currency = ?,
-		    description = ?, date = ?, updated_at = ?, counter_account_id = ?, bag_id = ?
+		    description = ?, date = ?, updated_at = ?, counter_account_id = ?, counter_amount_cents = ?, counter_currency = ?, fee_cents = ?, fx_rate = ?, account_amount_cents = ?, bag_id = ?
 		WHERE id = ?`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, time.Now().Unix(), nullableID(t.CounterAccountID), nullableID(t.BagID), t.ID)
+		t.Currency, t.Description, t.Date, time.Now().Unix(), nullableID(t.CounterAccountID),
+		nullableID(t.CounterAmountCents), nullString(t.CounterCurrency), nullableID(t.FeeCents), nullableFloat(t.FxRate), nullableID(t.AccountAmountCents), nullableID(t.BagID), t.ID)
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("update transaction", err)
 	}
@@ -214,10 +228,11 @@ func (r *TransactionRepository) UpdateWithItems(ctx context.Context, t domain.Tr
 	res, err := tx.ExecContext(ctx, `
 		UPDATE transactions
 		SET account_id = ?, category_id = ?, kind = ?, amount_cents = ?, currency = ?,
-		    description = ?, date = ?, updated_at = ?, store_id = ?, counter_account_id = ?, bag_id = ?
+		    description = ?, date = ?, updated_at = ?, store_id = ?, counter_account_id = ?, counter_amount_cents = ?, counter_currency = ?, fee_cents = ?, fx_rate = ?, account_amount_cents = ?, bag_id = ?
 		WHERE id = ?`,
 		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
-		t.Currency, t.Description, t.Date, now, nullableID(t.StoreID), nullableID(t.CounterAccountID), nullableID(t.BagID), t.ID)
+		t.Currency, t.Description, t.Date, now, nullableID(t.StoreID), nullableID(t.CounterAccountID),
+		nullableID(t.CounterAmountCents), nullString(t.CounterCurrency), nullableID(t.FeeCents), nullableFloat(t.FxRate), nullableID(t.AccountAmountCents), nullableID(t.BagID), t.ID)
 	if err != nil {
 		return domain.Transaction{}, mapWriteError("update transaction", err)
 	}
@@ -314,6 +329,11 @@ func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transacti
 		storeName      sql.NullString
 		counterID      sql.NullInt64
 		counterName    sql.NullString
+		counterAmt     sql.NullInt64
+		counterCurr    sql.NullString
+		feeCents       sql.NullInt64
+		fxRate         sql.NullFloat64
+		accountAmt     sql.NullInt64
 		bagID          sql.NullInt64
 		bagName        sql.NullString
 		itemCount      int
@@ -321,6 +341,8 @@ func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transacti
 	if err := row.Scan(&t.ID, &t.AccountID, &category, &kind, &t.AmountCents,
 		&t.Currency, &t.Description, &t.Date, &createdAt, &upd,
 		&billID, &storeID, &storeName, &counterID, &counterName,
+		&counterAmt, &counterCurr,
+		&feeCents, &fxRate, &accountAmt,
 		&bagID, &bagName, &itemCount); err != nil {
 		return domain.Transaction{}, err
 	}
@@ -339,6 +361,23 @@ func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transacti
 	if counterID.Valid {
 		v := counterID.Int64
 		t.CounterAccountID = &v
+	}
+	if counterAmt.Valid {
+		v := counterAmt.Int64
+		t.CounterAmountCents = &v
+	}
+	t.CounterCurrency = counterCurr.String
+	if feeCents.Valid {
+		v := feeCents.Int64
+		t.FeeCents = &v
+	}
+	if fxRate.Valid {
+		v := fxRate.Float64
+		t.FxRate = &v
+	}
+	if accountAmt.Valid {
+		v := accountAmt.Int64
+		t.AccountAmountCents = &v
 	}
 	if bagID.Valid {
 		v := bagID.Int64

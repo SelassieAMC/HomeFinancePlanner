@@ -43,8 +43,14 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
 
   const [editing, setEditing] = useState<BagStatus | null>(null);
   const [allocating, setAllocating] = useState<BagStatus | null>(null);
+  // The allocate dialog opens with a specific action when launched from the
+  // per-kind buttons (fund / withdraw); the "Move money" button leaves the
+  // choice open.
+  const [allocateKind, setAllocateKind] = useState<'fund' | 'withdraw' | 'adjust'>('fund');
   const [historyOf, setHistoryOf] = useState<{ bag: BagStatus; currency: string; rows: BagAllocation[] } | null>(null);
   const [rebalancing, setRebalancing] = useState<string>(''); // account id as string
+  // Moves launched from a bag card preselect the source bag.
+  const [rebalanceFrom, setRebalanceFrom] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<BagStatus | null>(null);
   const [yearClose, setYearClose] = useState<YearClosePreview | null>(null);
 
@@ -245,9 +251,29 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
                   <BagCard
                     key={b.id}
                     bag={b}
+                    account={{
+                      account_id: view.account_id,
+                      currency: view.currency,
+                      bags: view.bags,
+                    }}
                     currency={view.currency}
                     busy={busy}
-                    onAllocate={() => setAllocating(b)}
+                    onFund={() => {
+                      setAllocateKind('fund');
+                      setAllocating(b);
+                    }}
+                    onWithdraw={() => {
+                      setAllocateKind('withdraw');
+                      setAllocating(b);
+                    }}
+                    onMoveMoney={() => {
+                      setAllocateKind('fund');
+                      setAllocating(b);
+                    }}
+                    onRebalance={() => {
+                      setRebalanceFrom(b.id);
+                      setRebalancing(String(view.account_id));
+                    }}
                     onHistory={() => void openHistory(b)}
                     onEdit={() => setEditing(b)}
                     onToggleStatus={() => void handleStatus(b, b.status === 'open' ? 'closed' : 'open')}
@@ -281,6 +307,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
         <Dialog title={t('dialogs.allocate.title', { name: allocating.name })}>
           <AllocateForm
             currency={sections.find((a) => a.account_id === allocating.account_id)?.currency ?? ''}
+            initialKind={allocateKind}
             busy={busy}
             onSubmit={async (input) => {
               await handleAllocate(allocating, input);
@@ -306,12 +333,16 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
         <Dialog title={t('dialogs.rebalance.title')}>
           <RebalanceForm
             account={sections.find((a) => String(a.account_id) === rebalancing)}
+            initialFromBag={rebalanceFrom}
             busy={busy}
             onSubmit={async (input) => {
               await handleRebalance(input);
               setRebalancing('');
             }}
-            onCancel={() => setRebalancing('')}
+            onCancel={() => {
+              setRebalancing('');
+              setRebalanceFrom(null);
+            }}
           />
         </Dialog>
       )}
@@ -367,21 +398,32 @@ function bagHealth(b: BagStatus): string | undefined {
 }
 
 // BagCard mirrors the budget progress-card: dot + name + balance amounts,
-// target progress bar, a status line, and the action row.
+// target progress bar, a status line, and the action row. The money actions
+// are explicit: Fund and Withdraw post the two everyday ledger entries; "Move
+// to bag" preselects this bag as the rebalance source; Adjust (a rare drift
+// correction) lives behind "Move money" with the kind selector.
 function BagCard({
   bag,
+  account,
   currency,
   busy,
-  onAllocate,
+  onFund,
+  onWithdraw,
+  onMoveMoney,
+  onRebalance,
   onHistory,
   onEdit,
   onToggleStatus,
   onDelete,
 }: {
   bag: BagStatus;
+  account: { account_id: number; currency: string; bags: BagStatus[] };
   currency: string;
   busy: boolean;
-  onAllocate: () => void;
+  onFund: () => void;
+  onWithdraw: () => void;
+  onMoveMoney: () => void;
+  onRebalance: () => void;
   onHistory: () => void;
   onEdit: () => void;
   onToggleStatus: () => void;
@@ -428,9 +470,22 @@ function BagCard({
       </div>
       <div className="camera-row">
         {bag.status === 'open' && (
-          <Button variant="secondary" className="btn-sm" onClick={onAllocate} disabled={busy}>
-            {t('actions.allocate')}
-          </Button>
+          <>
+            <Button variant="secondary" className="btn-sm" onClick={onFund} disabled={busy}>
+              {t('actions.fund')}
+            </Button>
+            <Button variant="secondary" className="btn-sm" onClick={onWithdraw} disabled={busy}>
+              {t('actions.withdraw')}
+            </Button>
+            {(account.bags.filter((o) => o.status === 'open').length > 1) && (
+              <Button variant="secondary" className="btn-sm" onClick={onRebalance} disabled={busy}>
+                {t('actions.moveToBag')}
+              </Button>
+            )}
+            <Button variant="ghost" className="btn-sm" onClick={onMoveMoney} disabled={busy}>
+              {t('actions.adjust')}
+            </Button>
+          </>
         )}
         <Button variant="ghost" className="btn-sm" onClick={onHistory}>
           {t('actions.ledger')}
@@ -523,17 +578,19 @@ function BagEditForm({
 
 function AllocateForm({
   currency,
+  initialKind = 'fund',
   busy,
   onSubmit,
   onCancel,
 }: {
   currency: string;
+  initialKind?: 'fund' | 'withdraw' | 'adjust';
   busy: boolean;
   onSubmit: (input: BagAllocationInput) => Promise<void>;
   onCancel: () => void;
 }) {
   const { t } = useTranslation('bags');
-  const [kind, setKind] = useState<'fund' | 'withdraw' | 'adjust'>('fund');
+  const [kind, setKind] = useState<'fund' | 'withdraw' | 'adjust'>(initialKind);
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [date, setDate] = useState(todayISO());
@@ -617,6 +674,7 @@ function LedgerList({ rows, currency }: { rows: BagAllocation[]; currency: strin
 
 function RebalanceForm({
   account,
+  initialFromBag = null,
   busy,
   onSubmit,
   onCancel,
@@ -628,13 +686,14 @@ function RebalanceForm({
         bags: BagStatus[];
       }
     | undefined;
+  initialFromBag?: number | null;
   busy: boolean;
   onSubmit: (input: BagRebalanceInput) => Promise<void>;
   onCancel: () => void;
 }) {
   const { t } = useTranslation('bags');
   const open = (account?.bags ?? []).filter((b) => b.status === 'open');
-  const [fromBag, setFromBag] = useState('');
+  const [fromBag, setFromBag] = useState(initialFromBag ? String(initialFromBag) : '');
   const [toBag, setToBag] = useState('');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
@@ -716,6 +775,7 @@ function RebalanceForm({
       {from && from.balance_cents < 0 && (
         <p className="hint-text">{t('dialogs.rebalance.warnOverspending')}</p>
       )}
+      <p className="hint-text">{t('dialogs.rebalance.crossAccountHint')}</p>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>

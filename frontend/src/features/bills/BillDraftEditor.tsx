@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, Product, Store } from '../../types/domain';
+import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, FxSnapshot, Product, Store } from '../../types/domain';
 import { formatCents, dollarsToCents, parseDecimalInput } from '../../lib/money';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
+import { crossRate, convertCents, fxApi } from '../../api/fx';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
 import { productsApi } from '../../api/products';
@@ -34,7 +35,7 @@ export interface BillDraftEditorProps {
   draft: BillDraft;
   /** Replace the whole draft after a cell edit (state lives in the page). */
   onChange: (draft: BillDraft) => void;
-  onConfirm: (accountId?: number, createCardAccount?: boolean) => void;
+  onConfirm: (accountId?: number, createCardAccount?: boolean, fxRate?: number) => void;
   /** Draft mode only: re-run extraction / drop the scan. */
   onRetry?: () => void;
   onDiscard?: () => void;
@@ -42,7 +43,7 @@ export interface BillDraftEditorProps {
   busy?: BillBusyAction;
   error?: string | null;
   /** Account options for the confirm flow (omit to hide the picker). */
-  accounts?: { id: number; name: string; type: AccountType; card_last_digits?: string }[];
+  accounts?: { id: number; name: string; type: AccountType; currency: string; card_last_digits?: string }[];
   /**
    * Account the bill is currently recorded on (saved mode). Preselects the
    * picker; null/undefined = wallet default. Used to edit a saved bill's
@@ -89,6 +90,7 @@ export function buildConfirmInput(
   draft: BillDraft,
   accountId?: number,
   accounts?: { id: number; type: AccountType; card_last_digits?: string }[],
+  fxRate?: number,
 ): BillConfirmInput {
   const account = accountId ? accounts?.find((a) => a.id === accountId) : undefined;
   return {
@@ -120,6 +122,7 @@ export function buildConfirmInput(
     })),
     bag_id: draft.bag_id ?? undefined,
     account_id: accountId,
+    fx_rate: fxRate,
   };
 }
 
@@ -307,6 +310,55 @@ export function BillDraftEditor({
     (a) => a.type === 'cash' && a.name.toLowerCase() === 'wallet',
   );
 
+  // Cross-currency card payments: when the paying account's currency differs
+  // from the bill's, the total is converted into the account's currency. The
+  // public reference rate (ECB snapshot) prefills the field; the user
+  // overrides it with the bank's own rate when it differs from the reference.
+  const [fxSnap, setFxSnap] = useState<FxSnapshot | null>(null);
+  const [fxRate, setFxRate] = useState('');
+  const [fxRateTouched, setFxRateTouched] = useState(false);
+  useEffect(() => {
+    if (!accounts) return;
+    let alive = true;
+    fxApi
+      .rates()
+      .then((s) => {
+        if (alive) setFxSnap(s);
+      })
+      .catch(() => {
+        // No rates served: no reference default, backend falls back.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [accounts]);
+
+  // The paying currency: the chosen account's (the wallet default '' counts,
+  // a brand-new card account is created in the bill's own currency).
+  const payingCurrency =
+    accountChoice === null || accountChoice === '__new_card__'
+      ? undefined
+      : accountChoice === ''
+        ? (walletAccount?.currency ?? undefined)
+        : (accounts?.find((a) => String(a.id) === accountChoice)?.currency ?? undefined);
+  const fxRateNeeded =
+    Boolean(accounts) && payingCurrency !== undefined && draft.currency !== payingCurrency;
+  const fxRefRate = fxRateNeeded ? crossRate(fxSnap, draft.currency, payingCurrency) : undefined;
+  useEffect(() => {
+    if (fxRateNeeded && !fxRateTouched && fxRefRate !== undefined) {
+      setFxRate(Number(fxRefRate.toPrecision(6)).toString());
+    }
+  }, [fxRateNeeded, fxRateTouched, fxRefRate]);
+  useEffect(() => {
+    if (!fxRateNeeded) setFxRate('');
+  }, [fxRateNeeded]);
+  const fxRateNum = fxRateNeeded && fxRate.trim() !== '' ? parseDecimalInput(fxRate) : NaN;
+  const fxRateValid = Number.isFinite(fxRateNum) && fxRateNum > 0;
+  // Live preview of what the paying account is actually charged, at the shown
+  // (possibly overridden) rate.
+  const convertedPreview =
+    fxRateValid && computedTotal > 0 ? convertCents(computedTotal, fxRateNum) : undefined;
+
   // Bag envelopes (open, reserve partitions). The backend refuses a bag
   // outside the bill's account, so the options are filtered to the chosen
   // account: '' and the wallet default are the wallet's bags, a new card
@@ -325,13 +377,33 @@ export function BillDraftEditor({
     const all = (bagsView.data?.accounts ?? []).flatMap((a) =>
       a.bags
         .filter((b) => b.status === 'open')
-        .map((b) => ({ ...b, accountName: a.account_name })),
+        .map((b) => ({ ...b, accountName: a.account_name, bagCurrency: a.currency })),
     );
     if (selectedAccountId === null) return []; // a brand-new card starts bagless
     return selectedAccountId === undefined
       ? all
       : all.filter((b) => b.account_id === selectedAccountId);
   }, [bagsView.data, selectedAccountId]);
+
+  /** The open-bag ids allowed for an account choice ('' = the default wallet,
+   *  '__new_card__' = none yet, unknown accounts = all open bags). */
+  function bagIdsForAccount(value: string): Set<number> {
+    if (value === '__new_card__') return new Set(); // a brand-new card starts bagless
+    const wallet = value === '' ? (walletAccount?.id ?? undefined) : Number(value) || undefined;
+    if (wallet === undefined) {
+      return new Set(
+        (bagsView.data?.accounts ?? []).flatMap((a) =>
+          a.bags.filter((b) => b.status === 'open').map((b) => b.id),
+        ),
+      );
+    }
+    return new Set(
+      (bagsView.data?.accounts ?? [])
+        .find((a) => a.account_id === wallet)
+        ?.bags.filter((b) => b.status === 'open')
+        .map((b) => b.id) ?? [],
+    );
+  }
 
   // Preselect once the account options arrive: the saved bill's current
   // account, or (fresh scan) the card account matching the receipt's digits.
@@ -349,9 +421,21 @@ export function BillDraftEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accounts, accountChoice]);
 
-  /** Picks an account. */
+  /** Picks an account. The bag cascade follows: a bag of the previous account
+   *  cannot tag the bill anymore, so bill-level and per-line tags that the new
+   *  account does not allow are dropped (the backend would refuse them). */
   function handleAccountChange(value: string) {
     setAccountChoice(value);
+    const allowed = bagIdsForAccount(value);
+    const d = draftRef.current;
+    if (d.bag_id != null && !allowed.has(d.bag_id)) {
+      updateHeader({ bag_id: null });
+    }
+    for (const it of d.items) {
+      if (it.bag_id != null && !allowed.has(it.bag_id)) {
+        updateItem(it.id, { bag_id: null });
+      }
+    }
   }
 
   // Deposit returns ("Leergut") and lines filed under a negative-allowed
@@ -476,17 +560,21 @@ export function BillDraftEditor({
   }
 
   function confirm() {
+    // The user's override rate rides only when a conversion actually happens:
+    // a brand-new card account is created in the bill's own currency, so its
+    // branch never sends one (the backend would refuse it).
+    const rate = fxRateNeeded && fxRateValid ? fxRateNum : undefined;
     if (accountChoice === '__new_card__') {
       onConfirm(undefined, true);
     } else if (accountChoice) {
-      onConfirm(Number(accountChoice));
+      onConfirm(Number(accountChoice), undefined, rate);
     } else if (isSaved) {
       // Saved edits always send an explicit account: an omitted account_id
       // would tell the backend to keep the current one, and the wallet is
       // the default choice here.
-      onConfirm(walletAccount?.id);
+      onConfirm(walletAccount?.id, undefined, rate);
     } else {
-      onConfirm();
+      onConfirm(undefined, undefined, rate);
     }
   }
 
@@ -621,6 +709,31 @@ export function BillDraftEditor({
           </select>
         </div>
         )}
+        {fxRateNeeded && (
+        <div className="stat-card stat-account">
+          <span className="stat-card-label">{t('labels.fxRate')}</span>
+          <input
+            className="stat-card-input"
+            inputMode="decimal"
+            value={fxRate}
+            placeholder={fxRefRate !== undefined ? Number(fxRefRate.toPrecision(6)).toString() : ''}
+            aria-label={t('editor.fxRateAria')}
+            disabled={isBusy}
+            onChange={(e) => {
+              setFxRateTouched(true);
+              setFxRate(e.target.value);
+            }}
+          />
+          <span className="stat-card-sub">
+            {convertedPreview != null
+              ? t('labels.convertedTotal', {
+                  amount: formatCents(convertedPreview, payingCurrency ?? currency),
+                  currency,
+                })
+              : t('labels.fxRateHint')}
+          </span>
+        </div>
+        )}
         <div className="stat-card stat-currency">
           <span className="stat-card-label">{t('labels.currency')}</span>
           <select
@@ -698,7 +811,7 @@ export function BillDraftEditor({
             <option value="">{t('options.noBag')}</option>
             {openBags.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.name} · {b.accountName}
+                {b.name} · {b.accountName} · {formatCents(b.balance_cents, b.bagCurrency)}
               </option>
             ))}
           </select>
@@ -1004,7 +1117,7 @@ export function BillDraftEditor({
                     </option>
                     {openBags.map((b) => (
                       <option key={b.id} value={b.id}>
-                        {b.name} · {b.accountName}
+                        {b.name} · {formatCents(b.balance_cents, b.bagCurrency)}
                       </option>
                     ))}
                   </select>

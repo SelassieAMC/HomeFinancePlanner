@@ -15,7 +15,8 @@ export interface Account {
   name: string;
   type: AccountType;
   currency: string;
-  balance_cents: number;
+  opening_balance_cents: number; // the pre-ledger seed money; the only editable money field
+  balance_cents: number; // derived per read: opening + Σ transactions (income +, expense −, transfers both legs)
   card_last_digits?: string; // for bill matching (card •1234)
   created_at: string;
   updated_at: string;
@@ -25,7 +26,7 @@ export interface AccountInput {
   name: string;
   type: AccountType;
   currency: string;
-  balance_cents: number;
+  opening_balance_cents: number;
   card_last_digits?: string;
 }
 
@@ -47,6 +48,21 @@ export interface Transaction {
   // Transfers only: destination account (account_id is the source).
   counter_account_id?: number | null;
   counter_account_name?: string; // display-only, joined from accounts
+  // Transfers between different currencies: what the destination gains,
+  // recorded from the FX snapshot at save time (null = same currency/1:1).
+  counter_amount_cents?: number | null;
+  counter_currency?: string;
+  // Transfers only: the bank/intermediary fee in the SOURCE account's
+  // currency (null = no fee).
+  fee_cents?: number | null;
+  // The rate actually applied when the row was converted (units of `to` per
+  // 1 of `from`) — the public reference rate unless the user overrode it.
+  fx_rate?: number | null;
+  // Income/expense rows in a currency other than the owning account's (e.g. a
+  // bill paid by a foreign-currency card): the amount in the ACCOUNT's
+  // currency, converted at save time. Balance reads fold this, not the raw
+  // amount. null = same currency (or no rate known → 1:1).
+  account_amount_cents?: number | null;
   // Bag (allocation envelope) tagging. On bill-linked rows this mirrors the
   // bill-level tag for display only — the bag's spend truth is the bill lines.
   bag_id?: number | null;
@@ -88,6 +104,14 @@ export interface TransactionItemInput {
   discount_cents: number;
 }
 
+/** Public exchange-rate snapshot (Frankfurter/ECB, cached 24h server-side). */
+export interface FxSnapshot {
+  pivot: string;
+  date: string; // reference date of the rate data
+  fetched_at: string;
+  rates: Record<string, number>; // units of the key currency per 1 pivot
+}
+
 export interface TransactionInput {
   account_id: number;
   category_id: number | null;
@@ -97,6 +121,8 @@ export interface TransactionInput {
   date: string;
   store_name?: string; // manual purchases: market, find-or-created server-side
   counter_account_id?: number; // transfers only: destination account
+  fee_cents?: number; // transfers only: bank fee in the source currency
+  fx_rate?: number; // transfers only: user-overridden conversion rate
   bag_id?: number | null; // expenses only: tagged into one reserve
   items?: TransactionItemInput[];
 }
@@ -724,6 +750,10 @@ export interface BillConfirmInput {
     bag_id?: number | null; // per-line override (omitted = bill's bag)
   }[];
   account_id?: number;
+  // The user's rate (bill currency → paying account currency) when the bank
+  // doesn't follow the public reference. Omitted = convert from the snapshot;
+  // refused when both currencies are the same.
+  fx_rate?: number;
 }
 
 // --- Product name normalization (canonical name mapping memory) ------------

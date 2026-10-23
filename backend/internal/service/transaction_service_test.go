@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
+	"home-finance-planner/backend/internal/fx"
 )
 
 // newTestTransactionService wires a TransactionService with fakes; the item
@@ -669,6 +670,107 @@ func TestTransactionCreateTransfer(t *testing.T) {
 		t.Errorf("plain expense with transfer rules live broke: %v", err)
 	}
 }
+
+// TestTransferFeeAndFxRate pins the migration-0041 transfer legs: the optional
+// bank fee is recorded on the row (in the source currency) and refused on
+// non-transfer kinds, the user-overridden fx_rate wins over the FX snapshot
+// and is stored as the rate actually applied, an fx_rate on a same-currency
+// transfer is refused, and a cross-currency transfer without any rate
+// degrades to a NULL counter leg instead of inventing one.
+func TestTransferFeeAndFxRate(t *testing.T) {
+	ctx := context.Background()
+	svc, txs, _, _ := newTestTransactionService(t)
+	accounts, _ := svc.accounts.(*fakeAccountStore)
+	dest, err := accounts.Create(ctx, domain.Account{Name: "USD Bank", Type: domain.AccountChecking, Currency: "USD"})
+	if err != nil {
+		t.Fatalf("seed USD account: %v", err)
+	}
+	home := accounts.items[1]
+	if home.Currency != "EUR" {
+		t.Fatalf("seed changed: home currency = %s, want EUR", home.Currency)
+	}
+	// Snapshot: pivot EUR, 1 EUR = 1.1 USD.
+	svc.fx = NewFXService(&fakeSettingsStore{data: map[string]string{}},
+		&fakeRateFetcher{snapshots: []domain.RateSnapshot{testSnapshot(time.Now().UTC())}}, nil)
+
+	// Snapshot rate used by default; the fee rides the row in the source
+	// currency.
+	rate := 1.25
+	in := validTransactionInput()
+	in.Kind = domain.TransactionTransfer
+	in.CounterAccountID = &dest.ID
+	in.FeeCents = int64p(150)
+	created, err := svc.Create(ctx, in)
+	if err != nil {
+		t.Fatalf("create cross-currency transfer: %v", err)
+	}
+	if created.FeeCents == nil || *created.FeeCents != 150 {
+		t.Errorf("fee = %v; want 150", created.FeeCents)
+	}
+	if created.CounterAmountCents == nil || *created.CounterAmountCents != fx.ConvertCents(created.AmountCents, 1.1) {
+		t.Errorf("counter amount = %v; want the snapshot conversion", created.CounterAmountCents)
+	}
+	saved := txs.items[created.ID]
+	if saved.FxRate == nil || *saved.FxRate != 1.1 {
+		t.Errorf("stored rate = %v; want 1.1 (snapshot)", saved.FxRate)
+	}
+
+	// The user's rate wins over the snapshot ("banks don't follow the TRM").
+	inFx := validTransactionInput()
+	inFx.Kind = domain.TransactionTransfer
+	inFx.CounterAccountID = &dest.ID
+	inFx.FxRate = &rate
+	createdFx, err := svc.Create(ctx, inFx)
+	if err != nil {
+		t.Fatalf("create transfer with override: %v", err)
+	}
+	if createdFx.CounterAmountCents == nil || *createdFx.CounterAmountCents != fx.ConvertCents(createdFx.AmountCents, rate) {
+		t.Errorf("override conversion = %v; want 1.25×", createdFx.CounterAmountCents)
+	}
+	if createdFx.FxRate == nil || *createdFx.FxRate != rate {
+		t.Errorf("stored override rate = %v; want 1.25", createdFx.FxRate)
+	}
+
+	// Refusals: fee on an expense, fx_rate on a same-currency transfer, a
+	// negative fee, a non-positive override rate.
+	expense := validTransactionInput()
+	negative := int64(-5)
+	expense.FeeCents = &negative
+	if _, err := svc.Create(ctx, expense); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("expense with fee = %v; want ErrValidation", err)
+	}
+	sameCur := validTransactionInput()
+	// Transfers need a distinct account; the fixture only seeds one, so seed
+	// a same-currency destination.
+	eurDest, err := accounts.Create(ctx, domain.Account{Name: "EUR Spare", Type: domain.AccountSavings, Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("seed EUR account: %v", err)
+	}
+	sameCur.Kind = domain.TransactionTransfer
+	sameCur.CounterAccountID = &eurDest.ID
+	sameCur.FxRate = &rate
+	if _, err := svc.Create(ctx, sameCur); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("same-currency transfer with fx_rate = %v; want ErrValidation", err)
+	}
+	negFee := validTransactionInput()
+	negFee.Kind = domain.TransactionTransfer
+	negFee.CounterAccountID = &dest.ID
+	negFee.FeeCents = &negative
+	if _, err := svc.Create(ctx, negFee); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("negative fee = %v; want ErrValidation", err)
+	}
+	badRate := 0.0
+	overrated := validTransactionInput()
+	overrated.Kind = domain.TransactionTransfer
+	overrated.CounterAccountID = &dest.ID
+	overrated.FxRate = &badRate
+	if _, err := svc.Create(ctx, overrated); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("non-positive fx_rate = %v; want ErrValidation", err)
+	}
+}
+
+// int64p is the test-side pointer helper for optional cent fields.
+func int64p(v int64) *int64 { return &v }
 
 // A transaction records money that already moved — a future date would be a
 // fabricated fact, so create and update refuse it. Planned movements belong

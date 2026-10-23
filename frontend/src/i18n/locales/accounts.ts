@@ -23,11 +23,12 @@ export const accounts: LocaleBundle = {
       type: 'Type',
       currency: 'Currency',
       balance: 'Balance',
+      openingBalance: 'Opening balance',
       card: 'Card',
     },
     edit: {
       typeAria: 'Account type',
-      balancePlaceholder: 'Balance ({{currency}})',
+      balancePlaceholder: 'Opening balance ({{currency}})',
       cardDigitsPlaceholder: 'Card last digits (optional)',
     },
     actions: {
@@ -36,10 +37,19 @@ export const accounts: LocaleBundle = {
       cancel: 'Cancel',
       edit: 'Edit',
       delete: 'Delete account',
+      reconcile: 'Reconcile',
+    },
+    dialogs: {
+      reconcile: {
+        title: 'Reconcile balance',
+        hint: 'The app computed a balance of {{balance}} from your transactions. If the bank says something different, type its number — the opening balance is adjusted and the transactions stay untouched.',
+        statedLabel: 'What the bank says ({{currency}})',
+      },
     },
     errors: {
-      invalidBalance: 'Enter a valid non-negative balance.',
-      invalidStartingBalance: 'Enter a valid non-negative starting balance.',
+      invalidBalance: 'Enter a valid number.',
+      invalidStartingBalance: 'Enter a valid starting balance.',
+      reconcile: 'Reconciliation failed.',
       create: 'Failed to create account.',
       update: 'Failed to update account.',
       delete: 'Failed to delete account.',
@@ -66,11 +76,12 @@ export const accounts: LocaleBundle = {
       type: 'Typ',
       currency: 'Währung',
       balance: 'Saldo',
+      openingBalance: 'Anfangssaldo',
       card: 'Karte',
     },
     edit: {
       typeAria: 'Kontotyp',
-      balancePlaceholder: 'Saldo ({{currency}})',
+      balancePlaceholder: 'Anfangssaldo ({{currency}})',
       cardDigitsPlaceholder: 'Letzte Kartenziffern (optional)',
     },
     actions: {
@@ -79,10 +90,19 @@ export const accounts: LocaleBundle = {
       cancel: 'Abbrechen',
       edit: 'Bearbeiten',
       delete: 'Konto löschen',
+      reconcile: 'Abgleichen',
+    },
+    dialogs: {
+      reconcile: {
+        title: 'Saldo abgleichen',
+        hint: 'Die App hat aus deinen Buchungen einen Saldo von {{balance}} berechnet. Sagt die Bank etwas anderes, gib ihre Zahl ein — der Anfangssaldo wird angepasst, die Buchungen bleiben unberührt.',
+        statedLabel: 'Was die Bank meldet ({{currency}})',
+      },
     },
     errors: {
-      invalidBalance: 'Gib einen gültigen, nicht negativen Saldo ein.',
-      invalidStartingBalance: 'Gib einen gültigen, nicht negativen Startsaldo ein.',
+      invalidBalance: 'Gib eine gültige Zahl ein.',
+      invalidStartingBalance: 'Gib einen gültigen Startsaldo ein.',
+      reconcile: 'Abgleich fehlgeschlagen.',
       create: 'Konto konnte nicht angelegt werden.',
       update: 'Konto konnte nicht aktualisiert werden.',
       delete: 'Konto konnte nicht gelöscht werden.',
@@ -109,11 +129,12 @@ export const accounts: LocaleBundle = {
       type: 'Tipo',
       currency: 'Moneda',
       balance: 'Saldo',
+      openingBalance: 'Saldo inicial',
       card: 'Tarjeta',
     },
     edit: {
       typeAria: 'Tipo de cuenta',
-      balancePlaceholder: 'Saldo ({{currency}})',
+      balancePlaceholder: 'Saldo inicial ({{currency}})',
       cardDigitsPlaceholder: 'Últimos dígitos de la tarjeta (opcional)',
     },
     actions: {
@@ -122,10 +143,19 @@ export const accounts: LocaleBundle = {
       cancel: 'Cancelar',
       edit: 'Editar',
       delete: 'Eliminar cuenta',
+      reconcile: 'Conciliar',
+    },
+    dialogs: {
+      reconcile: {
+        title: 'Conciliar saldo',
+        hint: 'La app calculó un saldo de {{balance}} a partir de tus transacciones. Si el banco dice otra cosa, introduce su cifra: se ajusta el saldo inicial y las transacciones quedan intactas.',
+        statedLabel: 'Lo que dice el banco ({{currency}})',
+      },
     },
     errors: {
-      invalidBalance: 'Introduce un saldo válido, no negativo.',
-      invalidStartingBalance: 'Introduce un saldo inicial válido, no negativo.',
+      invalidBalance: 'Introduce un número válido.',
+      invalidStartingBalance: 'Introduce un saldo inicial válido.',
+      reconcile: 'La conciliación falló.',
       create: 'No se pudo crear la cuenta.',
       update: 'No se pudo actualizar la cuenta.',
       delete: 'No se pudo eliminar la cuenta.',

@@ -12,18 +12,22 @@ import (
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
+	"home-finance-planner/backend/internal/fx"
 )
 
 // AccountService implements account business rules.
 type AccountService struct{ accounts AccountStore }
 
-// AccountInput is the user-facing payload for create/update.
+// AccountInput is the user-facing payload for create/update. The money field
+// is the OPENING balance (the pre-ledger seed): the current balance is derived
+// from the transaction ledger and moves with every saved row — adjust it
+// through Reconcile when it drifts from the bank.
 type AccountInput struct {
-	Name           string
-	Type           domain.AccountType
-	Currency       string
-	BalanceCents   int64
-	CardLastDigits string // optional; last digits for bill matching
+	Name                string
+	Type                domain.AccountType
+	Currency            string
+	OpeningBalanceCents int64  // may be negative (credit accounts start owed)
+	CardLastDigits      string // optional; last digits for bill matching
 }
 
 func (s *AccountService) List(ctx context.Context) ([]domain.Account, error) {
@@ -63,6 +67,20 @@ func (s *AccountService) Delete(ctx context.Context, id int64) error {
 	return s.accounts.Delete(ctx, id)
 }
 
+// Reconcile adjusts the opening balance so the derived balance matches the
+// number the bank reports: opening += (stated − derived). The ledger's facts
+// stay untouched — a reconciliation is a correction of the pre-ledger seed
+// money, not a fabricated transaction. Stated may be negative (credit
+// accounts).
+func (s *AccountService) Reconcile(ctx context.Context, id int64, statedCents int64) (domain.Account, error) {
+	a, err := s.accounts.GetByID(ctx, id)
+	if err != nil {
+		return domain.Account{}, err
+	}
+	a.OpeningBalanceCents += statedCents - a.BalanceCents
+	return s.accounts.Update(ctx, a)
+}
+
 func (s *AccountService) build(in AccountInput) (domain.Account, error) {
 	if err := validateRequiredString(in.Name, "name", 100); err != nil {
 		return domain.Account{}, err
@@ -78,19 +96,16 @@ func (s *AccountService) build(in AccountInput) (domain.Account, error) {
 	} else {
 		currency = cur
 	}
-	if err := validateNonNegativeCents(in.BalanceCents, "balance_cents"); err != nil {
-		return domain.Account{}, err
-	}
 	cardDigits := nonDigitsAccount.ReplaceAllString(strings.TrimSpace(in.CardLastDigits), "")
 	if cardDigits != "" && len(cardDigits) != 4 {
 		return domain.Account{}, validationError("card_last_digits %q must be exactly 4 digits", in.CardLastDigits)
 	}
 	return domain.Account{
-		Name:           strings.TrimSpace(in.Name),
-		Type:           in.Type,
-		Currency:       currency,
-		BalanceCents:   in.BalanceCents,
-		CardLastDigits: cardDigits,
+		Name:                strings.TrimSpace(in.Name),
+		Type:                in.Type,
+		Currency:            currency,
+		OpeningBalanceCents: in.OpeningBalanceCents,
+		CardLastDigits:      cardDigits,
 	}, nil
 }
 
@@ -134,6 +149,12 @@ type TransactionService struct {
 	// bags validates expense tagging into allocation envelopes. nil disables
 	// the layer (tests).
 	bags BagStore
+	// fx supplies the exchange-rate snapshot for the receiving leg of a
+	// TRANSFER between accounts of different currencies (recorded once, at
+	// save time, so the balance math is stable). nil — or a snapshot without
+	// both currencies — degrades to 1:1, the same accepted degradation the
+	// summary services use.
+	fx *FXService
 	// mappings is the product-name normalization memory: a typed name that is
 	// already mapped fills its category from the mapping, and an unmapped
 	// name records an identity mapping so the next entry normalizes without
@@ -165,6 +186,15 @@ type TransactionInput struct {
 	// AccountID is the source). Must be nil for income/expense and a distinct
 	// account for transfers.
 	CounterAccountID *int64
+	// FeeCents is an optional transfer fee the bank/intermediary takes, in the
+	// SOURCE account's currency: the sending side loses amount + fee. Transfer
+	// only; must be ≥ 0.
+	FeeCents *int64
+	// FxRate is a user-overridden exchange rate for a cross-currency transfer
+	// (units of the destination currency per 1 of the source) — the public
+	// reference rate is the default, but banks don't always follow it. Transfer
+	// only; must be > 0; refused when both accounts share a currency.
+	FxRate *float64
 	// BagID tags an expense as spent out of a reserve. Refused on income and
 	// transfer; expense-only, and the bag must belong to the transaction's
 	// own account and stay open.
@@ -298,6 +328,9 @@ func (s *TransactionService) guardNotBill(ctx context.Context, id int64) error {
 }
 
 func (s *TransactionService) build(ctx context.Context, in TransactionInput) (domain.Transaction, error) {
+	if s.log == nil {
+		s.log = slog.Default()
+	}
 	if err := validatePositiveCents(in.AmountCents, "amount_cents"); err != nil {
 		return domain.Transaction{}, err
 	}
@@ -316,6 +349,22 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		}
 	} else if in.CounterAccountID != nil {
 		return domain.Transaction{}, validationError("counter_account_id is only valid on transfers")
+	}
+	if in.FeeCents != nil {
+		if in.Kind != domain.TransactionTransfer {
+			return domain.Transaction{}, validationError("fee_cents is only valid on transfers")
+		}
+		if *in.FeeCents < 0 {
+			return domain.Transaction{}, validationError("fee_cents must not be negative")
+		}
+	}
+	if in.FxRate != nil {
+		if in.Kind != domain.TransactionTransfer {
+			return domain.Transaction{}, validationError("fx_rate is only valid on transfers")
+		}
+		if *in.FxRate <= 0 {
+			return domain.Transaction{}, validationError("fx_rate must be positive when given")
+		}
 	}
 	// Bag tagging is a spending concept: income cannot spend a reserve and a
 	// transfer moves money, it does not spend it.
@@ -381,9 +430,17 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 
 	// Transfer destination: a real account distinct from the source. The
 	// amount is recorded in the source account's currency (like every manual
-	// row); cross-currency transfers record the sending side only — the
-	// receiving side is what the balances already say.
+	// row); a cross-currency transfer also records the receiving leg — what
+	// the destination account gains — from the FX snapshot at save time (or a
+	// user-overridden rate, banks don't always follow the reference), so the
+	// derived balances on both sides stay honest. Same currency (or no rate
+	// known and nothing overridden) folds 1:1. An optional fee the bank takes
+	// is recorded in the source currency and deducted on the sending side.
 	var counterID *int64
+	var counterAmount *int64
+	var counterCurrency string
+	var feeCents *int64
+	var fxRate *float64
 	if in.Kind == domain.TransactionTransfer {
 		counter, err := s.accounts.GetByID(ctx, *in.CounterAccountID)
 		if err != nil {
@@ -393,6 +450,30 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 			return domain.Transaction{}, validationError("source and destination accounts must differ")
 		}
 		counterID = in.CounterAccountID
+		feeCents = in.FeeCents
+		if counter.Currency != acc.Currency {
+			// Rate priority: the user's override wins, the FX snapshot follows.
+			rate, ok := 0.0, false
+			if in.FxRate != nil {
+				rate, ok = *in.FxRate, true
+			} else if s.fx != nil {
+				if snap, serr := s.fx.Snapshot(ctx); serr == nil {
+					rate, ok = snap.Rate(acc.Currency, counter.Currency)
+				}
+			}
+			if ok {
+				converted := fx.ConvertCents(in.AmountCents, rate)
+				counterAmount = &converted
+				counterCurrency = counter.Currency
+				fxRate = &rate
+			} else {
+				s.log.WarnContext(ctx, "transfer conversion degraded to 1:1 — no rate for currency pair",
+					"from", acc.Currency, "to", counter.Currency)
+			}
+		} else if in.FxRate != nil {
+			return domain.Transaction{}, validationError(
+				"fx_rate is only valid on transfers between accounts of different currencies")
+		}
 	}
 
 	// Item lines, mirroring buildBill's per-line rules minus budget
@@ -400,9 +481,6 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	// category with allows_negative (the seeded "Deposit & Returns" / Pfand
 	// family) are money back — their unit price and line total may be
 	// negative and reduce the items total.
-	if s.log == nil {
-		s.log = slog.Default()
-	}
 	items := make([]domain.TransactionItem, 0, len(in.Items))
 	// recordableCats tracks the per-line category the normalization memory may
 	// record (explicit or mapped) — the transaction-level fallback below is a
@@ -520,18 +598,22 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	}
 
 	return domain.Transaction{
-		AccountID:        acc.ID,
-		CategoryID:       in.CategoryID,
-		Kind:             in.Kind,
-		AmountCents:      in.AmountCents,
-		Currency:         acc.Currency, // manual rows are always in the account's currency
-		Description:      strings.TrimSpace(in.Description),
-		Date:             in.Date,
-		StoreID:          storeID,
-		CounterAccountID: counterID,
-		BagID:            bagID,
-		ItemsTotalCents:  itemsTotal,
-		Items:            items,
+		AccountID:          acc.ID,
+		CategoryID:         in.CategoryID,
+		Kind:               in.Kind,
+		AmountCents:        in.AmountCents,
+		Currency:           acc.Currency, // manual rows are always in the account's currency
+		Description:        strings.TrimSpace(in.Description),
+		Date:               in.Date,
+		StoreID:            storeID,
+		CounterAccountID:   counterID,
+		CounterAmountCents: counterAmount,
+		CounterCurrency:    counterCurrency,
+		FeeCents:           feeCents,
+		FxRate:             fxRate,
+		BagID:              bagID,
+		ItemsTotalCents:    itemsTotal,
+		Items:              items,
 	}, nil
 }
 

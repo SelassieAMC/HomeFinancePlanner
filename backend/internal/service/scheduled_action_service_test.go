@@ -290,10 +290,10 @@ func newScheduleHarness(t *testing.T) *scheduleHarness {
 	t.Helper()
 	accounts := newFakeAccountStore()
 	ctx := context.Background()
-	if _, err := accounts.Create(ctx, domain.Account{Name: "Main", Type: domain.AccountChecking, Currency: "EUR", BalanceCents: 100000}); err != nil {
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Main", Type: domain.AccountChecking, Currency: "EUR", OpeningBalanceCents: 100000}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	if _, err := accounts.Create(ctx, domain.Account{Name: "Cash", Type: domain.AccountCash, Currency: "USD", BalanceCents: 50000}); err != nil {
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Cash", Type: domain.AccountCash, Currency: "USD", OpeningBalanceCents: 50000}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
 	bagStore := newFakeBagStore()
@@ -467,7 +467,7 @@ func TestScheduleCreateValidation(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		_, err := h.svc.Create(h.ctx, tc.in())
+		_, err := h.svc.Create(h.ctx, h.today, tc.in())
 		if err == nil {
 			t.Errorf("%s: expected error %q, got none", tc.name, tc.want)
 			continue
@@ -478,7 +478,7 @@ func TestScheduleCreateValidation(t *testing.T) {
 	}
 
 	// The happy path: a clean bag_funding once.
-	created, err := h.svc.Create(h.ctx, scheduleFundingOnce(1, 10000, "2026-10-20"))
+	created, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(1, 10000, "2026-10-20"))
 	if err != nil {
 		t.Fatalf("create valid schedule: %v", err)
 	}
@@ -500,14 +500,14 @@ func TestScheduleRebalanceValidation(t *testing.T) {
 		StartDate:  "2026-10-05",
 		DayOfMonth: intPtr(5),
 	}
-	if _, err := h.svc.Create(h.ctx, valid); err != nil {
+	if _, err := h.svc.Create(h.ctx, h.today, valid); err != nil {
 		t.Fatalf("create valid rebalance: %v", err)
 	}
 
 	// Same-bag rebalance refused.
 	same := valid
 	same.Payload.ToBagID = &a.ID
-	if _, err := h.svc.Create(h.ctx, same); err == nil || !contains(err.Error(), "onto itself") {
+	if _, err := h.svc.Create(h.ctx, h.today, same); err == nil || !contains(err.Error(), "onto itself") {
 		t.Errorf("same-bag rebalance: expected self-refusal, got %v", err)
 	}
 }
@@ -530,7 +530,7 @@ func TestEnsureUpcomingMaterializesMonthly(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
 	day := 25
-	created, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Warm expenses",
 		Kind:       domain.ScheduleBagFunding,
 		Payload:    domain.SchedulePayload{BagID: &bag.ID, AmountCents: 15000},
@@ -571,7 +571,7 @@ func TestEnsureUpcomingMaterializesMonthly(t *testing.T) {
 func TestEnsureUpcomingYearly(t *testing.T) {
 	h := newScheduleHarness(t)
 	day, month := 1, 11
-	created, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:        "Nebenkosten",
 		Kind:        domain.ScheduleTransaction,
 		Payload:     domain.SchedulePayload{AccountID: int64Ptr(1), TransactionKind: domain.TransactionExpense, AmountCents: 90000},
@@ -596,7 +596,7 @@ func TestEnsureUpcomingAutoAppliesFunding(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
 	// Once, due 3 days ago: the catch-up writes the missed occurrence itself.
-	created, err := h.svc.Create(h.ctx, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
+	created, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -641,7 +641,7 @@ func TestEnsureUpcomingAutoAppliesFunding(t *testing.T) {
 func TestEnsureUpcomingClosedBagStaysPending(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
-	created, err := h.svc.Create(h.ctx, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
+	created, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -663,7 +663,7 @@ func TestUpdateRegeneratesPendingOnly(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
 	day := 25
-	created, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Warm expenses",
 		Kind:       domain.ScheduleBagFunding,
 		Payload:    domain.SchedulePayload{BagID: &bag.ID, AmountCents: 15000},
@@ -693,7 +693,7 @@ func TestUpdateRegeneratesPendingOnly(t *testing.T) {
 		StartDate:  "2026-10-25",
 		DayOfMonth: &day,
 	}
-	rent, err := h.svc.Create(h.ctx, txBag)
+	rent, err := h.svc.Create(h.ctx, h.today, txBag)
 	if err != nil {
 		t.Fatalf("create rent: %v", err)
 	}
@@ -710,7 +710,7 @@ func TestUpdateRegeneratesPendingOnly(t *testing.T) {
 
 	// Edit: new day (25 → 20) and a bigger amount.
 	day20 := 20
-	updated, err := h.svc.Update(h.ctx, rent.ID, ScheduledActionInput{
+	updated, err := h.svc.Update(h.ctx, rent.ID, h.today, ScheduledActionInput{
 		Name:       "Rent",
 		Kind:       domain.ScheduleAccountTransfer,
 		Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(2), AmountCents: 120000},
@@ -746,17 +746,26 @@ func TestUpdateRegeneratesPendingOnly(t *testing.T) {
 		t.Errorf("pending runs not regenerated on the new day: %+v", dueDates)
 	}
 	if pendingAfter != 2 {
-		t.Errorf("expected 2 pending runs after edit, got %d", pendingAfter)
+		t.Errorf("expected 2 pending runs after edit, got %d: %s", pendingAfter, dumpRuns(after))
 	}
 	if dismissed != domain.ScheduleDismissed {
 		t.Errorf("dismissed row missing")
 	}
 }
 
+// dumpRuns renders "due=status" facts per run for failure messages.
+func dumpRuns(runs []domain.ScheduleRunView) string {
+	parts := make([]string, 0, len(runs))
+	for _, r := range runs {
+		parts = append(parts, fmt.Sprintf("%s=%s", r.DueDate, r.Status))
+	}
+	return fmt.Sprint(parts)
+}
+
 func TestDeleteRefusesHistoryAndArchiveKeepsIt(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
-	created, err := h.svc.Create(h.ctx, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
+	created, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -798,7 +807,7 @@ func TestDeleteRefusesHistoryAndArchiveKeepsIt(t *testing.T) {
 	}
 
 	// A never-applied schedule deletes cleanly.
-	fresh, err := h.svc.Create(h.ctx, scheduleFundingOnce(bag.ID, 2000, "2026-10-20"))
+	fresh, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 2000, "2026-10-20"))
 	if err != nil {
 		t.Fatalf("create fresh: %v", err)
 	}
@@ -809,7 +818,7 @@ func TestDeleteRefusesHistoryAndArchiveKeepsIt(t *testing.T) {
 
 func TestApplyRunTransfer(t *testing.T) {
 	h := newScheduleHarness(t)
-	created, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Rent to cash",
 		Kind:       domain.ScheduleAccountTransfer,
 		Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(2), AmountCents: 100000, Description: "monthly rent"},
@@ -859,7 +868,7 @@ func TestApplyRunTransfer(t *testing.T) {
 
 func TestApplyRunRefusesFuturePending(t *testing.T) {
 	h := newScheduleHarness(t)
-	created, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Rent to cash",
 		Kind:       domain.ScheduleAccountTransfer,
 		Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(2), AmountCents: 100000},
@@ -890,7 +899,7 @@ func TestApplyRunRefusesFuturePending(t *testing.T) {
 
 func TestApplyRunTransactionWithCategory(t *testing.T) {
 	h := newScheduleHarness(t)
-	created, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name: "Electricity bill",
 		Kind: domain.ScheduleTransaction,
 		Payload: domain.SchedulePayload{
@@ -936,7 +945,7 @@ func TestApplyRunTransactionWithCategory(t *testing.T) {
 func TestApplyRunPurchaseIsChecklistOnly(t *testing.T) {
 	h := newScheduleHarness(t)
 	est := int64(5000)
-	created, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "New bike helmet",
 		Kind:       domain.SchedulePurchase,
 		Payload:    domain.SchedulePayload{EstimatedCents: &est, Note: "check sizes first"},
@@ -970,7 +979,7 @@ func TestApplyRunPurchaseIsChecklistOnly(t *testing.T) {
 func TestBagDeleteGuard(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
-	created, err := h.svc.Create(h.ctx, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
+	created, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -994,12 +1003,12 @@ func TestBagDeleteGuard(t *testing.T) {
 func TestRunsFiltersAndOrdering(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
-	_, err := h.svc.Create(h.ctx, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
+	_, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	day := 25
-	if _, err := h.svc.Create(h.ctx, ScheduledActionInput{
+	if _, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Rent",
 		Kind:       domain.ScheduleAccountTransfer,
 		Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(2), AmountCents: 100000},

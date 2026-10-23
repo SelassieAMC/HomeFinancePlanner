@@ -20,8 +20,10 @@ type transactionRequest struct {
 	Description      string                   `json:"description"`
 	Date             string                   `json:"date"`
 	StoreName        string                   `json:"store_name"`
-	CounterAccountID *int64                   `json:"counter_account_id"` // transfers only: destination
-	BagID            *int64                   `json:"bag_id,omitempty"`   // expenses only: spent out of this bag
+	CounterAccountID *int64                   `json:"counter_account_id"`  // transfers only: destination
+	FeeCents         *int64                   `json:"fee_cents,omitempty"` // transfers only: bank fee in the source currency
+	FxRate           *float64                 `json:"fx_rate,omitempty"`   // transfers only: user-overridden conversion rate
+	BagID            *int64                   `json:"bag_id,omitempty"`    // expenses only: spent out of this bag
 	Items            []transactionItemRequest `json:"items"`
 }
 
@@ -134,6 +136,8 @@ func (h *TransactionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Date:             req.Date,
 		StoreName:        req.StoreName,
 		CounterAccountID: req.CounterAccountID,
+		FeeCents:         req.FeeCents,
+		FxRate:           req.FxRate,
 		BagID:            req.BagID,
 		Items:            transactionItemInputs(req.Items),
 	})
@@ -164,6 +168,8 @@ func (h *TransactionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Date:             req.Date,
 		StoreName:        req.StoreName,
 		CounterAccountID: req.CounterAccountID,
+		FeeCents:         req.FeeCents,
+		FxRate:           req.FxRate,
 		BagID:            req.BagID,
 		Items:            transactionItemInputs(req.Items),
 	})

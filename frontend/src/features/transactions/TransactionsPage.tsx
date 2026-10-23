@@ -375,6 +375,18 @@ export function TransactionsPage() {
                                 <span>{t('field.amount')}</span>
                                 <span>{formatCents(tx.amount_cents, tx.currency)}</span>
                               </div>
+                              {tx.fee_cents ? (
+                                <div className="item-field">
+                                  <span>{t('field.fee')}</span>
+                                  <span>{formatCents(tx.fee_cents, tx.currency)}</span>
+                                </div>
+                              ) : null}
+                              {tx.counter_amount_cents != null && tx.counter_currency ? (
+                                <div className="item-field">
+                                  <span>{t('field.received')}</span>
+                                  <span>{formatCents(tx.counter_amount_cents, tx.counter_currency)}</span>
+                                </div>
+                              ) : null}
                             </div>
                           ) : (
                             <div className="item-field-grid">

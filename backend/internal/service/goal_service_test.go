@@ -73,10 +73,10 @@ func newTestGoalService(t *testing.T) (*GoalService, *fakeGoalStore, *fakeAccoun
 	t.Helper()
 	accounts := newFakeAccountStore()
 	ctx := context.Background()
-	if _, err := accounts.Create(ctx, domain.Account{Name: "Savings", Type: domain.AccountSavings, Currency: "EUR", BalanceCents: 12000}); err != nil {
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Savings", Type: domain.AccountSavings, Currency: "EUR", OpeningBalanceCents: 12000}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	if _, err := accounts.Create(ctx, domain.Account{Name: "Cash", Type: domain.AccountCash, Currency: "USD", BalanceCents: 500}); err != nil {
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Cash", Type: domain.AccountCash, Currency: "USD", OpeningBalanceCents: 500}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
 	store := newFakeGoalStore()
@@ -140,9 +140,11 @@ func TestGoalCreateDerivesCurrencyAndProgress(t *testing.T) {
 		t.Fatalf("cash goal = %s achieved=%v; want USD true", cashGoal.Currency, cashGoal.Achieved)
 	}
 
-	// Balance is read live: top up the account and the progress follows.
+	// Balance is read live: top up the account and the progress follows. The
+	// balance is DERIVED (opening + ledger); the fake mirrors that, so a
+	// top-up without transactions adjusts the opening seed.
 	acc, _ := accounts.GetByID(ctx, 1)
-	acc.BalanceCents = 50000
+	acc.OpeningBalanceCents = 50000
 	if _, err := accounts.Update(ctx, acc); err != nil {
 		t.Fatalf("top up: %v", err)
 	}

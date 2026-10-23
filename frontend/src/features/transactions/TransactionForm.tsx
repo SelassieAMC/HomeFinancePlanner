@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Account, Category, Store, Transaction, TransactionInput, TransactionKind } from '../../types/domain';
+import type { Account, Category, Store, Transaction, TransactionInput, TransactionKind, FxSnapshot } from '../../types/domain';
 import { productsApi } from '../../api/products';
 import { bagsApi } from '../../api/bags';
+import { crossRate, convertCents, fxApi } from '../../api/fx';
 import { dollarsToCents, formatCents, parseDecimalInput } from '../../lib/money';
 import { useAsync } from '../../hooks/useAsync';
 import {
@@ -171,6 +172,63 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
   const transferAccount =
     accounts.find((a) => String(a.id) === counterAccountId) ?? null;
 
+  // Cross-currency transfers: the public reference rate is shown (and used by
+  // the backend by default), but the user can override it — banks don't
+  // always follow the reference. An optional bank fee rides the transfer in
+  // the source currency.
+  const [fee, setFee] = useState(
+    initial?.fee_cents != null ? (initial.fee_cents / 100).toString() : '',
+  );
+  const [rate, setRate] = useState(
+    initial?.fx_rate != null ? String(initial.fx_rate) : '',
+  );
+  const [rateTouched, setRateTouched] = useState(initial?.fx_rate != null);
+  const [fxSnap, setFxSnap] = useState<FxSnapshot | null>(null);
+
+  const srcCurrency =
+    accounts.find((a) => String(a.id) === accountId)?.currency ?? '';
+  const destCurrency = transferAccount?.currency ?? '';
+  const crossCurrencyTransfer =
+    isTransfer && srcCurrency !== '' && destCurrency !== '' && srcCurrency !== destCurrency;
+
+  useEffect(() => {
+    if (!isTransfer) return;
+    let alive = true;
+    fxApi
+      .rates()
+      .then((s) => {
+        if (alive) setFxSnap(s);
+      })
+      .catch(() => {
+        // No rates served — the backend falls back to its own snapshot or 1:1;
+        // the form simply shows no reference rate.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isTransfer]);
+
+  const refRate = crossCurrencyTransfer ? crossRate(fxSnap, srcCurrency, destCurrency) : undefined;
+  // Prefill the rate field with the reference once — a user edit (or an
+  // edited transaction's stored rate) is never clobbered.
+  useEffect(() => {
+    if (crossCurrencyTransfer && !rateTouched && refRate !== undefined) {
+      setRate(Number(refRate.toPrecision(6)).toString());
+    }
+  }, [crossCurrencyTransfer, rateTouched, refRate]);
+  // A same-currency pair can't carry a rate — clear a stray value.
+  useEffect(() => {
+    if (isTransfer && !crossCurrencyTransfer) setRate('');
+  }, [isTransfer, crossCurrencyTransfer]);
+
+  // Live counter-leg preview: what the destination account will gain at the
+  // typed rate.
+  const rateNum = crossCurrencyTransfer && rate.trim() !== '' ? parseDecimalInput(rate) : NaN;
+  const counterPreviewCents =
+    Number.isFinite(rateNum) && rateNum > 0 && Number.isFinite(amountCents) && amountCents > 0
+      ? convertCents(amountCents, rateNum)
+      : undefined;
+
   // Open bags of the chosen account (a bag lives inside one account — the
   // backend refuses a cross-account tag, so the select filters up front).
   const accountBags = useMemo(
@@ -255,6 +313,25 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
       setFormError(t('form.error.twoAccounts'));
       return;
     }
+    // Transfer money fields: an optional bank fee (source currency) and a
+    // user-overridden rate (only meaningful across currencies).
+    let feeCentsValue: number | undefined;
+    if (isTransfer && fee.trim() !== '') {
+      feeCentsValue = dollarsToCents(fee);
+      if (Number.isNaN(feeCentsValue) || feeCentsValue < 0) {
+        setFormError(t('form.error.badFee'));
+        return;
+      }
+    }
+    let fxRateValue: number | undefined;
+    if (crossCurrencyTransfer && rate.trim() !== '') {
+      const r = parseDecimalInput(rate);
+      if (!Number.isFinite(r) || r <= 0) {
+        setFormError(t('form.error.badRate'));
+        return;
+      }
+      fxRateValue = r;
+    }
     const items = [];
     for (const line of lines) {
       if (line.name.trim() === '') {
@@ -304,6 +381,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         date,
         store_name: isTransfer ? '' : (customStore ? customStoreName : (pickedStore?.name ?? '')),
         counter_account_id: isTransfer ? Number(counterAccountId) : undefined,
+        fee_cents: isTransfer && fee.trim() !== '' ? feeCentsValue : undefined,
+        fx_rate: fxRateValue,
         bag_id: kind === 'expense' && bagId ? Number(bagId) : undefined,
         items: items.length > 0 && !isTransfer ? items : undefined,
       });
@@ -387,22 +466,34 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           </select>
         </label>
         {isTransfer ? (
-          <label>
-            {t('form.label.toAccount')}
-            <select
-              value={counterAccountId}
-              onChange={(e) => setCounterAccountId(e.target.value)}
-              aria-label={t('form.aria.destinationAccount')}
-              required
-            >
-              <option value="">{t('form.placeholder.toAccount')}</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.currency})
-                </option>
-              ))}
-            </select>
-          </label>
+          <>
+            <label>
+              {t('form.label.toAccount')}
+              <select
+                value={counterAccountId}
+                onChange={(e) => setCounterAccountId(e.target.value)}
+                aria-label={t('form.aria.destinationAccount')}
+                required
+              >
+                <option value="">{t('form.placeholder.toAccount')}</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.currency})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t('form.label.fee')}
+              <input
+                placeholder="0.00"
+                inputMode="decimal"
+                value={fee}
+                onChange={(e) => setFee(e.target.value)}
+                aria-label={t('form.aria.fee')}
+              />
+            </label>
+          </>
         ) : (
           <label>
             {t('form.label.category')}
@@ -427,7 +518,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               <option value="">{t('form.option.noBag')}</option>
               {accountBags.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.name}
+                  {b.name} · {formatCents(b.balance_cents, currency)}
                 </option>
               ))}
             </select>
@@ -490,9 +581,32 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
 
       {isTransfer && transferAccount &&
         accounts.find((a) => String(a.id) === accountId)?.currency !== transferAccount.currency && (
-          <p className="hint-inline">
-            {t('form.crossCurrency', { currency })}
-          </p>
+          <>
+            <label className="hint-inline">
+              {t('form.label.rate', { from: currency, to: transferAccount.currency })}
+              <input
+                inputMode="decimal"
+                value={rate}
+                onChange={(e) => {
+                  setRateTouched(true);
+                  setRate(e.target.value);
+                }}
+                placeholder={refRate !== undefined ? Number(refRate.toPrecision(6)).toString() : ''}
+                aria-label={t('form.aria.rate')}
+              />
+            </label>
+            {counterPreviewCents != null && (
+              <p className="hint-inline">
+                {t('form.rateHint', {
+                  amount: formatCents(counterPreviewCents, transferAccount.currency),
+                })}
+                {fee.trim() !== '' && t('form.rateFeeNote', { currency })}
+              </p>
+            )}
+            {!rate && refRate === undefined && (
+              <p className="hint-inline">{t('form.crossCurrency', { currency })}</p>
+            )}
+          </>
         )}
 
       {/* Transfers move money, they do not buy anything: no item lines. */}

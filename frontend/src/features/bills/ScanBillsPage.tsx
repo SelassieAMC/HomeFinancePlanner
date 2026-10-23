@@ -303,7 +303,7 @@ export function ScanBillsPage() {
     }
   }
 
-  async function handleConfirm(accountId?: number, createCardAccount?: boolean) {
+  async function handleConfirm(accountId?: number, createCardAccount?: boolean, fxRate?: number) {
     if (!scan || !draft) return;
     setBusy('confirm');
     setError(null);
@@ -316,7 +316,7 @@ export function ScanBillsPage() {
           name: `Card •${draft.card_last_digits}`,
           type: 'credit',
           currency: draft.currency || 'USD',
-          balance_cents: 0,
+          opening_balance_cents: 0,
           card_last_digits: draft.card_last_digits,
         });
         targetId = created.id;
@@ -332,6 +332,7 @@ export function ScanBillsPage() {
             type: a.type,
             card_last_digits: a.card_last_digits,
           })),
+          fxRate,
         ),
       );
       setAccepted(bill);
@@ -646,6 +647,7 @@ export function ScanBillsPage() {
               id: a.id,
               name: a.name,
               type: a.type,
+              currency: a.currency,
               card_last_digits: a.card_last_digits,
             }))}
             categories={categories.data ?? []}

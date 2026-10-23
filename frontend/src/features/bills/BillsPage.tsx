@@ -162,7 +162,7 @@ export function BillsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function saveEdit(accountId?: number) {
+  async function saveEdit(accountId?: number, _createCardAccount?: boolean, fxRate?: number) {
     if (!detail || !editDraft) return;
     setSaving(true);
     setEditError(null);
@@ -177,6 +177,7 @@ export function BillsPage() {
             type: a.type,
             card_last_digits: a.card_last_digits,
           })),
+          fxRate,
         ),
       );
       setDetail(updated);
@@ -430,6 +431,7 @@ export function BillsPage() {
                           id: a.id,
                           name: a.name,
                           type: a.type,
+                          currency: a.currency,
                           card_last_digits: a.card_last_digits,
                         }))}
                         initialAccountId={detail.account_id ?? null}

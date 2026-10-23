@@ -135,12 +135,14 @@ func (r *SummaryRepository) amountsByKind(ctx context.Context, from, to string) 
 	return out, rows.Err()
 }
 
-// balances sums account balances per native currency.
+// balances sums the DERIVED account balances per native currency (migration
+// 0040): opening plus the signed transaction ledger — the account repository's
+// expression, aggregated.
 func (r *SummaryRepository) balances(ctx context.Context) ([]domain.CurrencyAmount, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT currency, SUM(balance_cents)
-		FROM accounts
-		GROUP BY currency`)
+		SELECT a.currency, SUM(`+accountBalanceExpr+`)
+		FROM accounts a
+		GROUP BY a.currency`)
 	if err != nil {
 		return nil, fmt.Errorf("summary balances: %w", err)
 	}

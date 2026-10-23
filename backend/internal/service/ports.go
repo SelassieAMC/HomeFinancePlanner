@@ -291,6 +291,10 @@ type Services struct {
 	Bags          *BagService
 	Schedules     *ScheduledActionService
 	Users         *UserService
+	// FX is the exchange-rate snapshot service, exposed as an endpoint so the
+	// UI can show (and offer to override) the reference rate before saving a
+	// cross-currency transfer or card payment.
+	FX *FXService
 }
 
 // New wires services onto their stores. storeStore/productStore are the raw
@@ -327,12 +331,13 @@ func New(
 	// store-less test) skips the guard.
 	bagSvc.schedules = schedules
 	scheduleSvc := &ScheduledActionService{
-		actions:      schedules,
-		bags:         bagSvc,
-		transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories, stores: storeStore, products: productStore, mappings: mappings, bags: bags, log: slog.Default()},
-		accounts:     accounts,
-		categories:   categories,
-		log:          slog.Default(),
+		actions: schedules,
+		bags:    bagSvc,
+		transactions: &TransactionService{transactions: transactions, accounts: accounts, categories: categories,
+			stores: storeStore, products: productStore, mappings: mappings, bags: bags, fx: fx, log: slog.Default()},
+		accounts:   accounts,
+		categories: categories,
+		log:        slog.Default(),
 	}
 	return &Services{
 		Accounts:     &AccountService{accounts: accounts},
@@ -355,5 +360,6 @@ func New(
 		Bags:          bagSvc,
 		Schedules:     scheduleSvc,
 		Users:         users,
+		FX:            fx,
 	}
 }

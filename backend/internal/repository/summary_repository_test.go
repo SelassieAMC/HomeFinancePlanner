@@ -21,17 +21,22 @@ func TestRawGlanceWindowsAndPendingBacklog(t *testing.T) {
 		}
 	}
 
-	mustExec(`INSERT INTO accounts (name, type, currency, balance_cents, created_at, updated_at)
-		VALUES ('Checking', 'checking', 'EUR', 100000, 1, 1),
-		       ('Savings', 'savings', 'USD', 11000, 1, 1)`)
+	// Derived balances (migration 0040): the seeded ledger (300000 income −
+	// 1000 − 500 − 700 = 297800) is folded into the opening balance once, so
+	// the account derives to EUR 100000 exactly like the pre-0040 stored value.
+	// Migrations seed a default wallet (USD) that takes the first ids — the
+	// fixture pins explicit ids so the ledger lands on the right account.
+	mustExec(`INSERT INTO accounts (id, name, type, currency, opening_balance_cents, created_at, updated_at)
+		VALUES (10, 'Checking', 'checking', 'EUR', -197800, 1, 1),
+		       (20, 'Savings', 'savings', 'USD', 11000, 1, 1)`)
 
 	// Expense spread across the two windows: 2026-09-20 is inside the burn
 	// range but not the month, 2026-09-01 is outside both.
 	mustExec(`INSERT INTO transactions (account_id, kind, amount_cents, currency, date, created_at, updated_at)
-		VALUES (1, 'income', 300000, 'EUR', '2026-10-01', 1, 1),
-		       (1, 'expense', 1000, 'EUR', '2026-10-05', 1, 1),
-		       (1, 'expense', 500, 'EUR', '2026-09-20', 1, 1),
-		       (1, 'expense', 700, 'EUR', '2026-09-01', 1, 1)`)
+		VALUES (10, 'income', 300000, 'EUR', '2026-10-01', 1, 1),
+		       (10, 'expense', 1000, 'EUR', '2026-10-05', 1, 1),
+		       (10, 'expense', 500, 'EUR', '2026-09-20', 1, 1),
+		       (10, 'expense', 700, 'EUR', '2026-09-01', 1, 1)`)
 
 	// Two pending receipts in different currencies; accepted and discarded
 	// bills must not count.

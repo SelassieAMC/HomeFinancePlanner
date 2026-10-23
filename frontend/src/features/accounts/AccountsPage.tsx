@@ -6,7 +6,7 @@ import { settingsApi } from '../../api/settings';
 import type { Account, AccountInput, AccountType } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
 import { COMMON_CURRENCIES, type CurrencyOption } from '../../lib/currencies';
-import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
+import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels, Dialog } from '../../components/ui';
 
 const ACCOUNT_TYPES: AccountType[] = ['checking', 'savings', 'credit', 'cash', 'other'];
 
@@ -53,7 +53,7 @@ export function AccountsPage() {
     setEditName(a.name);
     setEditType(a.type);
     setEditCurrency(a.currency);
-    setEditBalance((a.balance_cents / 100).toFixed(2));
+    setEditBalance((a.opening_balance_cents / 100).toFixed(2));
     setEditCardDigits(a.card_last_digits ?? '');
     setFormError(null);
   }
@@ -68,8 +68,8 @@ export function AccountsPage() {
     if (editingId === null) return;
     setFormError(null);
 
-    const cents = dollarsToCents(editBalance);
-    if (Number.isNaN(cents) || cents < 0) {
+    const cents = dollarsToCents(editBalance); // the opening balance (may be negative)
+    if (Number.isNaN(cents)) {
       setFormError(t('errors.invalidBalance'));
       return;
     }
@@ -77,7 +77,7 @@ export function AccountsPage() {
       name: editName,
       type: editType,
       currency: editCurrency,
-      balance_cents: cents,
+      opening_balance_cents: cents,
       card_last_digits: editCardDigits || undefined,
     };
     try {
@@ -94,11 +94,11 @@ export function AccountsPage() {
     setFormError(null);
 
     const cents = dollarsToCents(balance);
-    if (Number.isNaN(cents) || cents < 0) {
+    if (Number.isNaN(cents)) {
       setFormError(t('errors.invalidStartingBalance'));
       return;
     }
-    const input: AccountInput = { name, type, currency, balance_cents: cents };
+    const input: AccountInput = { name, type, currency, opening_balance_cents: cents };
     try {
       await accountsApi.create(input);
       setName('');
@@ -115,6 +115,46 @@ export function AccountsPage() {
       reload();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : t('errors.delete'));
+    }
+  }
+
+  // Reconcile: the derived balance drifted from the bank — type what the bank
+  // says and the backend adjusts the opening balance so the ledger's facts
+  // stay untouched.
+  const [reconcilingId, setReconcilingId] = useState<number | null>(null);
+  const [reconcileAmount, setReconcileAmount] = useState('');
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
+
+  function reconcileAccount() {
+    return accounts.find((a) => a.id === reconcilingId);
+  }
+  function reconcileCurrency() {
+    return reconcileAccount()?.currency ?? '';
+  }
+  function reconcileCurrentValue() {
+    return reconcileAccount()?.balance_cents ?? 0;
+  }
+
+  function startReconcile(a: Account) {
+    setReconcilingId(a.id);
+    setReconcileAmount('');
+    setReconcileError(null);
+  }
+
+  async function handleReconcile(e: React.FormEvent) {
+    e.preventDefault();
+    if (reconcilingId === null) return;
+    const cents = dollarsToCents(reconcileAmount);
+    if (Number.isNaN(cents)) {
+      setReconcileError(t('errors.invalidBalance'));
+      return;
+    }
+    try {
+      await accountsApi.reconcile(reconcilingId, cents);
+      setReconcilingId(null);
+      reload();
+    } catch (err) {
+      setReconcileError(err instanceof Error ? err.message : t('errors.reconcile'));
     }
   }
 
@@ -252,8 +292,15 @@ export function AccountsPage() {
                       <span>•••• {a.card_last_digits}</span>
                     </div>
                   )}
+                  <div className="item-field">
+                    <span>{t('labels.openingBalance')}</span>
+                    <strong>{formatCents(a.opening_balance_cents, a.currency)}</strong>
+                  </div>
                   <div className="camera-row">
                     <Button onClick={() => startEdit(a)}>{t('actions.edit')}</Button>
+                    <Button variant="secondary" onClick={() => startReconcile(a)}>
+                      {t('actions.reconcile')}
+                    </Button>
                     <Button variant="danger" onClick={() => handleDelete(a.id)}>
                       {t('actions.delete')}
                     </Button>
@@ -263,6 +310,35 @@ export function AccountsPage() {
             </ItemPanel>
           ))}
         </ItemPanels>
+      )}
+
+      {reconcilingId !== null && (
+        <Dialog title={t('dialogs.reconcile.title')}>
+          <form className="form-stack" onSubmit={handleReconcile}>
+            <p className="hint-text">
+              {t('dialogs.reconcile.hint', {
+                balance: formatCents(reconcileCurrentValue(), reconcileCurrency()),
+              })}
+            </p>
+            <label>
+              {t('dialogs.reconcile.statedLabel', { currency: reconcileCurrency() })}
+              <input
+                inputMode="decimal"
+                value={reconcileAmount}
+                onChange={(e) => setReconcileAmount(e.target.value)}
+                required
+                autoFocus
+              />
+            </label>
+            {reconcileError && <ErrorMessage message={reconcileError} />}
+            <div className="form-actions">
+              <Button type="button" variant="secondary" onClick={() => setReconcilingId(null)}>
+                {t('actions.cancel')}
+              </Button>
+              <Button type="submit">{t('actions.save')}</Button>
+            </div>
+          </form>
+        </Dialog>
       )}
     </div>
   );

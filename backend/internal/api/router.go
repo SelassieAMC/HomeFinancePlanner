@@ -47,6 +47,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	authH := &handlers.AuthHandler{Svc: svc.Users}
 	meH := &handlers.MeHandler{Svc: svc.Users}
 	adminUserH := &handlers.AdminUserHandler{Svc: svc.Users}
+	fxH := &handlers.FxHandler{Svc: svc.FX}
 
 	// Route table. Patterns are method-aware (Go 1.22+ ServeMux).
 	mux.HandleFunc("GET /api/v1/health", healthH.Check)
@@ -80,6 +81,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("GET /api/v1/accounts/{id}", accountH.Get)
 	mux.HandleFunc("PUT /api/v1/accounts/{id}", accountH.Update)
 	mux.HandleFunc("DELETE /api/v1/accounts/{id}", accountH.Delete)
+	mux.HandleFunc("POST /api/v1/accounts/{id}/reconcile", accountH.Reconcile)
 
 	mux.HandleFunc("GET /api/v1/categories", categoryH.List)
 	mux.HandleFunc("POST /api/v1/categories", categoryH.Create)
@@ -227,6 +229,11 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("DELETE /api/v1/prompts/{id}", promptH.Delete)
 	mux.HandleFunc("GET /api/v1/settings/currency", settingsH.GetBaseCurrency)
 	mux.HandleFunc("PUT /api/v1/settings/currency", settingsH.SaveBaseCurrency)
+
+	// Public exchange-rate snapshot (Frankfurter/ECB, cached 24h): the
+	// reference rate the transfer form and bill review show before the user
+	// overrides it with the bank's own rate. Read-only.
+	mux.HandleFunc("GET /api/v1/fx/rates", fxH.Rates)
 
 	// Middleware chain, outermost first. Auth sits inside CORS (preflight
 	// answers never need a session) and around every route: /api requires a

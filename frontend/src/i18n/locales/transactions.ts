@@ -55,6 +55,8 @@ export const transactions: LocaleBundle = {
       amount: 'Amount',
       from: 'From',
       to: 'To',
+      fee: 'Fee',
+      received: 'Received',
       category: 'Category',
       account: 'Account',
       store: 'Store',
@@ -104,6 +106,8 @@ export const transactions: LocaleBundle = {
         fromAccount: 'From account',
         account: 'Account',
         toAccount: 'To account',
+        fee: 'Bank fee (optional)',
+        rate: 'Exchange rate ({{to}} per 1 {{from}})',
         category: 'Category',
         fromBag: 'From bag',
         store: 'Store',
@@ -113,6 +117,8 @@ export const transactions: LocaleBundle = {
         amountCalc: 'Amount (calculated from items)',
         amount: 'Amount',
         destinationAccount: 'Destination account',
+        fee: 'Bank fee (optional)',
+        rate: 'Exchange rate — the destination account converts at this rate',
         fromBag: 'From bag (optional)',
         newMarket: 'New market name',
         store: 'Store (optional)',
@@ -134,6 +140,8 @@ export const transactions: LocaleBundle = {
       },
       crossCurrency:
         "Cross-currency transfer — the amount is recorded in the source account's currency ({{currency}}).",
+      rateHint: 'Receiving ≈ {{amount}}',
+      rateFeeNote: ' (plus the fee, charged in {{currency}})',
       lines: {
         header: 'Items',
         optional: '(optional)',
@@ -164,6 +172,8 @@ export const transactions: LocaleBundle = {
         numbers: 'Complete the numbers for “{{name}}”.',
         negativePrice:
           'Prices for “{{name}}” must not be negative — file it under “Deposit & Returns” to record money back.',
+        badFee: 'The fee must be a valid, non-negative amount.',
+        badRate: 'The exchange rate must be a positive number.',
         save: 'Failed to save the transaction.',
       },
       action: {
@@ -226,6 +236,8 @@ export const transactions: LocaleBundle = {
       amount: 'Betrag',
       from: 'Von',
       to: 'Nach',
+      fee: 'Gebühr',
+      received: 'Angekommen',
       category: 'Kategorie',
       account: 'Konto',
       store: 'Geschäft',
@@ -275,6 +287,8 @@ export const transactions: LocaleBundle = {
         fromAccount: 'Von Konto',
         account: 'Konto',
         toAccount: 'Zielkonto',
+        fee: 'Bankgebühr (optional)',
+        rate: 'Wechselkurs ({{to}} pro 1 {{from}})',
         category: 'Kategorie',
         fromBag: 'Aus Umschlag',
         store: 'Geschäft',
@@ -284,6 +298,8 @@ export const transactions: LocaleBundle = {
         amountCalc: 'Betrag (aus Artikelzeilen berechnet)',
         amount: 'Betrag',
         destinationAccount: 'Zielkonto',
+        fee: 'Bankgebühr (optional)',
+        rate: 'Wechselkurs — das Zielkonto rechnet zu diesem Kurs um',
         fromBag: 'Aus Umschlag (optional)',
         newMarket: 'Name des neuen Markts',
         store: 'Geschäft (optional)',
@@ -305,6 +321,8 @@ export const transactions: LocaleBundle = {
       },
       crossCurrency:
         'Währungsübergreifende Umbuchung — der Betrag wird in der Währung des Quellkontos erfasst ({{currency}}).',
+      rateHint: 'Ankommen ≈ {{amount}}',
+      rateFeeNote: ' (zuzüglich der Gebühr, abgebucht in {{currency}})',
       lines: {
         header: 'Artikel',
         optional: '(optional)',
@@ -335,6 +353,8 @@ export const transactions: LocaleBundle = {
         numbers: 'Vervollständige die Zahlen für „{{name}}“.',
         negativePrice:
           'Preise für „{{name}}“ dürfen nicht negativ sein — lege ihn unter „Deposit & Returns“ ab, um Geld-zurück zu erfassen.',
+        badFee: 'Die Gebühr muss ein gültiger, nicht negativer Betrag sein.',
+        badRate: 'Der Wechselkurs muss eine positive Zahl sein.',
         save: 'Die Transaktion konnte nicht gespeichert werden.',
       },
       action: {
@@ -397,6 +417,8 @@ export const transactions: LocaleBundle = {
       amount: 'Importe',
       from: 'De',
       to: 'A',
+      fee: 'Comisión',
+      received: 'Recibido',
       category: 'Categoría',
       account: 'Cuenta',
       store: 'Tienda',
@@ -446,6 +468,8 @@ export const transactions: LocaleBundle = {
         fromAccount: 'Cuenta de origen',
         account: 'Cuenta',
         toAccount: 'Cuenta de destino',
+        fee: 'Comisión bancaria (opcional)',
+        rate: 'Tipo de cambio ({{to}} por 1 {{from}})',
         category: 'Categoría',
         fromBag: 'Desdel bolsillo',
         store: 'Tienda',
@@ -455,6 +479,8 @@ export const transactions: LocaleBundle = {
         amountCalc: 'Importe (calculado a partir de los artículos)',
         amount: 'Importe',
         destinationAccount: 'Cuenta de destino',
+        fee: 'Comisión bancaria (opcional)',
+        rate: 'Tipo de cambio — la cuenta de destino convierte a este tipo',
         fromBag: 'Desdel bolsillo (opcional)',
         newMarket: 'Nombre del nuevo mercado',
         store: 'Tienda (opcional)',
@@ -476,6 +502,8 @@ export const transactions: LocaleBundle = {
       },
       crossCurrency:
         'Transferencia entre divisas — el importe se registra en la divisa de la cuenta de origen ({{currency}}).',
+      rateHint: 'Recibe ≈ {{amount}}',
+      rateFeeNote: ' (más la comisión, cobrada en {{currency}})',
       lines: {
         header: 'Artículos',
         optional: '(opcional)',
@@ -506,6 +534,8 @@ export const transactions: LocaleBundle = {
         numbers: 'Completa los números de «{{name}}».',
         negativePrice:
           'Los precios de «{{name}}» no pueden ser negativos — clasifícalo en «Deposit & Returns» para registrar dinero devuelto.',
+        badFee: 'La comisión debe ser un importe válido y no negativo.',
+        badRate: 'El tipo de cambio debe ser un número positivo.',
         save: 'No se pudo guardar la transacción.',
       },
       action: {

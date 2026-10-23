@@ -177,10 +177,10 @@ func newTestBagService(t *testing.T) (*BagService, *fakeBagStore, *fakeAccountSt
 	t.Helper()
 	accounts := newFakeAccountStore()
 	ctx := context.Background()
-	if _, err := accounts.Create(ctx, domain.Account{Name: "Main", Type: domain.AccountChecking, Currency: "EUR", BalanceCents: 50000}); err != nil {
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Main", Type: domain.AccountChecking, Currency: "EUR", OpeningBalanceCents: 50000}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
-	if _, err := accounts.Create(ctx, domain.Account{Name: "Cash", Type: domain.AccountCash, Currency: "USD", BalanceCents: 10000}); err != nil {
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Cash", Type: domain.AccountCash, Currency: "USD", OpeningBalanceCents: 10000}); err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
 	store := newFakeBagStore()
@@ -409,7 +409,7 @@ func TestBagYearCloseShortfall(t *testing.T) {
 	svc, store, accounts := newTestBagService(t)
 
 	acc, _ := accounts.GetByID(ctx, 1)
-	acc.BalanceCents = 100000
+	acc.OpeningBalanceCents = 100000
 	if _, err := accounts.Update(ctx, acc); err != nil {
 		t.Fatalf("top up: %v", err)
 	}

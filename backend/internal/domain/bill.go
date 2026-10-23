@@ -219,6 +219,11 @@ type BillConfirmInput struct {
 	BagID             *int64          `json:"bag_id,omitempty"`    // optional reserve the bill was spent out of
 	Items             []BillItemDraft `json:"items"`
 	AccountID         *int64          `json:"account_id,omitempty"` // optional expense target
+	// FxRate is the exchange rate the user saw on their bank statement
+	// (currency → account currency) when the paying account's currency differs
+	// from the bill's — banks don't always follow the public reference. nil =
+	// convert from the FX snapshot; refused when both currencies are equal.
+	FxRate *float64 `json:"fx_rate,omitempty"`
 }
 
 // BillStatsRow is one aggregated row of bill analysis. Currency is the

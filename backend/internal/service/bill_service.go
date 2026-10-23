@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
+	"home-finance-planner/backend/internal/fx"
 	"home-finance-planner/backend/internal/imageproc"
 )
 
@@ -448,7 +449,7 @@ func (s *BillService) Confirm(ctx context.Context, token string, in domain.BillC
 		return domain.Bill{}, err
 	}
 
-	if err := s.recordBillTransaction(ctx, created.ID, bill, account.ID); err != nil {
+	if err := s.recordBillTransaction(ctx, created.ID, bill, account.ID, in.FxRate); err != nil {
 		return domain.Bill{}, err
 	}
 
@@ -515,13 +516,13 @@ func (s *BillService) Update(ctx context.Context, id int64, in domain.BillConfir
 	}
 
 	if existing.TransactionID != nil {
-		if err := s.syncBillTransaction(ctx, *existing.TransactionID, bill, account.ID); err != nil {
+		if err := s.syncBillTransaction(ctx, *existing.TransactionID, bill, account.ID, in.FxRate); err != nil {
 			return domain.Bill{}, err
 		}
 	} else if account.ID > 0 {
 		// Pre-account bill now knows where the money came from — record the
 		// missing expense transaction and link it.
-		if err := s.recordBillTransaction(ctx, id, bill, account.ID); err != nil {
+		if err := s.recordBillTransaction(ctx, id, bill, account.ID, in.FxRate); err != nil {
 			return domain.Bill{}, err
 		}
 	}
@@ -625,22 +626,28 @@ func (s *BillService) accNameOrID(ctx context.Context, id int64) string {
 
 // recordBillTransaction writes the expense transaction for a bill and links it,
 // so later bill edits keep it in sync.
-func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, bill domain.Bill, accountID int64) error {
+func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, bill domain.Bill, accountID int64, fxRate *float64) error {
 	// BillID marks the row as bill-linked (readonly in the activity view, the
 	// UI links back to the bill); it is round-tripped by every later
 	// transaction Update and never cleared while the bill lives. BagID mirrors
 	// the bill-level tag display-only: the bag spend sums come from the bill
 	// itself (per-line COALESCE), the transaction row is excluded by its
 	// bill_id while bag_name travels on it for the activity list.
+	accountAmount, rate, err := s.accountLedgerAmount(ctx, bill, accountID, fxRate)
+	if err != nil {
+		return err
+	}
 	txRow, err := s.txStore.Create(ctx, domain.Transaction{
-		AccountID:   accountID,
-		Kind:        domain.TransactionExpense,
-		AmountCents: bill.TotalCents,
-		Currency:    bill.Currency,
-		Description: billDescription(bill),
-		Date:        nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
-		BillID:      &billID,
-		BagID:       bill.BagID,
+		AccountID:          accountID,
+		Kind:               domain.TransactionExpense,
+		AmountCents:        bill.TotalCents,
+		Currency:           bill.Currency,
+		Description:        billDescription(bill),
+		Date:               nonEmptyOr(bill.Date, time.Now().Format("2006-01-02")),
+		BillID:             &billID,
+		BagID:              bill.BagID,
+		AccountAmountCents: accountAmount,
+		FxRate:             rate,
 	})
 	if err != nil {
 		return fmt.Errorf("record bill transaction: %w", err)
@@ -649,6 +656,55 @@ func (s *BillService) recordBillTransaction(ctx context.Context, billID int64, b
 		return err
 	}
 	return nil
+}
+
+// accountLedgerAmount converts a bill total in the bill's currency into the
+// paying account's currency when the two differ — a bill in one currency paid
+// by a card in another deducts the ACCOUNT's currency from its balance. The
+// user's rate wins over the FX snapshot (banks don't always follow the public
+// reference); nil rate with no snapshot hit degrades to NULL (the balance read
+// folds 1:1, the accepted degradation). FxRate given while both currencies are
+// the same is refused, not silently dropped.
+func (s *BillService) accountLedgerAmount(ctx context.Context, bill domain.Bill, accountID int64, fxRate *float64) (*int64, *float64, error) {
+	if fxRate != nil && *fxRate <= 0 {
+		return nil, nil, validationError("fx_rate must be positive when given")
+	}
+	if accountID <= 0 {
+		return nil, nil, nil
+	}
+	account, err := s.accounts.GetByID(ctx, accountID)
+	if errors.Is(err, domain.ErrNotFound) {
+		// Stale linkage (the account vanished mid-flight): degrade to 1:1, the
+		// row keeps its own currency and no conversion is recorded.
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("load bill expense account: %w", err)
+	}
+	if account.Currency == bill.Currency {
+		if fxRate != nil {
+			return nil, nil, validationError(
+				"fx_rate is only valid when the bill's currency differs from the paying account's")
+		}
+		return nil, nil, nil
+	}
+	if fxRate != nil {
+		converted := fx.ConvertCents(bill.TotalCents, *fxRate)
+		return &converted, fxRate, nil
+	}
+	if s.rates != nil {
+		if snap, err := s.rates.Snapshot(ctx); err == nil {
+			if rate, ok := snap.Rate(bill.Currency, account.Currency); ok {
+				converted := fx.ConvertCents(bill.TotalCents, rate)
+				return &converted, &rate, nil
+			}
+			s.log.WarnContext(ctx, "bill currency conversion degraded to 1:1 — no rate for currency pair",
+				"from", bill.Currency, "to", account.Currency)
+		} else {
+			s.log.WarnContext(ctx, "bill currency conversion degraded to 1:1 — rate fetch failed", "error", err)
+		}
+	}
+	return nil, nil, nil
 }
 
 // billDescription is the description used for the expense transaction a bill
@@ -663,16 +719,24 @@ func billDescription(b domain.Bill) string {
 
 // syncBillTransaction refreshes the expense transaction recorded at confirm
 // time so reports reflect the edited bill. accountID > 0 re-points the
-// transaction to another account (a bill whose account was edited). The row's
-// bill_id/store_id are round-tripped untouched by the store's Update —
-// BillID must never be cleared while the bill lives.
-func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill domain.Bill, accountID int64) error {
+// transaction to another account (a bill whose account was edited); 0 keeps
+// the account the row carries. The currency conversion (bill vs account) is
+// recomputed on every sync — an edited bill or a re-pointed account refreshes
+// account_amount_cents, and a same-currency pair clears it.
+func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill domain.Bill, accountID int64, fxRate *float64) error {
 	tx, err := s.txStore.GetByID(ctx, txID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return nil // transaction was deleted — nothing to sync
 	}
 	if err != nil {
 		return fmt.Errorf("load bill transaction: %w", err)
+	}
+	if accountID <= 0 {
+		accountID = tx.AccountID
+	}
+	accountAmount, rate, err := s.accountLedgerAmount(ctx, bill, accountID, fxRate)
+	if err != nil {
+		return err
 	}
 	tx.AmountCents = bill.TotalCents
 	tx.Currency = bill.Currency
@@ -684,6 +748,8 @@ func (s *BillService) syncBillTransaction(ctx context.Context, txID int64, bill 
 		tx.AccountID = accountID
 	}
 	tx.BagID = bill.BagID // display-only mirror; bill lines stay the bag truth
+	tx.AccountAmountCents = accountAmount
+	tx.FxRate = rate
 	if _, err := s.txStore.Update(ctx, tx); err != nil {
 		return fmt.Errorf("sync bill transaction: %w", err)
 	}
