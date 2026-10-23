@@ -357,8 +357,8 @@ export const transactions: LocaleBundle = {
     },
     filters: {
       monthAria: 'Filtrar por mes',
-      bagAria: 'Filtrar por sobre',
-      allBags: 'Todos los sobres',
+      bagAria: 'Filtrar por bolsillo',
+      allBags: 'Todos los bolsillos',
       kindAria: 'Filtrar por tipo',
     },
     kind: {
@@ -409,7 +409,7 @@ export const transactions: LocaleBundle = {
       loading: 'Cargando artículos…',
       notLinked: '(sin vincular)',
       diffHint:
-        'El importe difiere del total de artículos — la diferencia permanece en la transacción (entrega, tasas o bolsas).',
+        'El importe difiere del total de artículos — la diferencia permanece en la transacción (entrega, tasas o bolsillos).',
     },
     bill: {
       hint: 'Esta transacción se registró a partir de un recibo escaneado y se gestiona allí.',
@@ -447,7 +447,7 @@ export const transactions: LocaleBundle = {
         account: 'Cuenta',
         toAccount: 'Cuenta de destino',
         category: 'Categoría',
-        fromBag: 'Desde el sobre',
+        fromBag: 'Desdel bolsillo',
         store: 'Tienda',
         description: 'Descripción',
       },
@@ -455,7 +455,7 @@ export const transactions: LocaleBundle = {
         amountCalc: 'Importe (calculado a partir de los artículos)',
         amount: 'Importe',
         destinationAccount: 'Cuenta de destino',
-        fromBag: 'Desde el sobre (opcional)',
+        fromBag: 'Desdel bolsillo (opcional)',
         newMarket: 'Nombre del nuevo mercado',
         store: 'Tienda (opcional)',
         description: 'Descripción',
@@ -470,7 +470,7 @@ export const transactions: LocaleBundle = {
         itemName: 'Nombre del artículo {{n}}',
       },
       option: {
-        noBag: 'Sin sobre',
+        noBag: 'Sin bolsillo',
         noStore: 'Sin tienda',
         addMarket: '+ Añadir mercado…',
       },

@@ -359,22 +359,22 @@ export const dashboard: LocaleBundle = {
     },
     planning: {
       title: 'Planung',
-      aria: 'Planung: Budgets, Ziele und Bags',
+      aria: 'Planung: Budgets, Ziele und Umschläge',
       tabs: {
         budgets: 'Budgets',
         goals: 'Ziele',
-        bags: 'Bags',
+        bags: 'Umschläge',
       },
       empty: {
-        all: 'Noch nichts zu planen — lege Budgets, Ziele oder Bags auf der Planungsseite an.',
+        all: 'Noch nichts zu planen — lege Budgets, Ziele oder Umschläge auf der Planungsseite an.',
         budgets: 'Keine Budget-Aktivität im {{month}} — lege Limits auf der Planungsseite an.',
         goals: 'Noch keine Ziele — lege ein Sparziel auf der Planungsseite an.',
-        bags: 'Noch keine Bags — lege eine Rücklage auf der Planungsseite an.',
+        bags: 'Noch keine Umschläge — lege eine Rücklage auf der Planungsseite an.',
       },
       loading: {
         budgets: 'Budgets werden geladen…',
         goals: 'Ziele werden geladen…',
-        bags: 'Bags werden geladen…',
+        bags: 'Umschläge werden geladen…',
       },
       errors: {
         summary: 'Zusammenfassung nicht verfügbar.',
@@ -586,8 +586,8 @@ export const dashboard: LocaleBundle = {
         purchase: 'punto de lista',
         transfer: 'transferencia de cuenta',
         transaction: 'transacción',
-        bag_funding: 'aporte a bolsa',
-        bag_rebalance: 'rebalanceo de bolsa',
+        bag_funding: 'aporte a bolsillo',
+        bag_rebalance: 'rebalanceo de bolsillo',
       },
       plannedHint: 'Planificado vía Programado · Planificación',
       done: 'Hecho',
@@ -609,22 +609,22 @@ export const dashboard: LocaleBundle = {
     },
     planning: {
       title: 'Planificación',
-      aria: 'Planificación: presupuestos, metas y bolsas',
+      aria: 'Planificación: presupuestos, metas y bolsillos',
       tabs: {
         budgets: 'Presupuestos',
         goals: 'Metas',
-        bags: 'Bolsas',
+        bags: 'Bolsillos',
       },
       empty: {
-        all: 'Nada que planificar todavía — crea presupuestos, metas o bolsas en la página de Planificación.',
+        all: 'Nada que planificar todavía — crea presupuestos, metas o bolsillos en la página de Planificación.',
         budgets: 'Sin actividad de presupuesto en {{month}} — añade límites en la página de Planificación.',
         goals: 'Aún sin metas — añade un objetivo de ahorro en la página de Planificación.',
-        bags: 'Aún sin bolsas — crea una reserva en la página de Planificación.',
+        bags: 'Aún sin bolsillos — crea una reserva en la página de Planificación.',
       },
       loading: {
         budgets: 'Cargando presupuestos…',
         goals: 'Cargando metas…',
-        bags: 'Cargando bolsas…',
+        bags: 'Cargando bolsillos…',
       },
       errors: {
         summary: 'Resumen no disponible.',
@@ -639,8 +639,8 @@ export const dashboard: LocaleBundle = {
       spentInMonth: '{{spent}} en {{month}}',
     },
     bags: {
-      spentUnbagged: 'Gastado {{spent}} · sin bolsa {{unbagged}}',
-      oversubscribed: 'Las bolsas superan el saldo de la cuenta',
+      spentUnbagged: 'Gastado {{spent}} · sin bolsillo {{unbagged}}',
+      oversubscribed: 'Las bolsillos superan el saldo de la cuenta',
     },
     goals: {
       reached: 'Meta alcanzada',

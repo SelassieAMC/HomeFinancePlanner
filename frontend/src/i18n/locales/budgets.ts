@@ -95,7 +95,7 @@ export const budgets: LocaleBundle = {
       amount_aria: 'Importe del presupuesto',
       cadence_aria: 'Cadencia del presupuesto',
       cadence_monthly: 'Mensual',
-      cadence_open: 'Sobre abierto',
+      cadence_open: 'Bolsillo abierto',
       submit: 'Añadir',
     },
     empty: 'Aún no hay presupuestos: añade el primero arriba.',

@@ -28,7 +28,7 @@ export const planning: LocaleBundle = {
     tabs: {
       budgets: 'Presupuestos',
       goals: 'Metas',
-      bags: 'Sobres',
+      bags: 'Bolsillos',
       schedules: 'Programado',
     },
     tabs_aria: 'Secciones de planificación',
