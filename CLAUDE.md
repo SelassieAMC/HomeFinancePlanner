@@ -558,7 +558,28 @@ that override is stored per row and never re-applies globally. No rate known
 (offline or an unlisted currency) degrades that one conversion to 1:1 with a
 warning — never a failure. Migration 0041 intentionally does NOT backfill old
 rows (re-deriving against today's rate would rewrite history; 0040's opening
-balances already absorbed past effects).
+balances already absorbed past effects). **The account register** (MoneyWiz
+roadmap Phase 2): `GET /accounts/{id}/ledger?limit=&offset=` (handler caps
+limit ≤ 200, default 50) returns
+`{account, entries}` — the account with its derived balance plus the
+transaction thread, newest first, each entry a transaction plus
+`change_cents` (the row's own fold) and `running_balance_cents` (opening +
+Σ over ALL rows to this one in `(date, id)` order, SQL window fold sharing
+`ledgerRowChange` — the exact terms of `accountBalanceExpr`: foreign-currency
+rows fold `COALESCE(account_amount_cents, amount_cents)`, transfers out
+−(amount + fee), in + the recorded counter amount). A transfer belongs to
+both accounts, like the activity filter. Invariant, repository-tested: the
+last row of the FULL ledger equals the account's derived balance; windows are
+fold-independent (the fold computes before LIMIT/OFFSET). View-only — no
+writes touched. Frontend: AccountsPage rows link "Register" →
+`/transactions?account={id}`; the transactions page pins the account (banner
+name + balance, "show all activity" clears the param), reads the ledger
+endpoint instead of the month list (all-time, page-50 "load older"), every
+row shows the signed change as its value and "Balance {{balance}}" in the
+subtitle, day totals are the Σ of changes (transfers count their
+account-side effect here, unlike the neutral month view), and edits/deletes
+re-render the register from page 0 (a nonce forces the refetch when the
+offset was already 0).
 **Bags** (migration 0035) are **allocation envelopes — virtual partitions of one
 account's balance**: the money never moves or is copied into the ledger; a bag's
 balance is always derived per read as Σ `bag_allocations` − tagged spend.

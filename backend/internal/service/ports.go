@@ -18,6 +18,11 @@ type AccountStore interface {
 	Create(ctx context.Context, a domain.Account) (domain.Account, error)
 	Update(ctx context.Context, a domain.Account) (domain.Account, error)
 	Delete(ctx context.Context, id int64) error
+	// Ledger returns the account's transaction thread with per-row running
+	// balances (the register view). A transfer belongs to both of its
+	// accounts: the sending side as rows on account_id, the receiving side as
+	// its counter leg.
+	Ledger(ctx context.Context, accountID int64, limit, offset int) ([]domain.LedgerEntry, error)
 }
 
 // CategoryStore is the persistence contract for categories.

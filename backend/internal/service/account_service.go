@@ -81,6 +81,22 @@ func (s *AccountService) Reconcile(ctx context.Context, id int64, statedCents in
 	return s.accounts.Update(ctx, a)
 }
 
+// Ledger returns the account register (Phase 2): the Account — its derived
+// balance rides along for the header — plus one window of the transaction
+// thread, newest first, every row carrying the balance as it stood after it.
+// View-only; limit/offset page it without disturbing the per-row fold.
+func (s *AccountService) Ledger(ctx context.Context, id int64, limit, offset int) (domain.AccountLedger, error) {
+	acc, err := s.accounts.GetByID(ctx, id)
+	if err != nil {
+		return domain.AccountLedger{}, fmt.Errorf("load account %d: %w", id, err)
+	}
+	entries, err := s.accounts.Ledger(ctx, id, limit, offset)
+	if err != nil {
+		return domain.AccountLedger{}, err
+	}
+	return domain.AccountLedger{Account: acc, Entries: entries}, nil
+}
+
 func (s *AccountService) build(in AccountInput) (domain.Account, error) {
 	if err := validateRequiredString(in.Name, "name", 100); err != nil {
 		return domain.Account{}, err

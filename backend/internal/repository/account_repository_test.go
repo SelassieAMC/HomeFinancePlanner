@@ -178,3 +178,110 @@ func TestDerivedBalancesForeignExpenseAndFee(t *testing.T) {
 		t.Fatalf("wallet balance = %d; want 150000 (fee never touches the receiver)", localGot.BalanceCents)
 	}
 }
+
+// TestAccountLedgerRunningBalance covers the register read (Phase 2): rows
+// newest first, every row's running balance folds opening + all rows up to
+// and including it by (date, id) — foreign-currency expenses via their
+// account_amount_cents (raw 1:1 when none recorded), fee'd transfers out,
+// counter-leg transfers in — and the LAST row of the FULL ledger equals the
+// account's derived balance (the invariant the spec mandates). Also verifies
+// the pagination window: the running values are window-independent.
+func TestAccountLedgerRunningBalance(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	r := NewAccountRepository(db)
+
+	card, err := r.Create(ctx, domain.Account{
+		Name: "EUR Card", Type: domain.AccountChecking, Currency: "EUR", OpeningBalanceCents: 100000,
+	})
+	if err != nil {
+		t.Fatalf("create card: %v", err)
+	}
+	dest, err := r.Create(ctx, domain.Account{Name: "Other", Type: domain.AccountChecking, Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("create dest: %v", err)
+	}
+
+	seed := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("seed: %v (%s)", err, query)
+		}
+	}
+	// Chronological thread on the card:
+	//   +50000 income
+	//   −25000 expense (raw EUR, no conversion recorded)
+	//   −20000 COP expense folded at its recorded 20000 EUR
+	//   −32000 transfer out (30000 + 2000 fee)
+	seed(`INSERT INTO transactions (account_id, kind, amount_cents, currency, date, created_at, updated_at)
+		VALUES (?, 'income', 50000, 'EUR', '2026-10-01', 1, 1)`, card.ID)
+	seed(`INSERT INTO transactions (account_id, kind, amount_cents, currency, date, created_at, updated_at)
+		VALUES (?, 'expense', 25000, 'EUR', '2026-10-02', 1, 1)`, card.ID)
+	seed(`INSERT INTO transactions (account_id, kind, amount_cents, currency, account_amount_cents, date, created_at, updated_at)
+		VALUES (?, 'expense', 20000, 'COP', 20000, '2026-10-03', 1, 1)`, card.ID)
+	seed(`INSERT INTO transactions (account_id, counter_account_id, kind, amount_cents, currency, fee_cents, date, created_at, updated_at)
+		VALUES (?, ?, 'transfer', 30000, 'EUR', 2000, '2026-10-04', 1, 1)`, card.ID, dest.ID)
+
+	entries, err := r.Ledger(ctx, card.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	if len(entries) != 4 {
+		t.Fatalf("ledger rows = %d; want 4", len(entries))
+	}
+	// Newest first: the transfer tops the page.
+	if entries[0].Date != "2026-10-04" || entries[len(entries)-1].Date != "2026-10-01" {
+		t.Fatalf("order = %s..%s; want newest first", entries[0].Date, entries[len(entries)-1].Date)
+	}
+	// Per-row changes exactly mirror the balance terms. Oldest first:
+	// 100000 opening +50000 income − 25000 expense − 20000 folded COP →
+	// − 32000 transfer (amount + fee).
+	wantRunning := []int64{150000, 125000, 105000, 73000}
+	for i, want := range wantRunning { // oldest first: index 3 → 0
+		got := entries[len(entries)-1-i]
+		if got.RunningBalanceCents != want {
+			t.Errorf("row %s running = %d; want %d", got.Date, got.RunningBalanceCents, want)
+		}
+	}
+	if entries[0].ChangeCents != -32000 || entries[1].ChangeCents != -20000 || entries[2].ChangeCents != -25000 || entries[3].ChangeCents != 50000 {
+		t.Fatalf("changes = %d/%d/%d/%d; want -32000/-20000/-25000/+50000",
+			entries[0].ChangeCents, entries[1].ChangeCents, entries[2].ChangeCents, entries[3].ChangeCents)
+	}
+
+	// THE invariant: the last row of the full ledger carries the current
+	// derived balance.
+	acc, err := r.GetByID(ctx, card.ID)
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	last := entries[0] // the newest of a complete listing IS the fold end
+	if last.RunningBalanceCents != acc.BalanceCents {
+		t.Fatalf("last full-ledger running = %d; want derived balance %d", last.RunningBalanceCents, acc.BalanceCents)
+	}
+
+	// The destination account sees the receiving leg (+32000 wait — no fee on
+	// the receiver, no counter amount recorded: folds the raw 30000).
+	dstEntries, err := r.Ledger(ctx, dest.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("dest ledger: %v", err)
+	}
+	if len(dstEntries) != 1 || dstEntries[0].RunningBalanceCents != 30000 || dstEntries[0].ChangeCents != 30000 {
+		t.Fatalf("dest ledger = %+v; want one row +30000 (raw counter fold)", dstEntries)
+	}
+
+	// Pagination: a windowed page still carries the FULL fold per row
+	// (limit 1 = only the transfer row, running 100000 — window-independent).
+	page, err := r.Ledger(ctx, card.ID, 1, 0)
+	if err != nil {
+		t.Fatalf("paged ledger: %v", err)
+	}
+	if len(page) != 1 || page[0].RunningBalanceCents != acc.BalanceCents {
+		t.Fatalf("paged row = %+v; want the transfer with the full fold %d", page, acc.BalanceCents)
+	}
+
+	// An unknown account id yields an empty thread, not an error.
+	empty, err := r.Ledger(ctx, 999999, 0, 0)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("unknown account ledger = %+v, err %v; want empty", empty, err)
+	}
+}

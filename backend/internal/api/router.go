@@ -82,6 +82,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("PUT /api/v1/accounts/{id}", accountH.Update)
 	mux.HandleFunc("DELETE /api/v1/accounts/{id}", accountH.Delete)
 	mux.HandleFunc("POST /api/v1/accounts/{id}/reconcile", accountH.Reconcile)
+	mux.HandleFunc("GET /api/v1/accounts/{id}/ledger", accountH.Ledger)
 
 	mux.HandleFunc("GET /api/v1/categories", categoryH.List)
 	mux.HandleFunc("POST /api/v1/categories", categoryH.Create)

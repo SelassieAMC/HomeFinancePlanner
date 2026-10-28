@@ -118,6 +118,39 @@ func (h *AccountHandler) Reconcile(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, a)
 }
 
+// Ledger serves the account register (GET /accounts/{id}/ledger?limit=&offset=):
+// the account plus its transaction thread, newest first, every row carrying
+// the balance as it stood after it (folded like the derived balance). The
+// response {account, entries} — entries are transactions plus change_cents
+// (this row's effect) and running_balance_cents. Limits the page to a sane
+// size; the register pages backwards with offset.
+func (h *AccountHandler) Ledger(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	limit, offset := 0, 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if limit, err = strconv.Atoi(v); err != nil || limit < 0 || limit > 200 {
+			respondError(w, r, http.StatusBadRequest, "invalid limit")
+			return
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if offset, err = strconv.Atoi(v); err != nil || offset < 0 {
+			respondError(w, r, http.StatusBadRequest, "invalid offset")
+			return
+		}
+	}
+	out, err := h.Svc.Ledger(r.Context(), id, limit, offset)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, out)
+}
+
 // Delete removes an account.
 func (h *AccountHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)

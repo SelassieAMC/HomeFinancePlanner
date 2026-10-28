@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { intlLocale } from '../../i18n/core';
@@ -10,7 +10,13 @@ import { bagsApi } from '../../api/bags';
 import { accountsApi } from '../../api/accounts';
 import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
-import type { Transaction, TransactionInput, TransactionKind } from '../../types/domain';
+import type {
+  AccountLedger,
+  LedgerEntry,
+  Transaction,
+  TransactionInput,
+  TransactionKind,
+} from '../../types/domain';
 import { formatCents, formatSignedCents, currentMonth } from '../../lib/money';
 import {
   Button,
@@ -25,12 +31,21 @@ import {
 } from '../../components/ui';
 import { TransactionForm } from './TransactionForm';
 
+// The register page window: a full account thread paginates newest-first with
+// the same per-row running fold regardless of the window.
+const REGISTER_PAGE = 50;
+
 // The page's two jobs are parallel: reading the month's activity and entering
 // a new transaction. Tabs keep the list clean; the form lives one click away.
 type ViewTab = 'activity' | 'add';
 
 export function TransactionsPage() {
   const { t, i18n: i18nInstance } = useTranslation('transactions');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The register deep-link from the accounts page: ?account={id} pins the
+  // activity tab to that account's full thread with per-row running
+  // balances. View-only — every write stays the plain list's business.
+  const registerId = Number(searchParams.get('account')) || null;
   const [month, setMonth] = useState(currentMonth());
   const [kind, setKind] = useState<TransactionKind | ''>('');
   const [bagFilter, setBagFilter] = useState('');
@@ -48,13 +63,71 @@ export function TransactionsPage() {
   if (kind) filters.kind = kind;
   if (bagFilter) filters.bag_id = Number(bagFilter);
 
+  // The register view reads its own endpoint (all-time thread); the month
+  // list stays quiet while it is pinned.
   const { data, loading, error, reload } = useAsync(
-    () => transactionsApi.list(filters),
-    [month, kind, bagFilter],
+    () => (registerId ? Promise.resolve<Transaction[]>([]) : transactionsApi.list(filters)),
+    [month, kind, bagFilter, registerId],
   );
   const accounts = useAsync(() => accountsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
   const stores = useAsync(() => storesApi.list(), []);
+
+  // The register thread: all-time, newest first, per-row running balances.
+  // Pagination appends older pages; the per-row fold is window-independent
+  // (the backend computes it over the whole ledger before slicing).
+  const [register, setRegister] = useState<AccountLedger | null>(null);
+  const [registerRows, setRegisterRows] = useState<LedgerEntry[]>([]);
+  const [registerOffset, setRegisterOffset] = useState(0);
+  const [registerNonce, setRegisterNonce] = useState(0); // forces a refetch when the ledger changed underneath
+  const [registerDone, setRegisterDone] = useState(false);
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!registerId) return;
+    let cancelled = false;
+    setRegisterLoading(true);
+    accountsApi
+      .ledger(registerId, REGISTER_PAGE, registerOffset)
+      .then((res) => {
+        if (cancelled) return;
+        setRegister(res);
+        setRegisterRows((prev) =>
+          registerOffset === 0 ? res.entries : [...prev, ...res.entries],
+        );
+        setRegisterDone(res.entries.length < REGISTER_PAGE);
+        setRegisterError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRegisterError(err instanceof Error ? err.message : t('errors.load'));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setRegisterLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerId, registerOffset, registerNonce]);
+
+  // A deep-link switch (or link-out) resets the register window.
+  useEffect(() => {
+    setRegister(null);
+    setRegisterRows([]);
+    setRegisterOffset(0);
+    setRegisterDone(false);
+    setRegisterError(null);
+  }, [registerId]);
+
+  function reloadRegister() {
+    setRegisterOffset(0);
+    // The nonce makes the fetch effect refire even when the offset was
+    // already 0.
+    setRegisterNonce((n) => n + 1);
+  }
   // Bag filter options: every bag that has its own activity view.
   const bagsView = useAsync(() => bagsApi.overview(), []);
 
@@ -122,6 +195,9 @@ export function TransactionsPage() {
     setEditOpen(false);
     setEditing(null);
     reload();
+    // An edit rewrites a row's change and every later running balance —
+    // the register re-renders from a fresh page 0.
+    if (registerId) reloadRegister();
     if (detail?.id === updated.id) setDetail(updated);
   }
 
@@ -144,6 +220,7 @@ export function TransactionsPage() {
         setDetail(null);
       }
       reload();
+      if (registerId) reloadRegister();
     } catch (err) {
       setPageError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
@@ -180,6 +257,33 @@ export function TransactionsPage() {
     }
   }
 
+  // Register mode groups the thread by day too, but the day total is the
+  // account's exact cash flow: every ledger row carries its change (the fold
+  // term — foreign-currency rows already folded, transfers their fee/counter
+  // leg), so transfers count instead of staying neutral. The running balance
+  // travels beside the row for the subtitle.
+  const accountCurrency = register?.account.currency ?? '';
+  const ledgerById = new Map<number, LedgerEntry>(registerRows.map((r) => [r.id, r]));
+  const registerGroups = dayGroups; // reuse the grouping for the ledger rows
+  if (registerId) {
+    registerGroups.length = 0;
+    for (const row of registerRows) {
+      const last = registerGroups[registerGroups.length - 1];
+      if (last && last.date === row.date) {
+        last.total += row.change_cents;
+        last.items.push(row);
+      } else {
+        registerGroups.push({
+          date: row.date,
+          label: dayLabel(row.date, intlLocale(i18nInstance.language)),
+          total: row.change_cents,
+          currency: accountCurrency,
+          items: [row],
+        });
+      }
+    }
+  }
+
   return (
     <div className="page">
       <h2 className="page-title">{t('title')}</h2>
@@ -200,57 +304,82 @@ export function TransactionsPage() {
 
       {tab === 'activity' && (
         <>
-          <div className="filter-row">
-            <input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              aria-label={t('filters.monthAria')}
-            />
-            {(bagsView.data?.accounts ?? []).some((v) => v.bags.length > 0) && (
-              <select
-                value={bagFilter}
-                onChange={(e) => setBagFilter(e.target.value)}
-                aria-label={t('filters.bagAria')}
-              >
-                <option value="">{t('filters.allBags')}</option>
-                {(bagsView.data?.accounts ?? []).flatMap((v) =>
-                  v.bags.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({v.account_name})
-                    </option>
-                  )),
+          {registerId ? (
+            <div className="hint-banner">
+              {registerLoading && registerRows.length === 0 ? (
+                <Spinner label={t('register.loading')} />
+              ) : (
+                <span>
+                  <strong>{register?.account.name ?? `#${registerId}`}</strong>
+                  {register && (
+                    <>
+                      {' · '}
+                      {t('register.balance')}
+                      <strong>{formatCents(register.account.balance_cents, register.account.currency)}</strong>
+                    </>
+                  )}
+                </span>
+              )}
+              <Link to="/transactions" onClick={() => setSearchParams({})}>
+                {t('register.showAll')}
+              </Link>
+            </div>
+          ) : (
+            <>
+              <div className="filter-row">
+                <input
+                  type="month"
+                  value={month}
+                  onChange={(e) => setMonth(e.target.value)}
+                  aria-label={t('filters.monthAria')}
+                />
+                {(bagsView.data?.accounts ?? []).some((v) => v.bags.length > 0) && (
+                  <select
+                    value={bagFilter}
+                    onChange={(e) => setBagFilter(e.target.value)}
+                    aria-label={t('filters.bagAria')}
+                  >
+                    <option value="">{t('filters.allBags')}</option>
+                    {(bagsView.data?.accounts ?? []).flatMap((v) =>
+                      v.bags.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} ({v.account_name})
+                        </option>
+                      )),
+                    )}
+                  </select>
                 )}
-              </select>
-            )}
-            <Button
-              variant="primary"
-              className="btn-sm"
-              onClick={() => setTab('add')}
-            >
-              {t('action.add')}
-            </Button>
-          </div>
-          <div className="segmented" role="group" aria-label={t('filters.kindAria')}>
-            {(
-              [
-                ['', t('kind.all')],
-                ['expense', t('kind.expense')],
-                ['income', t('kind.income')],
-                ['transfer', t('kind.transfer')],
-              ] as [TransactionKind | '', string][]
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                className={kind === value ? 'active' : ''}
-                aria-pressed={kind === value}
-                onClick={() => setKind(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+                <Button
+                  variant="primary"
+                  className="btn-sm"
+                  onClick={() => setTab('add')}
+                >
+                  {t('action.add')}
+                </Button>
+              </div>
+              <div className="segmented" role="group" aria-label={t('filters.kindAria')}>
+                {(
+                  [
+                    ['', t('kind.all')],
+                    ['expense', t('kind.expense')],
+                    ['income', t('kind.income')],
+                    ['transfer', t('kind.transfer')],
+                  ] as [TransactionKind | '', string][]
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={kind === value ? 'active' : ''}
+                    aria-pressed={kind === value}
+                    onClick={() => setKind(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          {registerId && registerError && <ErrorMessage message={registerError} />}
         </>
       )}
 
@@ -276,11 +405,13 @@ export function TransactionsPage() {
 
       {pageError && <ErrorMessage message={pageError} />}
 
-      {transactions.length === 0 ? (
-        <EmptyState message={t('empty.month', { month })} />
+      {(registerId ? registerRows.length === 0 && !registerLoading : transactions.length === 0) ? (
+        <EmptyState
+          message={registerId ? t('empty.register') : t('empty.month', { month })}
+        />
       ) : (
         <div className="day-group">
-          {dayGroups.map((group) => (
+          {(registerId ? registerGroups : dayGroups).map((group) => (
             <section key={group.date} aria-label={t('day.sectionAria', { label: group.label, total: formatCents(group.total, group.currency) })}>
               <div className="day-header">
                 <span>{group.label}</span>
@@ -295,29 +426,45 @@ export function TransactionsPage() {
                   const account = accountNames.get(tx.account_id);
                   const counterAccount = tx.counter_account_id ? accountNames.get(tx.counter_account_id) : undefined;
                   const items = tx.id === expandedId ? (detail?.items ?? null) : null;
+                  // Register mode: the row's own fold (change) and the balance
+                  // as it stood right after this row.
+                  const row = registerId ? ledgerById.get(tx.id) : undefined;
                   return (
                     <ItemPanel
                       key={tx.id}
                       title={tx.description || t('items.none')}
                       subtitle={
-                        isTransfer
-                          ? [
-                              t('subtitle.transfer'),
-                              `${account ?? `#${tx.account_id}`} → ${counterAccount ?? `#${tx.counter_account_id}`}`,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')
-                          : [
-                              isBill ? t('subtitle.bill') : tx.store_name || null,
-                              cat ?? t('subtitle.uncategorized'),
-                              account,
-                              tx.bag_name || null,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')
+                        [
+                          isTransfer
+                            ? [
+                                t('subtitle.transfer'),
+                                `${account ?? `#${tx.account_id}`} → ${counterAccount ?? `#${tx.counter_account_id}`}`,
+                              ].join(' · ')
+                            : [
+                                isBill ? t('subtitle.bill') : tx.store_name || null,
+                                cat ?? t('subtitle.uncategorized'),
+                                account,
+                                tx.bag_name || null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · '),
+                          row
+                            ? t('register.balanceAfter', {
+                                balance: formatSignedCents(row.running_balance_cents, accountCurrency),
+                              })
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')
                       }
-                      value={formatCents(tx.amount_cents, tx.currency)}
-                      valueClass={isIncome ? 'stat-positive' : ''}
+                      value={
+                        row
+                          ? formatSignedCents(row.change_cents, accountCurrency)
+                          : formatCents(tx.amount_cents, tx.currency)
+                      }
+                      valueClass={
+                        row ? (row.change_cents > 0 ? 'stat-positive' : '') : isIncome ? 'stat-positive' : ''
+                      }
                       onToggle={(open) => {
                         if (open && expandedId !== tx.id) {
                           setExpandedId(tx.id);
@@ -502,6 +649,19 @@ export function TransactionsPage() {
               </ItemPanels>
             </section>
           ))}
+        </div>
+      )}
+
+      {registerId && !registerDone && !registerError && (
+        <div className="camera-row">
+          <Button
+            variant="secondary"
+            className="btn-sm"
+            disabled={registerLoading}
+            onClick={() => setRegisterOffset((o) => o + REGISTER_PAGE)}
+          >
+            {t('register.showMore')}
+          </Button>
         </div>
       )}
 

@@ -29,6 +29,67 @@ const accountBalanceExpr = `a.opening_balance_cents
 	+ COALESCE((SELECT SUM(COALESCE(t.counter_amount_cents, t.amount_cents))
 		FROM transactions t WHERE t.counter_account_id = a.id AND t.kind = 'transfer'), 0)`
 
+// ledgerRowChange is the per-row amount this row contributes to the owning
+// account's balance — the same terms `accountBalanceExpr` sums: income + and
+// expense − their COALESCE(account_amount_cents, amount_cents) (the 0041
+// converting fold; NULL folds 1:1), a transfer sent −(amount + fee) and a
+// transfer received + its recorded counter amount (raw 1:1 when none).
+const ledgerRowChange = `CASE
+	WHEN t.kind = 'income' THEN COALESCE(t.account_amount_cents, t.amount_cents)
+	WHEN t.kind = 'expense' THEN -COALESCE(t.account_amount_cents, t.amount_cents)
+	WHEN t.counter_account_id = ? THEN COALESCE(t.counter_amount_cents, t.amount_cents)
+	ELSE -(t.amount_cents + COALESCE(t.fee_cents, 0))
+END`
+
+// Ledger returns one account's transaction thread with per-row running
+// balances — the register view (Phase 2): newest first, the running fold
+// computed over ALL of the account's rows in (date, id) order regardless of
+// the page window, so every row carries the true balance after it. The change
+// column rides the row for display (day totals, signed amounts). A transfer
+// belongs to both of its accounts, exactly like the activity filter.
+func (r *AccountRepository) Ledger(ctx context.Context, accountID int64, limit, offset int) ([]domain.LedgerEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	q := `SELECT ` + transactionColumns + `,
+		` + ledgerRowChange + ` AS change_cents,
+		SUM(` + ledgerRowChange + `) OVER (ORDER BY t.date, t.id
+			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+		) + COALESCE((SELECT a0.opening_balance_cents FROM accounts a0 WHERE a0.id = ?), 0) AS running_balance_cents
+		` + transactionFrom + `
+		WHERE t.account_id = ? OR (t.kind = 'transfer' AND t.counter_account_id = ?)
+		ORDER BY t.date DESC, t.id DESC
+		LIMIT ? OFFSET ?`
+	// Parameter order follows the SQL text: the change column's transfer-in
+	// CASE branch, the window SUM's same branch, the opening-balance subquery,
+	// then the two WHERE folds (rows on the account, counter leg), then the
+	// page window.
+	rows, err := r.db.QueryContext(ctx, q,
+		accountID, accountID, accountID, accountID, accountID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("account ledger %d: %w", accountID, err)
+	}
+	defer rows.Close()
+
+	out := []domain.LedgerEntry{}
+	for rows.Next() {
+		var (
+			t       domain.Transaction
+			change  int64
+			running int64
+		)
+		t, err = scanTransaction(rows, &change, &running)
+		if err != nil {
+			return nil, fmt.Errorf("scan ledger row: %w", err)
+		}
+		out = append(out, domain.LedgerEntry{Transaction: t, ChangeCents: change, RunningBalanceCents: running})
+	}
+	return out, rows.Err()
+}
+
 // accountColumns is the column list used for SELECTs, in scan order. The
 // balance is computed, not stored.
 const accountColumns = `a.id, a.name, a.type, a.currency, ` + accountBalanceExpr + ` AS balance_cents,

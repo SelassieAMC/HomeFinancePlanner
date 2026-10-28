@@ -30,6 +30,22 @@ export interface AccountInput {
   card_last_digits?: string;
 }
 
+// The account register (MoneyWiz pillar): one transaction plus the balance as
+// it stood right after it. change_cents is this row's own effect in the
+// ACCOUNT's currency (foreign-currency rows fold their account_amount_cents,
+// transfers their counter/fee legs); running_balance_cents folds opening +
+// every row up to and including this one — the last row of a full ledger
+// equals the account's derived balance.
+export interface LedgerEntry extends Transaction {
+  change_cents: number;
+  running_balance_cents: number;
+}
+
+export interface AccountLedger {
+  account: Account;
+  entries: LedgerEntry[];
+}
+
 export interface Transaction {
   id: number;
   account_id: number;

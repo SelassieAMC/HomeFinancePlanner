@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { accountsApi } from '../../api/accounts';
@@ -300,6 +301,9 @@ export function AccountsPage() {
                     <strong>{formatCents(a.opening_balance_cents, a.currency)}</strong>
                   </div>
                   <div className="camera-row">
+                    <Link className="btn btn-secondary" to={`/transactions?account=${a.id}`}>
+                      {t('actions.register')}
+                    </Link>
                     <Button onClick={() => startEdit(a)}>{t('actions.edit')}</Button>
                     <Button variant="secondary" onClick={() => startReconcile(a)}>
                       {t('actions.reconcile')}

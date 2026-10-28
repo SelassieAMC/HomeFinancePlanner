@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { Account, AccountInput } from '../types/domain';
+import type { Account, AccountInput, AccountLedger } from '../types/domain';
 
 const BASE = '/api/v1';
 
@@ -16,4 +16,13 @@ export const accountsApi = {
     apiClient.post<Account>(`${BASE}/accounts/${id}/reconcile`, {
       balance_cents: balanceCents,
     }),
+  // The register: the account plus its transaction thread (newest first,
+  // limit ≤ 200, offset pages backwards), every row with the balance as it
+  // stood right after it.
+  ledger: (id: number, limit?: number, offset?: number) =>
+    apiClient.get<AccountLedger>(
+      `${BASE}/accounts/${id}/ledger${limit != null || offset != null ? '?' : ''}` +
+        (limit != null ? `limit=${limit}` : '') +
+        (offset != null ? `${limit != null ? '&' : ''}offset=${offset}` : ''),
+    ),
 };

@@ -33,6 +33,7 @@ export const accounts: LocaleBundle = {
     },
     actions: {
       add: 'Add',
+      register: 'Register',
       save: 'Save',
       cancel: 'Cancel',
       edit: 'Edit',
@@ -86,6 +87,7 @@ export const accounts: LocaleBundle = {
     },
     actions: {
       add: 'Hinzufügen',
+      register: 'Konto-Register',
       save: 'Speichern',
       cancel: 'Abbrechen',
       edit: 'Bearbeiten',
@@ -139,6 +141,7 @@ export const accounts: LocaleBundle = {
     },
     actions: {
       add: 'Añadir',
+      register: 'Registro',
       save: 'Guardar',
       cancel: 'Cancelar',
       edit: 'Editar',

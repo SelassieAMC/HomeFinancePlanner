@@ -317,8 +317,11 @@ func nullableFloat(v *float64) any {
 	return *v
 }
 
-// scanTransaction scans one row from either *sql.Rows or *sql.Row.
-func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transaction, error) {
+// scanTransaction scans one row from either *sql.Rows or *sql.Row. Callers
+// selecting columns AFTER the shared transactionColumns projection (e.g. the
+// ledger's running-balance window) pass the extra dests behind the standard
+// ones.
+func scanTransaction(row interface{ Scan(dest ...any) error }, extra ...any) (domain.Transaction, error) {
 	var (
 		t              domain.Transaction
 		category       sql.NullInt64
@@ -338,12 +341,14 @@ func scanTransaction(row interface{ Scan(dest ...any) error }) (domain.Transacti
 		bagName        sql.NullString
 		itemCount      int
 	)
-	if err := row.Scan(&t.ID, &t.AccountID, &category, &kind, &t.AmountCents,
+	dests := []any{&t.ID, &t.AccountID, &category, &kind, &t.AmountCents,
 		&t.Currency, &t.Description, &t.Date, &createdAt, &upd,
 		&billID, &storeID, &storeName, &counterID, &counterName,
 		&counterAmt, &counterCurr,
 		&feeCents, &fxRate, &accountAmt,
-		&bagID, &bagName, &itemCount); err != nil {
+		&bagID, &bagName, &itemCount}
+	dests = append(dests, extra...)
+	if err := row.Scan(dests...); err != nil {
 		return domain.Transaction{}, err
 	}
 	if category.Valid {

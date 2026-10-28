@@ -146,6 +146,29 @@ type Transaction struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// LedgerEntry is one register row of an account (GET /accounts/{id}/ledger,
+// Phase 2 of the MoneyWiz roadmap): the transaction plus its per-row running
+// balance. ChangeCents is the row's own effect on the balance in the
+// ACCOUNT's currency — the same fold `accountBalanceExpr` debits, so a
+// foreign-currency expense contributes its account_amount_cents (raw amount
+// when none), a fee'd transfer out −(amount + fee) and a transfer in its
+// recorded counter amount. RunningBalanceCents folds opening + every row up
+// to and including this one in (date, id) order; the LAST row of the FULL
+// ledger equals the account's derived balance (repository invariant test).
+type LedgerEntry struct {
+	Transaction
+	ChangeCents         int64 `json:"change_cents"`
+	RunningBalanceCents int64 `json:"running_balance_cents"`
+}
+
+// AccountLedger bundles the register read: the account (its derived balance
+// rides along so the register header shows the live total) and the requested
+// window of its transaction thread, newest first.
+type AccountLedger struct {
+	Account Account       `json:"account"`
+	Entries []LedgerEntry `json:"entries"`
+}
+
 // TransactionItem is one article line of a manually entered transaction.
 // Bill lines live in bill_items and carry budget attribution, returns and
 // receipt analysis; these are the purchase-relevant subset, in the

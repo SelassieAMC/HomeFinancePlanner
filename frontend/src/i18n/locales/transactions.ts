@@ -40,6 +40,14 @@ export const transactions: LocaleBundle = {
     },
     empty: {
       month: 'No transactions for {{month}}.',
+      register: 'No transactions on this account yet.',
+    },
+    register: {
+      balance: 'Balance',
+      balanceAfter: 'Balance {{balance}}',
+      showAll: 'Show all activity',
+      loading: 'Loading the account register…',
+      showMore: 'Load older',
     },
     day: {
       sectionAria: '{{label}}, total {{total}}',
@@ -223,6 +231,14 @@ export const transactions: LocaleBundle = {
     },
     empty: {
       month: 'Keine Transaktionen für {{month}}.',
+      register: 'Noch keine Transaktionen auf diesem Konto.',
+    },
+    register: {
+      balance: 'Saldo',
+      balanceAfter: 'Saldo {{balance}}',
+      showAll: 'Alle Aktivitäten zeigen',
+      loading: 'Konto-Register wird geladen…',
+      showMore: 'Ältere laden',
     },
     day: {
       sectionAria: '{{label}}, insgesamt {{total}}',
@@ -406,6 +422,14 @@ export const transactions: LocaleBundle = {
     },
     empty: {
       month: 'No hay transacciones para {{month}}.',
+      register: 'Aún no hay transacciones en esta cuenta.',
+    },
+    register: {
+      balance: 'Saldo',
+      balanceAfter: 'Saldo {{balance}}',
+      showAll: 'Mostrar toda la actividad',
+      loading: 'Cargando el registro de la cuenta…',
+      showMore: 'Cargar anteriores',
     },
     day: {
       sectionAria: '{{label}}, total {{total}}',

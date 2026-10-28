@@ -61,6 +61,12 @@ func (f *fakeAccountStore) Delete(_ context.Context, id int64) error {
 	return nil
 }
 
+// Ledger is thread plumbing the unit tests don't exercise (the SQLite
+// invariant tests own the running-balance math): an empty thread.
+func (f *fakeAccountStore) Ledger(context.Context, int64, int, int) ([]domain.LedgerEntry, error) {
+	return nil, nil
+}
+
 func TestAccountCreateValidatesInput(t *testing.T) {
 	svc := &AccountService{accounts: newFakeAccountStore()}
 	ctx := context.Background()
