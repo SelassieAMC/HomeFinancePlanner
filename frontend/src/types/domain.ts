@@ -644,8 +644,6 @@ export interface BillScan {
   provider_id?: string;
   draft?: BillDraft; // absent while analyzing, failed or cancelled
   error?: string; // set when failed
-  /** Rescan of a saved bill: the owning bill's id (absent on upload scans). */
-  source_bill_id?: number;
   file_count?: number; // receipt parts in this upload (omitted for single-file scans)
   created_at?: string;
 }

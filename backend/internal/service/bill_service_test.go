@@ -1253,6 +1253,29 @@ func TestRescanBillReplacesBillWithScan(t *testing.T) {
 	}
 }
 
+// The scan editor's receipt preview serves the stored photo in any pipeline
+// state; part bounds are validated like the bill equivalent.
+func TestScanImagePathServesReviewPreview(t *testing.T) {
+	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	ctx := context.Background()
+	res := scanUntilDone(t, svc, scanStore)
+
+	for _, part := range []int{0, 1} {
+		path, mime, err := svc.ScanImagePath(ctx, res.ScanToken, part)
+		if err != nil || path == "" || mime == "" {
+			t.Errorf("ScanImagePath(part=%d) = %q, %q, %v; want the stored photo", part, path, mime, err)
+		}
+	}
+	if _, _, err := svc.ScanImagePath(ctx, res.ScanToken, 2); err == nil {
+		t.Error("out-of-range part must be refused")
+	}
+	if _, _, err := svc.ScanImagePath(ctx, "unknown-token", 1); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("unknown token: %v, want ErrNotFound", err)
+	}
+}
+
 func TestScanRejectsDuplicateUpload(t *testing.T) {
 	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil

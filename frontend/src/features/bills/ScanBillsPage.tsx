@@ -642,6 +642,17 @@ export function ScanBillsPage() {
             onRetry={handleRetry}
             onDiscard={handleDiscard}
             busy={busy}
+            receipt={
+              scan
+                ? {
+                    // The stored photo(s) of this exact scan — any pipeline
+                    // state is servable, so the preview works mid-analyze too.
+                    src: (part: number) =>
+                      `/api/v1/bills/scan/${scan.scan_token}/image?part=${part}`,
+                    parts: scan.file_count ?? 1,
+                  }
+                : null
+            }
             error={error}
             accounts={(accounts.data ?? []).map((a) => ({
               id: a.id,

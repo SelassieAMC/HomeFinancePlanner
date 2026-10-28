@@ -5,6 +5,7 @@ import i18n from '../../i18n';
 import { intlLocale } from '../../i18n/core';
 import { useAsync } from '../../hooks/useAsync';
 import { transactionsApi, type TransactionFilters } from '../../api/transactions';
+import { billsApi } from '../../api/bills';
 import { bagsApi } from '../../api/bags';
 import { accountsApi } from '../../api/accounts';
 import { categoriesApi } from '../../api/categories';
@@ -129,7 +130,14 @@ export function TransactionsPage() {
     setDeleting(true);
     setPageError(null);
     try {
-      await transactionsApi.remove(confirmDelete.id);
+      if (confirmDelete.bill_id != null) {
+        // A bill-recorded transaction is deleted THROUGH its bill: the bill
+        // cascade removes the item lines, the receipt file and this very
+        // transaction — there is no "delete only the mirror" operation.
+        await billsApi.remove(confirmDelete.bill_id);
+      } else {
+        await transactionsApi.remove(confirmDelete.id);
+      }
       setConfirmDelete(null);
       if (expandedId === confirmDelete.id) {
         setExpandedId(null);
@@ -137,7 +145,6 @@ export function TransactionsPage() {
       }
       reload();
     } catch (err) {
-      // e.g. 409 when the bill-linked guard fired for a stale row.
       setPageError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
       setDeleting(false);
@@ -323,8 +330,10 @@ export function TransactionsPage() {
                       }}
                     >
                       {isBill ? (
-                        // Recorded for a scanned bill: readonly here — the
-                        // bill view is where it can be edited or deleted.
+                        // Recorded for a scanned bill: readonly for edits
+                        // here, but deleting goes through the bill — the
+                        // confirm dialog spells out that the bill, its item
+                        // lines and the stored receipt go with it.
                         <>
                           <div className="item-field-grid">
                             <div className="item-field">
@@ -343,6 +352,16 @@ export function TransactionsPage() {
                             <Link className="btn btn-secondary" to={`/bills?bill=${tx.bill_id}`}>
                               {t('bill.view')}
                             </Link>
+                            <Button
+                              variant="danger"
+                              className="btn-sm"
+                              onClick={() => {
+                                setPageError(null);
+                                setConfirmDelete(tx);
+                              }}
+                            >
+                              {t('action.delete')}
+                            </Button>
                           </div>
                         </>
                       ) : (
@@ -510,10 +529,15 @@ export function TransactionsPage() {
       {confirmDelete && (
         <Dialog title={t('dialog.deleteTitle')}>
           <p className="hint-text">
-            {t('dialog.deleteBody', {
-              name: confirmDelete.description || t('dialog.defaultName'),
-              amount: formatCents(confirmDelete.amount_cents, confirmDelete.currency),
-            })}
+            {confirmDelete.bill_id != null
+              ? t('dialog.deleteBillBody', {
+                  name: confirmDelete.description || t('dialog.defaultName'),
+                  amount: formatCents(confirmDelete.amount_cents, confirmDelete.currency),
+                })
+              : t('dialog.deleteBody', {
+                  name: confirmDelete.description || t('dialog.defaultName'),
+                  amount: formatCents(confirmDelete.amount_cents, confirmDelete.currency),
+                })}
           </p>
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={deleting}>

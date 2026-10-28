@@ -296,6 +296,35 @@ func (h *BillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ScanImage serves the stored receipt of a scan (any pipeline state) — the
+// review editor's receipt preview. Multi-part scans take ?part=N (1-based;
+// default 1).
+func (h *BillHandler) ScanImage(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	part := 1
+	if raw := r.URL.Query().Get("part"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			respondError(w, r, http.StatusBadRequest, "invalid part")
+			return
+		}
+		part = n
+	}
+	path, mimeType, err := h.Svc.ScanImagePath(r.Context(), token, part)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		respondError(w, r, http.StatusNotFound, "receipt missing on disk")
+		return
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	_, _ = w.Write(data)
+}
+
 // Brands lists the distinct brands recorded on bill items (for the review
 // dropdown).
 func (h *BillHandler) Brands(w http.ResponseWriter, r *http.Request) {

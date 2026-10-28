@@ -4,6 +4,7 @@ import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, C
 import { formatCents, dollarsToCents, parseDecimalInput } from '../../lib/money';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { isDepositArtifact, isDepositReturn } from '../../lib/deposit';
+import { ReceiptPreviewModal } from './ReceiptPreviewModal';
 import { crossRate, convertCents, fxApi } from '../../api/fx';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
@@ -53,6 +54,12 @@ export interface BillDraftEditorProps {
   /** Saved mode only: leave the editor without saving. Required once
    *  onRescan is offered — a re-read the user dislikes must be reversible. */
   onCancel?: () => void;
+  /**
+   * Draft mode only: the receipt the draft was read from — image URL builder
+   * per part (1-based) + part count. Renders the receipt preview card (opens
+   * the in-page zoom viewer).
+   */
+  receipt?: { src: (part: number) => string; parts: number } | null;
   error?: string | null;
   /** Account options for the confirm flow (omit to hide the picker). */
   accounts?: { id: number; name: string; type: AccountType; currency: string; card_last_digits?: string }[];
@@ -236,6 +243,7 @@ export function BillDraftEditor({
   onRescan,
   rescanBusy = false,
   onCancel,
+  receipt = null,
   error = null,
   accounts,
   initialAccountId = null,
@@ -253,6 +261,8 @@ export function BillDraftEditor({
   const baseCurrency = useAsync(() => settingsApi.getBaseCurrency(), []);
 
   const [search, setSearch] = useState('');
+  // Receipt preview overlay (draft mode): the photo the draft was read from.
+  const [showReceipt, setShowReceipt] = useState(false);
   // '' = wallet default, '__new_card__' = create a card account, else id.
   // null until the accounts load: the picker preselects the card account
   // matching the receipt digits (fresh scan) or the bill's current account
@@ -817,6 +827,28 @@ export function BillDraftEditor({
             {mismatch ? t('labels.printedShort', { amount: formatCents(printed, currency) }) : t('labels.vatIncluded')}
           </span>
         </div>
+        {/* The photo the draft was read from: tap opens the zoom viewer. */}
+        {receipt && (
+          <div className="stat-card stat-account receipt-card">
+            <span className="stat-card-label">{t('editor.receipt')}</span>
+            <button
+              type="button"
+              className="receipt-thumb-btn"
+              onClick={() => setShowReceipt(true)}
+              title={t('editor.receiptHint')}
+              aria-label={t('editor.receipt')}
+            >
+              <img
+                src={receipt.src(1)}
+                className="receipt-thumb"
+                alt={t('editor.receipt')}
+              />
+            </button>
+            <span className="stat-card-sub">
+              {receipt.parts > 1 ? t('editor.receiptParts', { n: receipt.parts }) : t('editor.receiptHint')}
+            </span>
+          </div>
+        )}
         <div className="stat-card stat-budget">
           <span className="stat-card-label">{t('labels.budget')}</span>
           <select
@@ -1227,6 +1259,14 @@ export function BillDraftEditor({
       {error && <ErrorMessage message={error} />}
 
       <div className="bill-actions">{actions}</div>
+
+      {receipt && showReceipt && (
+        <ReceiptPreviewModal
+          src={receipt.src}
+          parts={receipt.parts}
+          onClose={() => setShowReceipt(false)}
+        />
+      )}
     </div>
   );
 }

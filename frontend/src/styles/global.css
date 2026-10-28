@@ -2583,6 +2583,98 @@ textarea:focus,
   margin-top: 1rem;
 }
 
+/* --- Receipt preview (scan review) -------------------------------------------
+   The photo the draft was read from: a thumbnail card in the editor's summary
+   row and a near-fullscreen zoom viewer. */
+.receipt-thumb-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-block-start: 0.35rem;
+  cursor: zoom-in;
+  display: block;
+  align-self: center;
+}
+.receipt-thumb {
+  max-height: 72px;
+  max-width: 100%;
+  display: block;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.receipt-backdrop {
+  align-items: center;
+  padding: 12px;
+}
+.receipt-viewer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  width: min(960px, 100%);
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.receipt-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.receipt-viewer-spacer {
+  flex: 1;
+}
+.receipt-part-tab {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  cursor: pointer;
+}
+.receipt-part-tab.active {
+  background: var(--surface-strong, var(--border));
+  font-weight: 600;
+}
+.receipt-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.receipt-zoom-controls button {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 8px;
+  min-width: 2.1rem;
+  padding: 0.15rem 0.45rem;
+  cursor: pointer;
+}
+.receipt-zoom-controls button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.receipt-viewer-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.15rem 0.4rem;
+}
+.receipt-viewer-body {
+  overflow: auto;
+  flex: 1;
+  padding: 0.5rem;
+  text-align: center;
+}
+.receipt-viewer-body img {
+  display: block;
+  margin-inline: auto;
+  height: auto;
+}
+
 /* --- Analytics charts -------------------------------------------------------- */
 /* Categorical ramp validated with the dataviz six-checks script against the
    white chart surface (lightness band, chroma floor, adjacent CVD ΔE,

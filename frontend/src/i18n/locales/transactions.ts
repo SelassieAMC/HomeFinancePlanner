@@ -81,6 +81,8 @@ export const transactions: LocaleBundle = {
       deleteTitle: 'Delete transaction?',
       deleteBody:
         'This permanently removes “{{name}}” ({{amount}}) and its item lines. This cannot be undone.',
+      deleteBillBody:
+        '“{{name}}” ({{amount}}) was recorded for a scanned bill. Deleting removes the bill with its item lines and the stored receipt — the expense disappears from every report. This cannot be undone.',
       defaultName: 'this transaction',
     },
     time: {
@@ -262,6 +264,8 @@ export const transactions: LocaleBundle = {
       deleteTitle: 'Transaktion löschen?',
       deleteBody:
         'Dies entfernt „{{name}}“ ({{amount}}) und seine Artikelzeilen endgültig. Dies kann nicht rückgängig gemacht werden.',
+      deleteBillBody:
+        '„{{name}}“ ({{amount}}) wurde für einen gescannten Beleg erfasst. Das Löschen entfernt den Beleg mit seinen Artikelzeilen und dem gespeicherten Foto — der Ausgang verschwindet aus allen Auswertungen. Dies kann nicht rückgängig gemacht werden.',
       defaultName: 'diese Transaktion',
     },
     time: {
@@ -443,6 +447,8 @@ export const transactions: LocaleBundle = {
       deleteTitle: '¿Eliminar transacción?',
       deleteBody:
         'Esto elimina permanentemente «{{name}}» ({{amount}}) y sus líneas de artículos. No se puede deshacer.',
+      deleteBillBody:
+        '«{{name}}» ({{amount}}) se registró para un recibo escaneado. Al eliminar se borra el recibo con sus líneas de artículos y la imagen guardada — el gasto desaparece de todos los informes. No se puede deshacer.',
       defaultName: 'esta transacción',
     },
     time: {

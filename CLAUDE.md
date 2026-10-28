@@ -210,7 +210,10 @@ split across consecutive parts, merged into ONE bill by the AI read — the
 per-file affordance). Every part is stored in the `bill_scan_files` /
 `bill_files` child tables (position 1..n; the `bill_scans`/`bills` single-file
 columns stay a denormalized mirror of part 1 for `GET /bills/image/{id}`,
-which serves part N via `?part=N`), the AI payload carries all parts per
+which serves part N via `?part=N`; scans serve the same way at
+`GET /bills/scan/{token}/image?part=N` (`BillService.ScanImagePath`, any
+pipeline state — the review editor's receipt-preview card opens the photo in
+an in-page zoom viewer), the AI payload carries all parts per
 family (Ollama `images` array, OpenAI `image_url` parts, Gemini
 `inline_data` parts, Anthropic image/document blocks), and
 `file_count` (omitted for 1) is exposed on scans and bills. Every uploaded

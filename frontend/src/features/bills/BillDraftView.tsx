@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { Bill, Category } from '../../types/domain';
 import { formatCents } from '../../lib/money';
 import { EmptyState } from '../../components/ui';
+import { ReceiptPreviewModal } from './ReceiptPreviewModal';
 
 // BillDraftView renders an accepted bill in the same mobile-first style as
 // the scan draft: colored summary cards on top, one collapsible panel per
@@ -11,6 +12,7 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
   const { t } = useTranslation('bills');
   const items = bill.items ?? [];
   const [search, setSearch] = useState('');
+  const [showReceipt, setShowReceipt] = useState(false);
   const currency = bill.currency || 'USD';
 
   const query = search.trim().toLowerCase();
@@ -84,28 +86,28 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
             {bill.payment_method || '—'}
             {bill.card_last_digits ? ` •${bill.card_last_digits}` : ''}
           </span>
+        </div>
+        {/* The stored receipt: tap opens the zoom viewer (part tabs for
+            multi-part receipts). */}
+        <div className="stat-card stat-account receipt-card">
+          <span className="stat-card-label">{t('editor.receipt')}</span>
+          <button
+            type="button"
+            className="receipt-thumb-btn"
+            onClick={() => setShowReceipt(true)}
+            title={t('editor.receiptHint')}
+            aria-label={t('editor.receipt')}
+          >
+            <img
+              src={`/api/v1/bills/image/${bill.id}`}
+              className="receipt-thumb"
+              alt={t('editor.receipt')}
+            />
+          </button>
           <span className="stat-card-sub">
-            {(bill.file_count ?? 1) > 1 ? (
-              <>
-                {t('view.receiptPrefix')}{' '}
-                {Array.from({ length: bill.file_count ?? 1 }, (_, i) => (
-                  <span key={i}>
-                    {i > 0 && ' · '}
-                    <a
-                      href={`/api/v1/bills/image/${bill.id}?part=${i + 1}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {t('view.part', { n: i + 1 })}
-                    </a>
-                  </span>
-                ))}
-              </>
-            ) : (
-              <a href={`/api/v1/bills/image/${bill.id}`} target="_blank" rel="noreferrer">
-                {t('view.viewReceipt')}
-              </a>
-            )}
+            {(bill.file_count ?? 1) > 1
+              ? t('editor.receiptParts', { n: bill.file_count ?? 1 })
+              : t('editor.receiptHint')}
           </span>
         </div>
         <div className="stat-card stat-savings">
@@ -261,6 +263,14 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
             </div>
           ))}
         </details>
+      )}
+
+      {showReceipt && (
+        <ReceiptPreviewModal
+          src={(part) => `/api/v1/bills/image/${bill.id}?part=${part}`}
+          parts={bill.file_count ?? 1}
+          onClose={() => setShowReceipt(false)}
+        />
       )}
     </div>
   );

@@ -1024,6 +1024,45 @@ func (s *BillService) ReceiptImagePath(ctx context.Context, billID int64, part i
 	return f.Path, mimeType, nil
 }
 
+// ScanImagePath resolves one stored receipt part of a SCAN for serving (the
+// review editor's receipt preview — the bill equivalent is ReceiptImagePath).
+// Any pipeline state is servable: while analyzing, after a failure or while
+// the draft awaits confirmation, the user may want to look at the photo the
+// draft was read from. part is 1-based; part <= 0 means part 1 (the classic
+// single-receipt request). Pre-feature rows without parts fall back to their
+// legacy single-file mirror.
+func (s *BillService) ScanImagePath(ctx context.Context, token string, part int) (string, string, error) {
+	scan, err := s.scans.GetByToken(ctx, token)
+	if err != nil {
+		return "", "", err
+	}
+	if part <= 0 {
+		part = 1
+	}
+	if len(scan.Files) == 0 {
+		if scan.ImagePath == "" {
+			return "", "", validationError("scan %s has no stored receipt", token)
+		}
+		mimeType := scan.MimeType
+		if mimeType == "" {
+			mimeType = detectMime(scan.ImagePath)
+		}
+		return scan.ImagePath, mimeType, nil
+	}
+	if part > len(scan.Files) {
+		return "", "", validationError("scan %s has no receipt part %d", token, part)
+	}
+	f := scan.Files[part-1]
+	if f.Path == "" {
+		return "", "", validationError("scan %s has no stored receipt", token)
+	}
+	mimeType := f.MimeType
+	if mimeType == "" {
+		mimeType = detectMime(f.Path)
+	}
+	return f.Path, mimeType, nil
+}
+
 // resolveProvider picks the requested provider or falls back to the connector
 // flagged as the default for bill reads (any configured one when none is).
 func (s *BillService) resolveProvider(ctx context.Context, providerID string) (domain.AIProvider, error) {
