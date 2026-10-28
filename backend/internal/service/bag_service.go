@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -182,10 +183,14 @@ func (s *BagService) Update(ctx context.Context, id int64, in BagInput) (domain.
 	return s.withBalance(ctx, updated)
 }
 
-// SetStatus closes a spent-out bag (status kept like budgets close) or
-// reopens a closed one. Closing requires a zero balance: a close that
-// stranded leftover or overspend would silently misstate the account's
-// unbagged number — withdraw (or adjust) releases the remainder first.
+// SetStatus closes a bag or reopens a closed one. Closing no longer demands
+// a zero balance (decision 2026-10-28): the leftover never strands. One
+// balancing allocation zeroes the bag at the close moment — a withdraw of the
+// remaining balance when positive (the leftover returns to the account's
+// unbagged money), a fund of the deficit when it dipped negative — dated at
+// the close date with note "Closed: <name>", kept forever in the ledger like
+// any other allocation. Reopening keeps reading; the balancing row is
+// ordinary history.
 func (s *BagService) SetStatus(ctx context.Context, id int64, status domain.BagLifecycle) (domain.BagStatus, error) {
 	if !status.Valid() {
 		return domain.BagStatus{}, validationError("status %q must be open or closed", status)
@@ -200,10 +205,32 @@ func (s *BagService) SetStatus(ctx context.Context, id int64, status domain.BagL
 			return domain.BagStatus{}, err
 		}
 		if st.BalanceCents != 0 {
-			return domain.BagStatus{}, conflictError(
-				"bag %q would close with a balance of %d — withdraw the leftover (or adjust) so it closes at zero",
-				existing.Name, st.BalanceCents)
+			bal := domain.BagAllocationInput{
+				Kind:        domain.BagWithdraw,
+				AmountCents: st.BalanceCents,
+				Note:        "Closed: " + existing.Name,
+				Date:        time.Now().Format("2006-01-02"),
+			}
+			if st.BalanceCents < 0 {
+				bal.Kind = domain.BagFund
+				bal.AmountCents = -st.BalanceCents
+			}
+			alloc, err := s.buildAllocation(ctx, existing, bal)
+			if err != nil {
+				return domain.BagStatus{}, err
+			}
+			if _, err := s.bags.CreateAllocation(ctx, alloc); err != nil {
+				return domain.BagStatus{}, fmt.Errorf("close balancing allocation: %w", err)
+			}
 		}
+	}
+	// The close stamp lives here (the service owns the lifecycle transition);
+	// reopen clears it.
+	if status == domain.BagClosed {
+		now := time.Now().UTC()
+		existing.ClosedAt = &now
+	} else {
+		existing.ClosedAt = nil
 	}
 	existing.Status = status
 	b, err := s.bags.UpdateBag(ctx, existing)

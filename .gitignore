@@ -24,5 +24,7 @@ frontend/.vite/
 # Editors
 .idea/
 .vscode/
+# editor crash-scratch temp files (e.g. account_service.go.2235725589508222746)
+*.go.[0-9]*
 
 **/node_modules/

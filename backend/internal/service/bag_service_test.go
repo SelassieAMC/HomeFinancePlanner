@@ -254,36 +254,92 @@ func TestBagAllocateSigns(t *testing.T) {
 	}
 }
 
-// TestBagLifecycleAndClosedRefusals: closing requires a zero balance and a
-// closed bag admits no ledger writes or tagging.
-func TestBagLifecycleAndClosedRefusals(t *testing.T) {
+// TestBagCloseBalancingAllocation: closing a bag with a non-zero balance
+// posts one balancing allocation that zeroes it (withdraw of the leftover, or
+// fund of a deficit — decision 2026-10-28), so the leftover returns to the
+// account's unbagged money instead of stranding. A closed bag still admits no
+// manual ledger writes or tagging.
+func TestBagCloseBalancingAllocation(t *testing.T) {
 	ctx := context.Background()
 	svc, store, _ := newTestBagService(t)
 
+	// Positive leftover: close releases it with a balancing withdraw.
 	b, err := svc.Create(ctx, validBagInput())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagFund, AmountCents: 1000, Date: "2026-10-01"}); err != nil {
+	store.seedSpend(b.ID, "EUR", 500)
+	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagFund, AmountCents: 1500, Date: "2026-10-01"}); err != nil {
 		t.Fatalf("fund: %v", err)
 	}
-	if _, err := svc.SetStatus(ctx, b.ID, domain.BagClosed); err == nil {
-		t.Fatalf("close with balance accepted; want refusal")
+	st, err := svc.Get(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("status: %v", err)
 	}
-	// Release the leftover, then close.
-	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagWithdraw, AmountCents: 1000, Date: "2026-10-02"}); err != nil {
-		t.Fatalf("withdraw: %v", err)
+	if st.BalanceCents != 1000 {
+		t.Fatalf("balance = %d; want 1000 before close", st.BalanceCents)
 	}
-	if _, err := svc.SetStatus(ctx, b.ID, domain.BagClosed); err != nil {
-		t.Fatalf("close at zero: %v", err)
+
+	closed, err := svc.SetStatus(ctx, b.ID, domain.BagClosed)
+	if err != nil {
+		t.Fatalf("close with balance: %v", err)
 	}
+	if closed.BalanceCents != 0 {
+		t.Fatalf("closed balance = %d; want 0 (balancing allocation zeroes it)", closed.BalanceCents)
+	}
+	if closed.ClosedAt == nil {
+		t.Fatalf("close did not stamp closed_at")
+	}
+	ledger, err := svc.AllocationHistory(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	if len(ledger) != 2 {
+		t.Fatalf("ledger rows = %d; want 2 (fund + balancing)", len(ledger))
+	}
+	balRow := ledger[1]
+	if balRow.Kind != string(domain.BagWithdraw) ||
+		balRow.AmountCents != -1000 || balRow.Date != closed.ClosedAt.UTC().Format("2006-01-02") ||
+		balRow.Note != "Closed: "+validBagInput().Name {
+		t.Fatalf("balancing row = %+v; want withdraw −1000 at the close date, note %q", balRow, "Closed: "+validBagInput().Name)
+	}
+	// Reopen keeps the released leftover as ordinary history (balance stays 0).
 	if _, err := svc.SetStatus(ctx, b.ID, domain.BagOpen); err != nil {
 		t.Fatalf("reopen: %v", err)
+	}
+	reopened, _ := svc.Get(ctx, b.ID)
+	if reopened.BalanceCents != 0 {
+		t.Fatalf("reopened balance = %d; want 0", reopened.BalanceCents)
+	}
+
+	// Deficit: close funds it to zero instead of refusing.
+	d, err := svc.Create(ctx, BagInput{Name: "Deficit Bag", AccountID: 1})
+	if err != nil {
+		t.Fatalf("create deficit bag: %v", err)
+	}
+	store.seedSpend(d.ID, "EUR", 800)
+	if _, err := svc.SetStatus(ctx, d.ID, domain.BagClosed); err != nil {
+		t.Fatalf("close with deficit: %v", err)
+	}
+	dst, _ := svc.Get(ctx, d.ID)
+	if dst.BalanceCents != 0 {
+		t.Fatalf("deficit closed balance = %d; want 0", dst.BalanceCents)
+	}
+	dledger, err := svc.AllocationHistory(ctx, d.ID)
+	if err != nil {
+		t.Fatalf("deficit ledger: %v", err)
+	}
+	if len(dledger) != 1 || dledger[0].Kind != string(domain.BagFund) || dledger[0].AmountCents != 800 {
+		t.Fatalf("deficit balancing row = %+v; want fund 800", dledger)
+	}
+
+	// A closed bag still refuses manual writes.
+	if _, err := svc.Allocate(ctx, d.ID, domain.BagAllocationInput{Kind: domain.BagFund, AmountCents: 100, Date: "2026-10-02"}); err == nil {
+		t.Fatalf("closed bag accepted a fund")
 	}
 	if _, err := svc.SetStatus(ctx, b.ID, domain.BagLifecycle("paused")); err == nil {
 		t.Fatalf("bogus status accepted")
 	}
-	_ = store
 }
 
 // TestBagRebalanceRules: same account only, positive magnitude, source

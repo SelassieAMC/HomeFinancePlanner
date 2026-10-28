@@ -557,10 +557,20 @@ unified scheduler, not before). Tagged spend is attributed with a `COALESCE`
 per-line override (`bill_items.bag_id` → `bills.bag_id`); bill-linked expense
 transactions stay out of the spend sums (`t.bill_id IS NULL` guard in
 `TaggedSpend`) and carry the bill's bag only as a display-only mirror
-(`bag_name` joined for the activity list). The lifecycle is
+(`bag_name` joined for the activity list). `TaggedSpend` folds the
+migration-0041 conversion (`COALESCE(account_amount_cents, amount_cents)`)
+exactly like `accountBalanceExpr` debits the account — a foreign-currency bill
+drains the bag at the rate recorded on its expense transaction (one rounding
+per bag × bill group, group currency = the paying account's currency), never
+at today's reference snapshot; repository tests assert the drain == ledger
+debit invariant. The lifecycle is
 `open`/`closed`: a closed bag refuses allocations, rebalances and new spend
-tags but keeps reading (reopen flips it back); closing takes nothing from the
-balance — refusals come from the *spend* tag paths. Allocations are signed
+tags but keeps reading (reopen flips it back); **closing no longer demands a
+zero balance** (decision 2026-10-28) — one balancing allocation zeroes the bag
+at the close date (withdraw of a positive leftover → back to unbagged money,
+fund of a negative deficit), note "Closed: <name>", left in the ledger as
+ordinary history; the stamp `closed_at` is set on close and cleared on reopen.
+Manual spend-tag tagging is still refused on closed bags. Allocations are signed
 ledger rows with 4 kinds — `fund` (positive), `withdraw` (negative), `adjust`
 (any non-zero), and `rebalance` allowed only through the dedicated endpoint,
 which posts two linked halves (`related_allocation_id` both ways, same account,

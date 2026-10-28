@@ -257,6 +257,21 @@ func (r *BagRepository) AllocationTotals(ctx context.Context, until string) (map
 // never double counted: manual expense transactions (the bill's own expense
 // transaction is created without a bag and stays bagless) and accepted bill
 // lines through the per-line override COALESCE.
+//
+// Both legs fold the migration-0041 conversion (`COALESCE(
+// account_amount_cents, amount_cents)`) the same way `accountBalanceExpr`
+// debits the account, so a foreign-currency card spend drains the bag at the
+// rate recorded on the row — never at today's reference snapshot. For bill
+// lines the per-line amounts live in the bill's currency, so the recorded
+// conversion is applied as the bill's debit-to-total ratio (one rounding per
+// bag × bill group); the group's currency is the paying account's currency.
+// A NULL account amount (same-currency bill, or the accepted no-rate
+// degradation) folds ratio 1:1 into the account's currency — exactly what the
+// account ledger did; a bill whose link or account vanished (LEFT JOIN miss)
+// keeps the raw bill currency with the old snapshot conversion. Manual expense
+// rows are always recorded in their account's
+// currency, so the transaction leg folds 1:1 today; the COALESCE keeps the
+// two ledgers aligned if that ever changes.
 func (r *BagRepository) TaggedSpend(ctx context.Context, until string) ([]domain.BagCurrencySpend, error) {
 	txBound, billBound := "", ""
 	args := []any{}
@@ -267,16 +282,27 @@ func (r *BagRepository) TaggedSpend(ctx context.Context, until string) ([]domain
 	}
 	q := `
 		SELECT bag_id, currency, SUM(cents) FROM (
-			SELECT t.bag_id AS bag_id, t.currency AS currency, SUM(t.amount_cents) AS cents
+			SELECT t.bag_id AS bag_id, t.currency AS currency,
+				SUM(COALESCE(t.account_amount_cents, t.amount_cents)) AS cents
 			FROM transactions t
 			WHERE t.kind = 'expense' AND t.bag_id IS NOT NULL AND t.bill_id IS NULL` + txBound + `
 			GROUP BY t.bag_id, t.currency
 			UNION ALL
-			SELECT COALESCE(bi.bag_id, b.bag_id), b.currency, SUM(bi.line_total_cents)
-			FROM bill_items bi
-			JOIN bills b ON b.id = bi.bill_id
-			WHERE b.status = 'accepted' AND COALESCE(bi.bag_id, b.bag_id) IS NOT NULL` + billBound + `
-			GROUP BY COALESCE(bi.bag_id, b.bag_id), b.currency
+			SELECT bag_id, currency, SUM(cents) FROM (
+				SELECT COALESCE(bi.bag_id, b.bag_id) AS bag_id,
+					COALESCE(acc.currency, b.currency) AS currency,
+					CAST(ROUND(SUM(bi.line_total_cents) * 1.0 * CASE
+							WHEN tx.account_amount_cents IS NOT NULL AND tx.amount_cents <> 0
+							THEN CAST(tx.account_amount_cents AS REAL) / tx.amount_cents
+							ELSE 1.0 END) AS INTEGER) AS cents
+				FROM bill_items bi
+				JOIN bills b ON b.id = bi.bill_id
+				LEFT JOIN transactions tx ON tx.id = b.transaction_id
+				LEFT JOIN accounts acc ON acc.id = tx.account_id
+				WHERE b.status = 'accepted' AND COALESCE(bi.bag_id, b.bag_id) IS NOT NULL` + billBound + `
+				GROUP BY 1, 2, b.id
+			)
+			GROUP BY bag_id, currency
 		)
 		GROUP BY bag_id, currency ORDER BY bag_id`
 	rows, err := r.db.QueryContext(ctx, q, args...)
