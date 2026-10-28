@@ -231,9 +231,16 @@ type Budget struct {
 	Status      BudgetLifecycle `json:"status"`
 	Cadence     BudgetCadence   `json:"cadence"`
 	Month       string          `json:"month,omitempty"` // YYYY-MM, monthly rows only
-	ClosedAt    *time.Time      `json:"closed_at,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	// CarryOver is the monthly row's series attribute: when set, the lazy
+	// rollover computes the predecessor's leftover (amount − its month spend,
+	// deficits negative) into the successor's CarriedCents. Envelopes ignore
+	// it. New monthly rows default true (service layer); existing rows stayed
+	// off through migration 0043.
+	CarryOver    bool       `json:"carry_over,omitempty"`
+	CarriedCents int64      `json:"carried_cents,omitempty"` // running carried balance, monthly rows
+	ClosedAt     *time.Time `json:"closed_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // Goal is a named savings target tracked against one account. It holds no

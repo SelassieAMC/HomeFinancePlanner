@@ -40,8 +40,10 @@ function monthTag(month: string): string {
 // vacations budget shows how much was spent, saved or overspent. Monthly
 // budgets are fixed caps for the calendar month they carry: a lazy rollover
 // closes the stale monthly row once its month has passed and opens the
-// current month's successor with the same amount (leftovers never roll
-// over), so the list doubles as the Jan-vs-Feb history.
+// current month's successor with the same amount. A carrying series
+// (carry_over) rolls its running balance — leftover or deficit — into the
+// successor's available money, so the list doubles as the Jan-vs-Feb history
+// while the current row reflects the full envelope chain.
 export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation('budgets');
   const { data, loading, error, reload } = useAsync(() => budgetsApi.list(), []);
@@ -60,18 +62,24 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   // Monthly is the common case (groceries, dining out); envelopes cover
   // irregular pools like clothes or vacations.
   const [cadence, setCadence] = useState<BudgetCadence>('monthly');
+  // Monthly series may roll the running leftover into the next month
+  // (deficits negative — MoneyWiz envelopes). On by default; envelopes never
+  // carry.
+  const [carry, setCarry] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
 
   // Amount editing: only open rows offer it (the backend refuses closed ones
   // — a closed row's amount is settled history).
   const [editing, setEditing] = useState<Budget | null>(null);
   const [editAmount, setEditAmount] = useState('');
+  const [editCarry, setEditCarry] = useState(true);
   const [editError, setEditError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   function openEdit(b: Budget) {
     setEditing(b);
     setEditAmount((b.amount_cents / 100).toFixed(2));
+    setEditCarry(b.carry_over ?? true);
     setEditError(null);
   }
 
@@ -86,7 +94,11 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
     setBusy(true);
     setEditError(null);
     try {
-      await budgetsApi.updateAmount(editing.id, cents);
+      await budgetsApi.updateAmount(
+        editing.id,
+        cents,
+        editing.cadence === 'monthly' ? editCarry : undefined,
+      );
       setEditing(null);
       reload();
     } catch (err) {
@@ -114,6 +126,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
         category_id: Number(categoryId),
         amount_cents: cents,
         cadence,
+        carry_over: cadence === 'monthly' ? carry : undefined,
       });
       setAmount('');
       reload();
@@ -185,6 +198,16 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
             <option value="monthly">{t('add.cadence_monthly')}</option>
             <option value="open">{t('add.cadence_open')}</option>
           </select>
+          {cadence === 'monthly' && (
+            <label className="hint-text" aria-label={t('add.carry_over_aria')}>
+              <input
+                type="checkbox"
+                checked={carry}
+                onChange={(e) => setCarry(e.target.checked)}
+              />{' '}
+              {t('add.carry_over')}
+            </label>
+          )}
           <Button type="submit">{t('add.submit')}</Button>
         </form>
         {formError && <ErrorMessage message={formError} />}
@@ -209,6 +232,10 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
             <tbody>
               {budgets.map((b) => {
                 const lifetime = lifetimeSpentByBudget.get(b.id) ?? 0;
+                // A carrying monthly row's available money is cap + running
+                // carry (deficits negative) − month spend.
+                const carried = b.carry_over ? b.carried_cents ?? 0 : 0;
+                const available = b.amount_cents + carried - lifetime;
                 return (
                   <tr key={b.id}>
                     <td>
@@ -235,18 +262,26 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
                       <span className={b.status === 'closed' ? 'cell-muted' : undefined}>
                         {formatCents(b.amount_cents, currency)}
                       </span>
+                      {carried !== 0 && (
+                        <span
+                          className={carried < 0 ? '' : 'ok'}
+                          style={{ display: 'block', fontSize: '0.85em' }}
+                        >
+                          {t('card.carried', { amount: formatCents(carried, currency) })}
+                        </span>
+                      )}
                     </td>
                     <td className="cell-progress">
                       <ProgressBar
                         pct={b.amount_cents > 0 ? (lifetime / b.amount_cents) * 100 : 0}
-                        over={lifetime > b.amount_cents}
+                        over={available < 0}
                       />
                     </td>
                     <td>
                       <BudgetStatusCell
                         isClosed={b.status === 'closed'}
-                        over={lifetime > b.amount_cents}
-                        remaining={b.amount_cents - lifetime}
+                        over={available < 0}
+                        remaining={available}
                         currency={currency}
                       />
                     </td>
@@ -309,6 +344,16 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
               aria-label={t('add.amount_aria')}
               required
             />
+            {editing.cadence === 'monthly' && (
+              <label className="hint-text" aria-label={t('edit.carry_over_aria')}>
+                <input
+                  type="checkbox"
+                  checked={editCarry}
+                  onChange={(e) => setEditCarry(e.target.checked)}
+                />{' '}
+                {t('add.carry_over')}
+              </label>
+            )}
             <p className="hint-text">{t('edit.hint')}</p>
             {editError && <ErrorMessage message={editError} />}
             <div className="dialog-actions">

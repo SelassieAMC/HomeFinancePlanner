@@ -53,10 +53,20 @@ type BudgetStore interface {
 	Create(ctx context.Context, b domain.Budget) (domain.Budget, error)
 	Update(ctx context.Context, b domain.Budget) (domain.Budget, error)
 	Delete(ctx context.Context, id int64) error
+	// ListStaleMonthly previews the open monthly rows a rollover would close
+	// and succeed — the read the BudgetService computes the carry chain from.
+	ListStaleMonthly(ctx context.Context, month string) ([]domain.Budget, error)
+	// CarryCategoryMonthSpend expenses per category AND month bucket, the
+	// spend basis the carry chain mirrors from the dashboard evaluation.
+	CarryCategoryMonthSpend(ctx context.Context) ([]domain.CategoryMonthCurrencyTotal, error)
+	// CarryBillSpend all-time bill line spend attributed to budget rows.
+	CarryBillSpend(ctx context.Context) ([]domain.BudgetCurrencySpend, error)
 	// RolloverMonthly closes open monthly budgets older than the given month
 	// ("YYYY-MM") and creates each one's successor for that month with the
 	// same amount — the lazy month rollover the service triggers on reads.
-	RolloverMonthly(ctx context.Context, month string) error
+	// carries maps each closed row's id to the carried_cents its successor
+	// inherits (carry_over rows only; absent rows inherit 0).
+	RolloverMonthly(ctx context.Context, month string, carries map[int64]int64) error
 }
 
 // GoalStore is the persistence contract for financial goals.
@@ -324,7 +334,9 @@ func New(
 	schedules ScheduledActionStore,
 	users *UserService,
 ) *Services {
-	budgetSvc := &BudgetService{budgets: budgets, categories: categories}
+	// The BudgetService's carry chain converts like the SummaryService: base
+	// currency from settings, the rate snapshot from the cached FX service.
+	budgetSvc := &BudgetService{budgets: budgets, categories: categories, base: settings, rates: fx, log: slog.Default()}
 	bagSvc := &BagService{bags: bags, accounts: accounts, fx: fx, log: slog.Default()}
 	// The bag delete guard consults the scheduler: a bag an active schedule
 	// funds or drains cannot be deleted (archive the schedule first). nil (a

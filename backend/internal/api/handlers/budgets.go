@@ -15,6 +15,11 @@ type budgetRequest struct {
 	CategoryID  int64                `json:"category_id"`
 	AmountCents int64                `json:"amount_cents"`
 	Cadence     domain.BudgetCadence `json:"cadence"` // empty = envelope
+	// CarryOver rides create/update: whether a monthly series rolls its
+	// leftover (running carried balance, deficits negative) into the next
+	// month. Omitted = default ON for new monthly rows (0043); untouched on
+	// update. Envelope rows ignore it.
+	CarryOver *bool `json:"carry_over,omitempty"`
 }
 
 type budgetStatusRequest struct {
@@ -42,6 +47,7 @@ func (h *BudgetHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CategoryID:  req.CategoryID,
 		AmountCents: req.AmountCents,
 		Cadence:     req.Cadence,
+		CarryOver:   req.CarryOver,
 	})
 	if err != nil {
 		respondServiceError(w, r, err)
@@ -50,7 +56,8 @@ func (h *BudgetHandler) Create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusCreated, b)
 }
 
-// Update changes only a budget's amount (category is immutable).
+// Update changes a budget's amount and (monthly rows) the carry_over flag;
+// the category is immutable.
 func (h *BudgetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -61,7 +68,7 @@ func (h *BudgetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	b, err := h.Svc.Update(r.Context(), id, req.AmountCents)
+	b, err := h.Svc.Update(r.Context(), id, req.AmountCents, req.CarryOver)
 	if err != nil {
 		respondServiceError(w, r, err)
 		return

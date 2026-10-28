@@ -168,12 +168,24 @@ schema). **Budgets have two cadences** (migration 0032): `open` envelopes keep
 the 0015 open-ended behavior, while `monthly` budgets are fixed caps for the
 calendar month they carry (`month` column, YYYY-MM). A lazy rollover closes a
 stale open monthly row and opens the successor for the current month with the
-same amount (leftovers never roll over; manually closing a monthly row ends
-its series) — triggered by `BudgetService.List` and `SummaryService` range
-reads (`EnsureMonthlyCurrent`). Monthly evaluation bounds transaction spend
-to the row's own month (the new `CategoryMonthSpend` bucketing) while
-explicit bill-line links stay all-time, so historical Jan-vs-Feb comparisons
-never re-evaluate old months against a changed amount. Bills link to stores via `store_id`; on confirm/update
+same amount (manually closing a monthly row ends its series) — triggered by
+`BudgetService.List` and `SummaryService` range reads (`EnsureMonthlyCurrent`).
+**Envelope rollover** (migration 0043, `budget_service.go` — carry chain +
+rollover; MoneyWiz running balance): monthly rows carry `carry_over` (series
+attribute copied at rollover; new monthly rows default ON, pre-0043 rows stay
+OFF, envelopes never carry) and `carried_cents` (running balance). The
+successor inherits `predecessor.carried + cap − month spend` — deficits carry
+cumulatively negative, no floor; the cap is never rebased so the
+Jan-vs-Feb immunity survives (closed rows are never rewritten). The carry
+spend fold mirrors the dashboard evaluation exactly (month-bucketed category
+spend + all-time bill-line links, converted to base currency by
+`BudgetService.carryChain` BEFORE the transactional close — no conversion
+sources = no carry for that pass, byte-equal legacy). Monthly evaluation
+bounds transaction spend to the row's own month (the `CategoryMonthSpend`
+bucketing) while explicit bill-line links stay all-time, so historical
+comparisons never re-evaluate old months against a changed amount; a carrying
+row's remaining is `amount + carried − month spend` (open rows edit the cap
+and the flag; nil `carry_over` in the PUT leaves it untouched). Bills link to stores via `store_id`; on confirm/update
 the service find-or-creates the store from the (case-insensitive) market name,
 while `market_name` stays a denormalized snapshot. Bill items link to products
 via `product_id`: on confirm the service find-or-creates the product from the

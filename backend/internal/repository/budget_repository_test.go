@@ -40,7 +40,7 @@ func TestRolloverMonthly(t *testing.T) {
 	envelope := mustBudget(domain.Budget{CategoryID: envelopeCat, AmountCents: 20_000, Cadence: domain.BudgetEnvelope})
 
 	// Rollover into October: stale August row closes, successor opens.
-	if err := repo.RolloverMonthly(ctx, "2026-10"); err != nil {
+	if err := repo.RolloverMonthly(ctx, "2026-10", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +82,7 @@ func TestRolloverMonthly(t *testing.T) {
 
 	// Idempotent: a second rollover must not close the fresh successor or
 	// stack another row on top.
-	if err := repo.RolloverMonthly(ctx, "2026-10"); err != nil {
+	if err := repo.RolloverMonthly(ctx, "2026-10", nil); err != nil {
 		t.Fatal(err)
 	}
 	all, err = repo.List(ctx)
@@ -104,5 +104,82 @@ func TestRolloverMonthly(t *testing.T) {
 	}
 	if stillOpen.Status != domain.BudgetOpen || stillOpen.Month != "2026-10" {
 		t.Errorf("successor after repeat rollover = %+v, want open 2026-10", stillOpen)
+	}
+}
+
+// TestRolloverMonthlyCarriesBalance covers migration 0043: a carrying row's
+// successor inherits the service-computed carried_cents AND the carry_over
+// flag; a rollover-off row rolls over with carried 0 even when a map entry
+// exists (the flag gates the carry, not the map); caps are copied, never
+// rebased.
+func TestRolloverMonthlyCarriesBalance(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewBudgetRepository(db)
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO categories (name, created_at) VALUES ('Carry Cat', 1), ('NoCarry Cat', 1)`); err != nil {
+		t.Fatalf("seed categories: %v", err)
+	}
+	var carryCat, noCarryCat int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM categories WHERE name = 'Carry Cat'`).Scan(&carryCat); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT id FROM categories WHERE name = 'NoCarry Cat'`).Scan(&noCarryCat); err != nil {
+		t.Fatal(err)
+	}
+	carryOn, err := repo.Create(ctx, domain.Budget{
+		CategoryID: carryCat, AmountCents: 10_000, Cadence: domain.BudgetMonthly,
+		Month: "2026-01", CarryOver: true, CarriedCents: 2_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	carryOff, err := repo.Create(ctx, domain.Budget{
+		CategoryID: noCarryCat, AmountCents: 4_000, Cadence: domain.BudgetMonthly, Month: "2026-01",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Service numbers: carry row's chain says 9200 (its own 2000 + 10000 cap −
+	// spend); the off row's entry must be ignored.
+	carries := map[int64]int64{carryOn.ID: 9_200, carryOff.ID: 99_999}
+	if err := repo.RolloverMonthly(ctx, "2026-02", carries); err != nil {
+		t.Fatal(err)
+	}
+
+	succ, err := repo.GetByID(ctx, carryOn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if succ.Status != domain.BudgetClosed || succ.Month != "2026-01" {
+		t.Errorf("predecessor = %+v; want closed January (never rewritten)", succ)
+	}
+	var succOn *domain.Budget
+	all, _ := repo.List(ctx)
+	for i := range all {
+		if all[i].CategoryID == carryCat && all[i].Month == "2026-02" {
+			succOn = &all[i]
+		}
+	}
+	if succOn == nil {
+		t.Fatal("carry successor missing")
+	}
+	if !succOn.CarryOver || succOn.CarriedCents != 9_200 || succOn.AmountCents != 10_000 {
+		t.Errorf("carry successor = %+v; want carry_over on, carried 9200, cap untouched 10000", succOn)
+	}
+
+	var succOff *domain.Budget
+	for i := range all {
+		if all[i].CategoryID == noCarryCat && all[i].Month == "2026-02" {
+			succOff = &all[i]
+		}
+	}
+	if succOff == nil {
+		t.Fatal("no-carry successor missing")
+	}
+	if succOff.CarryOver || succOff.CarriedCents != 0 {
+		t.Errorf("no-carry successor = %+v; want carry_over off, carried 0 (map ignored)", succOff)
 	}
 }

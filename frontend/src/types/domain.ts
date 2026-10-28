@@ -280,8 +280,9 @@ export type BudgetCadence = 'open' | 'monthly';
  * period: they stay open — accumulating attributed spend — until marked
  * finished and closed. Monthly budgets (cadence 'monthly') cover exactly the
  * calendar `month` they carry; a lazy rollover closes the stale open monthly
- * row and opens the current month's successor with the same amount — no
- * leftover roll-over.
+ * row and opens the current month's successor with the same amount. Monthly
+ * rows with `carry_over` roll their leftover forward as a running carried
+ * balance (deficits negative) — the successor's carried_cents inherits it.
  */
 export interface Budget {
   id: number;
@@ -290,6 +291,8 @@ export interface Budget {
   status: BudgetLifecycle;
   cadence: BudgetCadence;
   month?: string; // YYYY-MM, monthly rows only
+  carry_over?: boolean; // monthly series roll the leftover forward
+  carried_cents?: number; // running carried balance (monthly rows)
   closed_at?: string; // set when closed, cleared on reopen
   created_at: string;
   updated_at: string;
@@ -299,6 +302,7 @@ export interface BudgetInput {
   category_id: number;
   amount_cents: number;
   cadence?: BudgetCadence; // empty = envelope
+  carry_over?: boolean; // monthly series roll the leftover forward
 }
 
 export interface BudgetStatus extends Budget {
@@ -306,7 +310,9 @@ export interface BudgetStatus extends Budget {
   // All spend attributed since creation; for monthly rows, bounded to the
   // row's own month.
   lifetime_spent_cents: number;
-  remaining_cents: number; // amount − lifetime spend (negative = overspent)
+  // amount − lifetime spend; carrying monthly rows add the inherited
+  // carried_cents (negative carry shrinks the available money).
+  remaining_cents: number;
 }
 
 // --- Stores (recurring markets bills link to) --------------------------------

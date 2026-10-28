@@ -915,6 +915,12 @@ func (s *SummaryService) RangeSummary(ctx context.Context, from, to string) (dom
 			st.LifetimeSpentCents = lifetimeCategorySpend[b.CategoryID] + lifetimeBillSpend[b.ID]
 		}
 		st.RemainingCents = b.AmountCents - st.LifetimeSpentCents
+		// Envelope rollover (0043): a carrying monthly row's remaining is the
+		// available money — the cap plus the inherited running carry (deficits
+		// negative, MoneyWiz running balance) minus the month spend.
+		if b.CarryOver && b.Cadence == domain.BudgetMonthly {
+			st.RemainingCents += b.CarriedCents
+		}
 		if b.Status == domain.BudgetOpen || st.SpentCents != 0 {
 			out.Budgets = append(out.Budgets, st)
 		}

@@ -1,0 +1,21 @@
+-- 0043: envelope rollover — running carried balance for monthly budgets
+-- (MoneyWiz envelope method; the consolidation the roadmap's Phase 1 asks
+-- for, spec `Envelope Rollover Spec.md` §3a).
+--
+-- The row keeps its own cap (amount_cents is never rebased — the 0032
+-- historical immunity survives) and gains the running carry inherited from
+-- its series:
+--
+--   leftover(predecessor)     = amount_cents − spendOf(predecessor.month)
+--   carried_cents(successor)  = predecessor.carried_cents + leftover
+--   available(row)            = amount_cents + carried_cents − spendOf(row.month)
+--
+-- Deficits carry cumulatively negative by design (MoneyWiz running balance;
+-- no floor — the true number is reported, clamping is a display concern).
+--
+-- carry_over is a SERIES attribute: the lazy rollover copies it onto the
+-- successor. Existing rows default 0 (rollover OFF — byte-equal behavior for
+-- today's users); newly created monthly budgets default ON, enforced at the
+-- service layer (Create), not here.
+ALTER TABLE budgets ADD COLUMN carry_over INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE budgets ADD COLUMN carried_cents INTEGER NOT NULL DEFAULT 0;

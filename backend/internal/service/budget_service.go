@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
@@ -15,12 +16,29 @@ import (
 // open-ended envelopes (no period, open until manually closed) or monthly
 // caps that reset each calendar month through the lazy rollover: reading
 // budgets on/after the first of a new month closes the stale open monthly
-// row — its month stays the historical label, leftovers never roll over —
-// and opens a successor for the current month carrying the same amount.
-// Manually closing a monthly row ends its series (no successor).
+// row — its month stays the historical label — and opens a successor for the
+// current month carrying the same amount. When the series carries
+// (carry_over, migration 0043) the successor also inherits the running
+// carried balance: predecessor.carried + (cap − month spend), deficits
+// negative, MoneyWiz-style. Manually closing a monthly row ends its series
+// (no successor) — the carry dies with it.
 type BudgetService struct {
 	budgets    BudgetStore
 	categories CategoryStore
+	// base + rates supply the carry chain's conversion. A leftover is a
+	// base-currency number — the budget amount is never converted, so the
+	// month spend folded into the carry must use the same fold the dashboard
+	// evaluation applies. nil (tests, degraded installs) disables the carry:
+	// rows roll over with carried_cents 0, byte-equal legacy behavior.
+	base  BaseCurrencySource
+	rates RateSource
+	log   *slog.Logger
+}
+
+// BaseCurrencySource supplies the reference currency the carry chain
+// denominates in (*SettingsService satisfies it).
+type BaseCurrencySource interface {
+	BaseCurrency(ctx context.Context) (string, error)
 }
 
 // BudgetInput is the user-facing payload for create/update.
@@ -28,6 +46,11 @@ type BudgetInput struct {
 	CategoryID  int64
 	AmountCents int64
 	Cadence     domain.BudgetCadence // empty = envelope (the default)
+	// CarryOver, monthly rows only: whether the series' successors inherit
+	// the running carried balance. nil defaults ON for monthly (decision
+	// 2026-10-28); existing rows created before 0043 stay off. Envelopes
+	// never carry.
+	CarryOver *bool
 }
 
 // currentMonth returns the calendar month ("YYYY-MM") the server is in.
@@ -46,12 +69,90 @@ func monthEnd(month string) string {
 
 // EnsureMonthlyCurrent runs the lazy month rollover to the given month
 // ("YYYY-MM"): every open monthly budget stale against it is closed and
-// succeeded for that month.
+// succeeded for that month, carrying its running balance when the series
+// carries. The spend half is read and converted BEFORE the transactional
+// close, so the carried number mirrors the dashboard evaluation exactly.
 func (s *BudgetService) EnsureMonthlyCurrent(ctx context.Context, month string) error {
 	if err := validateMonth(month, "month"); err != nil {
 		return err
 	}
-	return s.budgets.RolloverMonthly(ctx, month)
+	stales, err := s.budgets.ListStaleMonthly(ctx, month)
+	if err != nil {
+		return fmt.Errorf("list stale monthly budgets: %w", err)
+	}
+	carries, err := s.carryChain(ctx, stales)
+	if err != nil {
+		return fmt.Errorf("budget carry chain: %w", err)
+	}
+	return s.budgets.RolloverMonthly(ctx, month, carries)
+}
+
+// carryChain computes each stale row's successor carry:
+//
+//	carried(successor) = carried(pred) + (cap − spendOf(pred.month))
+//
+// Spend is the month's category-bucketed transaction spend plus all-time
+// bill line links, converted into the base currency — the same fold the
+// dashboard's evaluation uses, so the carried number equals what the UI
+// reports for that row. Rollover-off rows are skipped (absent → 0).
+// Without conversion sources (nil base/rates — tests, degraded installs)
+// the chain is skipped entirely rather than computed half-converted.
+func (s *BudgetService) carryChain(ctx context.Context, stales []domain.Budget) (map[int64]int64, error) {
+	need := false
+	for _, b := range stales {
+		if b.CarryOver {
+			need = true
+			break
+		}
+	}
+	if !need || s.base == nil || s.rates == nil {
+		return nil, nil
+	}
+	base, err := s.base.BaseCurrency(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("base currency: %w", err)
+	}
+	snap, err := s.rates.Snapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("rate snapshot: %w", err)
+	}
+	conv := newConverter(base, snap)
+
+	categorySpend, err := s.budgets.CarryCategoryMonthSpend(ctx)
+	if err != nil {
+		return nil, err
+	}
+	catMonth := map[int64]map[string]int64{}
+	for _, c := range categorySpend {
+		m, ok := catMonth[c.CategoryID]
+		if !ok {
+			m = map[string]int64{}
+			catMonth[c.CategoryID] = m
+		}
+		m[c.Month] += conv.add(c.Currency, c.TotalCents)
+	}
+	billRows, err := s.budgets.CarryBillSpend(ctx)
+	if err != nil {
+		return nil, err
+	}
+	billSpend := map[int64]int64{}
+	for _, b := range billRows {
+		billSpend[b.BudgetID] += conv.add(b.Currency, b.Cents)
+	}
+	if ws := conv.warnings(); len(ws) > 0 && s.log != nil {
+		s.log.WarnContext(ctx, "budget carry spend converted 1:1 (no rate)",
+			"currencies", fmt.Sprintf("%v", ws))
+	}
+
+	out := map[int64]int64{}
+	for _, b := range stales {
+		if !b.CarryOver {
+			continue
+		}
+		spend := catMonth[b.CategoryID][b.Month] + billSpend[b.ID]
+		out[b.ID] = b.CarriedCents + (b.AmountCents - spend)
+	}
+	return out, nil
 }
 
 // List returns budgets, optionally filtered by lifecycle status
@@ -93,11 +194,14 @@ func (s *BudgetService) Create(ctx context.Context, in BudgetInput) (domain.Budg
 	return out, nil
 }
 
-// Update changes only a budget's amount (category is immutable). A closed
-// row refuses: a closed envelope's amount is its final account, and a closed
-// monthly row's cap is the historical fact the Jan-vs-Feb comparison reads —
-// both would be falsified by a late edit (reopen first, then edit).
-func (s *BudgetService) Update(ctx context.Context, id int64, amountCents int64) (domain.Budget, error) {
+// Update changes a budget's amount and (monthly open rows) the series'
+// carry_over flag (category is immutable). A closed row refuses: a closed
+// envelope's amount is its final account, and a closed monthly row's cap is
+// the historical fact the Jan-vs-Feb comparison reads — both would be
+// falsified by a late edit (reopen first, then edit). A nil carryOver leaves
+// the flag untouched. Editing the cap mid-series changes only the transition
+// month's leftover — the carry chain keeps the closed months' history intact.
+func (s *BudgetService) Update(ctx context.Context, id int64, amountCents int64, carryOver *bool) (domain.Budget, error) {
 	if err := validatePositiveCents(amountCents, "amount_cents"); err != nil {
 		return domain.Budget{}, err
 	}
@@ -110,6 +214,9 @@ func (s *BudgetService) Update(ctx context.Context, id int64, amountCents int64)
 			"closed budgets keep their amount — reopen the budget before editing it")
 	}
 	existing.AmountCents = amountCents
+	if carryOver != nil && existing.Cadence == domain.BudgetMonthly {
+		existing.CarryOver = *carryOver
+	}
 	return s.budgets.Update(ctx, existing)
 }
 
@@ -162,8 +269,12 @@ func (s *BudgetService) build(ctx context.Context, in BudgetInput) (domain.Budge
 	}
 	if cadence == domain.BudgetMonthly {
 		// A new monthly row covers the month it is created in; the rollover
-		// takes it from there.
+		// takes it from there. Rollover defaults ON (decision 2026-10-28);
+		// a payload that says otherwise opts out. The first month never
+		// inherits a carried balance (MoneyWiz's "carried balance" seed is a
+		// later slice).
 		b.Month = currentMonth()
+		b.CarryOver = in.CarryOver == nil || *in.CarryOver
 	}
 	return b, nil
 }
