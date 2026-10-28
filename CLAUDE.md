@@ -594,7 +594,31 @@ row shows the signed change as its value and "Balance {{balance}}" in the
 subtitle, day totals are the Σ of changes (transfers count their
 account-side effect here, unlike the neutral month view), and edits/deletes
 re-render the register from page 0 (a nonce forces the refetch when the
-offset was already 0).
+offset was already 0). **The MoneyWiz account model** (roadmap Phase 4,
+migration 0045) rests on semantics, not new money rules: the `credit`
+account type was already valid end-to-end — spending a card makes the
+derived balance negative (purchases are category expenses where they
+happened) and a payment is a plain transfer that reduces the debt; transfers
+never touch category spend, so payments are never budget-attributed.
+`account_groups` + `accounts.group_id` are folder-style presentation
+grouping with ZERO money semantics (flat, no nesting; membership lives on
+the account row; a group is a UNIQUE name; delete ⇢ FK `ON DELETE SET NULL`
+ungroups, accounts/transactions untouched) — service-validated
+(`group_id` must exist), `GET|POST /api/v1/accounts/groups` +
+`PUT|DELETE /api/v1/accounts/groups/{id}` registered BEFORE the `{id}`
+wildcards; a new bag on a credit account is refused (`BagService.build` — a
+bag partitions an account's own money, a card's balance is debt; existing
+rows keep working). The **net worth split** is sign-based, not type-based:
+`SummaryRepository.accountBalances` returns per-account rows of the same
+`accountBalanceExpr` fold, `SummaryService.Glance` partition-converts them
+into `assets_cents` (balances ≥ 0) and `liabilities_cents` (|negative|, a
+positive magnitude) — invariant (unit-tested) `assets − liabilities ==
+net_worth_cents` exactly, and the partition must precede currency grouping
+or a +2000/−500 pair in one currency would cancel before the split sees it.
+Frontend: AccountsPage renders group sections (name-sorted, ungrouped last,
+empty folders hidden) with a groups management card, `group_id` in the
+create/edit forms; the glance net-worth strip sections Assets/Liabilities
+and the collapsed tile shows "incl. X in liabilities" when debt exists.
 **Bags** (migration 0035) are **allocation envelopes — virtual partitions of one
 account's balance**: the money never moves or is copied into the ledger; a bag's
 balance is always derived per read as Σ `bag_allocations` − tagged spend.

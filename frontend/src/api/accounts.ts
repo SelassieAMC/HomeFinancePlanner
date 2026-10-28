@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { Account, AccountInput, AccountLedger } from '../types/domain';
+import type { Account, AccountGroup, AccountInput, AccountLedger } from '../types/domain';
 
 const BASE = '/api/v1';
 
@@ -25,4 +25,14 @@ export const accountsApi = {
         (limit != null ? `limit=${limit}` : '') +
         (offset != null ? `${limit != null ? '&' : ''}offset=${offset}` : ''),
     ),
+};
+
+// The presentation-only account groups (folders): a group is a name, the
+// membership lives on the account rows, and deleting a group just ungroups.
+export const accountGroupsApi = {
+  list: () => apiClient.get<AccountGroup[]>(`${BASE}/accounts/groups`),
+  create: (name: string) => apiClient.post<AccountGroup>(`${BASE}/accounts/groups`, { name }),
+  update: (id: number, name: string) =>
+    apiClient.put<AccountGroup>(`${BASE}/accounts/groups/${id}`, { name }),
+  remove: (id: number) => apiClient.delete(`${BASE}/accounts/groups/${id}`),
 };

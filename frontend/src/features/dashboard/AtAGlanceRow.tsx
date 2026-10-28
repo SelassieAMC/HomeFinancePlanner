@@ -74,6 +74,9 @@ export function AtAGlanceRow({ glance }: { glance: AsyncState<Glance> }) {
   }
 
   const netTone = d.net_cents >= 0 ? 'stat-positive' : 'stat-negative';
+  // Phase 4 assets/liabilities split: the strip sections by sign. Liabilities
+  // are negative balances (credit debt), reported as a positive magnitude.
+  const debt = d.liabilities_cents ?? 0;
   return (
     <div className="stat-grid glance">
       <Card className="stat-tile glance-net-tile">
@@ -96,7 +99,11 @@ export function AtAGlanceRow({ glance }: { glance: AsyncState<Glance> }) {
               <path d="M1 1.5L5 5.5L9 1.5" stroke="currentColor" strokeWidth="1.5" fill="none" />
             </svg>
           </span>
-          <span className="stat-label">{t('glance.today')}</span>
+          <span className="stat-label">
+            {debt > 0
+              ? t('glance.debtIncl', { liabilities: formatCents(debt, cur) })
+              : t('glance.today')}
+          </span>
         </button>
         {accountsOpen && (
           <div className="glance-accounts">
@@ -105,23 +112,49 @@ export function AtAGlanceRow({ glance }: { glance: AsyncState<Glance> }) {
             {!accounts.loading && !accounts.error && accountRows.length === 0 && (
               <span className="stat-label">{t('glance.accountsEmpty')}</span>
             )}
-            {!accounts.loading &&
-              !accounts.error &&
-              accountRows.length > 0 &&
-              accountRows.map((row) => (
-                <div className="glance-account-row" key={row.account.id}>
-                  <span className="glance-account-name">{row.account.name}</span>
-                  {row.convertedLabel && (
-                    <span className="glance-account-native">{row.convertedLabel}</span>
-                  )}
-                  {row.noRate && (
-                    <span className="stat-label glance-account-norate" title={t('glance.noRate')}>
-                      ≈
-                    </span>
-                  )}
-                  <span className="glance-account-amount">{formatCents(row.converted, cur)}</span>
-                </div>
-              ))}
+            {!accounts.loading && !accounts.error && accountRows.length > 0 && (
+              <>
+                {debt > 0 && (
+                  <span className="stat-label glance-split-head">{t('glance.assets')}</span>
+                )}
+                {accountRows
+                  .filter((row) => row.converted >= 0)
+                  .map((row) => (
+                    <div className="glance-account-row" key={row.account.id}>
+                      <span className="glance-account-name">{row.account.name}</span>
+                      {row.convertedLabel && (
+                        <span className="glance-account-native">{row.convertedLabel}</span>
+                      )}
+                      {row.noRate && (
+                        <span className="stat-label glance-account-norate" title={t('glance.noRate')}>
+                          ≈
+                        </span>
+                      )}
+                      <span className="glance-account-amount">{formatCents(row.converted, cur)}</span>
+                    </div>
+                  ))}
+                {debt > 0 && (
+                  <span className="stat-label glance-split-head">{t('glance.liabilities')}</span>
+                )}
+                {debt > 0 &&
+                  accountRows
+                    .filter((row) => row.converted < 0)
+                    .map((row) => (
+                      <div className="glance-account-row glance-liability-row" key={row.account.id}>
+                        <span className="glance-account-name">{row.account.name}</span>
+                        {row.convertedLabel && (
+                          <span className="glance-account-native">{row.convertedLabel}</span>
+                        )}
+                        {row.noRate && (
+                          <span className="stat-label glance-account-norate" title={t('glance.noRate')}>
+                            ≈
+                          </span>
+                        )}
+                        <span className="glance-account-amount">{formatCents(row.converted, cur)}</span>
+                      </div>
+                    ))}
+              </>
+            )}
             <Link to="/accounts" className="glance-accounts-link">
               {t('glance.manageAccounts')}
             </Link>

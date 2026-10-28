@@ -29,6 +29,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 
 	healthH := handlers.NewHealthHandler(cfg)
 	accountH := &handlers.AccountHandler{Svc: svc.Accounts}
+	accountGroupH := &handlers.AccountGroupHandler{Svc: svc.AccountGroups}
 	categoryH := &handlers.CategoryHandler{Svc: svc.Categories}
 	transactionH := &handlers.TransactionHandler{Svc: svc.Transactions}
 	budgetH := &handlers.BudgetHandler{Svc: svc.Budgets}
@@ -78,6 +79,11 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 
 	mux.HandleFunc("GET /api/v1/accounts", accountH.List)
 	mux.HandleFunc("POST /api/v1/accounts", accountH.Create)
+	// The literal /groups segment registers BEFORE the {id} wildcards.
+	mux.HandleFunc("GET    /api/v1/accounts/groups", accountGroupH.List)
+	mux.HandleFunc("POST   /api/v1/accounts/groups", accountGroupH.Create)
+	mux.HandleFunc("PUT    /api/v1/accounts/groups/{id}", accountGroupH.Update)
+	mux.HandleFunc("DELETE /api/v1/accounts/groups/{id}", accountGroupH.Delete)
 	mux.HandleFunc("GET /api/v1/accounts/{id}", accountH.Get)
 	mux.HandleFunc("PUT /api/v1/accounts/{id}", accountH.Update)
 	mux.HandleFunc("DELETE /api/v1/accounts/{id}", accountH.Delete)

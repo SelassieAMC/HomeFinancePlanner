@@ -51,8 +51,27 @@ type Account struct {
 	OpeningBalanceCents int64       `json:"opening_balance_cents"`
 	BalanceCents        int64       `json:"balance_cents"`              // derived: opening + Σ transactions
 	CardLastDigits      string      `json:"card_last_digits,omitempty"` // card identifier for bill matching
+	GroupID             *int64      `json:"group_id,omitempty"`         // presentation-only group (0045); nil = ungrouped
 	CreatedAt           time.Time   `json:"created_at"`
 	UpdatedAt           time.Time   `json:"updated_at"`
+}
+
+// AccountGroup is a folder-style presentation grouping of accounts (0045).
+// Zero money semantics: membership changes no fold anywhere. Deleting a group
+// ungroups its accounts (ON DELETE SET NULL).
+type AccountGroup struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// AccountCurrencyAmount is one account's derived balance in its own
+// currency — the per-account grain behind the assets/liabilities net worth
+// split (sign-partitioned before conversion; the per-currency sums stay the
+// net-worth fold).
+type AccountCurrencyAmount struct {
+	AccountID int64
+	Currency  string
+	Cents     int64
 }
 
 // TransactionKind distinguishes money in vs money out.
@@ -347,7 +366,9 @@ type Glance struct {
 	ExpenseCents        int64    `json:"expense_cents"`
 	NetCents            int64    `json:"net_cents"` // income minus expense for Month
 	NetWorthCents       int64    `json:"net_worth_cents"`
-	BurnRateCents       int64    `json:"burn_rate_cents"` // average daily expense, trailing 30 days
+	AssetsCents         int64    `json:"assets_cents"`      // positive derived balances, converted (Phase 4 split)
+	LiabilitiesCents    int64    `json:"liabilities_cents"` // |negative derived balances|, converted — a POSITIVE magnitude
+	BurnRateCents       int64    `json:"burn_rate_cents"`   // average daily expense, trailing 30 days
 	PendingReceipts     int64    `json:"pending_receipts"`
 	PendingReceiptCents int64    `json:"pending_receipt_cents"`
 }
@@ -358,6 +379,7 @@ type RawGlance struct {
 	MonthIncome     []CurrencyAmount
 	MonthExpense    []CurrencyAmount
 	Balances        []CurrencyAmount
+	AccountBalances []AccountCurrencyAmount // per-account grain: the assets/liabilities sign split
 	Expense30Days   []CurrencyAmount
 	PendingReceipts int64
 	PendingTotals   []CurrencyAmount

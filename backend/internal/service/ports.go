@@ -25,6 +25,16 @@ type AccountStore interface {
 	Ledger(ctx context.Context, accountID int64, limit, offset int) ([]domain.LedgerEntry, error)
 }
 
+// AccountGroupStore is the persistence contract for the presentation-only
+// account groups (0045). Membership lives on accounts.group_id.
+type AccountGroupStore interface {
+	List(ctx context.Context) ([]domain.AccountGroup, error)
+	GetByID(ctx context.Context, id int64) (domain.AccountGroup, error)
+	Create(ctx context.Context, g domain.AccountGroup) (domain.AccountGroup, error)
+	Update(ctx context.Context, g domain.AccountGroup) (domain.AccountGroup, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 // CategoryStore is the persistence contract for categories.
 type CategoryStore interface {
 	List(ctx context.Context) ([]domain.Category, error)
@@ -299,6 +309,7 @@ type TextNormalizer interface {
 // Services bundles the business services for handler wiring.
 type Services struct {
 	Accounts      *AccountService
+	AccountGroups *AccountGroupService
 	Categories    *CategoryService
 	Stores        *StoreService
 	Products      *ProductService
@@ -327,6 +338,7 @@ type Services struct {
 // consulted by manual item lines (may be nil in tests).
 func New(
 	accounts AccountStore,
+	accountGroups AccountGroupStore,
 	categories CategoryStore,
 	storeSvc *StoreService,
 	productSvc *ProductService,
@@ -366,12 +378,13 @@ func New(
 		log:        slog.Default(),
 	}
 	return &Services{
-		Accounts:     &AccountService{accounts: accounts},
-		Categories:   &CategoryService{categories: categories},
-		Stores:       storeSvc,
-		Products:     productSvc,
-		Transactions: scheduleSvc.transactions,
-		Budgets:      budgetSvc,
+		Accounts:      &AccountService{accounts: accounts, groups: accountGroups},
+		AccountGroups: &AccountGroupService{groups: accountGroups},
+		Categories:    &CategoryService{categories: categories},
+		Stores:        storeSvc,
+		Products:      productSvc,
+		Transactions:  scheduleSvc.transactions,
+		Budgets:       budgetSvc,
 		// The summary reads budgets and schedules, so it runs both lazy
 		// catch-ups first: the references are the same instances the
 		// dedicated handlers use.

@@ -446,3 +446,39 @@ func TestRangeSummaryMonthlyBudgetBoundsToMonth(t *testing.T) {
 		t.Errorf("september row = %+v, want spent 9000 lifetime 9000", s.Budgets[0])
 	}
 }
+
+// TestGlanceSplitsAssetsAndLiabilities (Phase 4): the per-account balances
+// sign-partition BEFORE currency grouping — a +12000 and a −3000 in the same
+// EUR cannot cancel before the split sees them — and convert like every
+// other fold. Invariant: assets − liabilities == net worth exactly.
+func TestGlanceSplitsAssetsAndLiabilities(t *testing.T) {
+	raw := domain.RawGlance{
+		// Same currency, opposite signs: the cancellation the split must
+		// survive (a naive per-currency fold would report nothing to split).
+		AccountBalances: []domain.AccountCurrencyAmount{
+			{AccountID: 1, Currency: "EUR", Cents: 120_000},
+			{AccountID: 2, Currency: "EUR", Cents: -30_000}, // credit card debt
+			{AccountID: 3, Currency: "USD", Cents: 5_500},   // 5_000 EUR at 1.1
+			{AccountID: 4, Currency: "EUR", Cents: 0},       // zero account is an asset
+		},
+		Balances: []domain.CurrencyAmount{
+			{Currency: "EUR", Cents: 90_000},
+			{Currency: "USD", Cents: 5_500},
+		},
+	}
+	svc, _ := newTestGlanceService(raw, "EUR", summaryTestSnapshot())
+
+	g, err := svc.Glance(context.Background(), "2026-10-12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.AssetsCents != 125_000 {
+		t.Errorf("AssetsCents = %d, want 125000 (120000 + 5000 USD + 0)", g.AssetsCents)
+	}
+	if g.LiabilitiesCents != 30_000 {
+		t.Errorf("LiabilitiesCents = %d, want 30000 (positive magnitude)", g.LiabilitiesCents)
+	}
+	if g.AssetsCents-g.LiabilitiesCents != g.NetWorthCents {
+		t.Errorf("invariant broken: assets %d − liabilities %d != net worth %d", g.AssetsCents, g.LiabilitiesCents, g.NetWorthCents)
+	}
+}

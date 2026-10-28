@@ -557,3 +557,19 @@ func TestBagValidation(t *testing.T) {
 }
 
 var zeroCents = int64(0)
+
+// TestBagCreateRefusesCreditAccount (Phase 4): a bag partitions an account's
+// OWN money; a credit account's derived balance is debt. Creation refuses
+// with a validation error naming the situation; existing bags on credit
+// accounts (there should be none) never refuse a read or a rename.
+func TestBagCreateRefusesCreditAccount(t *testing.T) {
+	ctx := context.Background()
+	svc, _, accounts := newTestBagService(t)
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Card", Type: domain.AccountCredit, Currency: "EUR", OpeningBalanceCents: -50000}); err != nil {
+		t.Fatalf("seed credit account: %v", err)
+	}
+
+	if _, err := svc.Create(ctx, BagInput{Name: "Card Reserve", AccountID: 3}); err == nil || !isValidationError(err) {
+		t.Fatalf("bag on credit account: expected validation error, got %v", err)
+	}
+}

@@ -16,7 +16,10 @@ import (
 )
 
 // AccountService implements account business rules.
-type AccountService struct{ accounts AccountStore }
+type AccountService struct {
+	accounts AccountStore
+	groups   AccountGroupStore
+}
 
 // AccountInput is the user-facing payload for create/update. The money field
 // is the OPENING balance (the pre-ledger seed): the current balance is derived
@@ -28,6 +31,7 @@ type AccountInput struct {
 	Currency            string
 	OpeningBalanceCents int64  // may be negative (credit accounts start owed)
 	CardLastDigits      string // optional; last digits for bill matching
+	GroupID             int64  // optional presentation group (0045); 0 = ungrouped
 }
 
 func (s *AccountService) List(ctx context.Context) ([]domain.Account, error) {
@@ -39,7 +43,7 @@ func (s *AccountService) Get(ctx context.Context, id int64) (domain.Account, err
 }
 
 func (s *AccountService) Create(ctx context.Context, in AccountInput) (domain.Account, error) {
-	a, err := s.build(in)
+	a, err := s.build(ctx, in)
 	if err != nil {
 		return domain.Account{}, err
 	}
@@ -51,7 +55,7 @@ func (s *AccountService) Create(ctx context.Context, in AccountInput) (domain.Ac
 }
 
 func (s *AccountService) Update(ctx context.Context, id int64, in AccountInput) (domain.Account, error) {
-	a, err := s.build(in)
+	a, err := s.build(ctx, in)
 	if err != nil {
 		return domain.Account{}, err
 	}
@@ -97,7 +101,7 @@ func (s *AccountService) Ledger(ctx context.Context, id int64, limit, offset int
 	return domain.AccountLedger{Account: acc, Entries: entries}, nil
 }
 
-func (s *AccountService) build(in AccountInput) (domain.Account, error) {
+func (s *AccountService) build(ctx context.Context, in AccountInput) (domain.Account, error) {
 	if err := validateRequiredString(in.Name, "name", 100); err != nil {
 		return domain.Account{}, err
 	}
@@ -116,13 +120,27 @@ func (s *AccountService) build(in AccountInput) (domain.Account, error) {
 	if cardDigits != "" && len(cardDigits) != 4 {
 		return domain.Account{}, validationError("card_last_digits %q must be exactly 4 digits", in.CardLastDigits)
 	}
-	return domain.Account{
+	groupID := int64(0)
+	if in.GroupID != 0 {
+		if in.GroupID < 0 {
+			return domain.Account{}, validationError("group_id must be a positive id or 0 (ungrouped)")
+		}
+		if _, err := s.groups.GetByID(ctx, in.GroupID); err != nil {
+			return domain.Account{}, fmt.Errorf("validate group_id: %w", err)
+		}
+		groupID = in.GroupID
+	}
+	out := domain.Account{
 		Name:                strings.TrimSpace(in.Name),
 		Type:                in.Type,
 		Currency:            currency,
 		OpeningBalanceCents: in.OpeningBalanceCents,
 		CardLastDigits:      cardDigits,
-	}, nil
+	}
+	if groupID != 0 {
+		out.GroupID = &groupID
+	}
+	return out, nil
 }
 
 // nonDigitsAccount strips anything that is not a digit from card numbers.
@@ -996,6 +1014,20 @@ func (s *SummaryService) Glance(ctx context.Context, today string) (domain.Glanc
 	out.NetCents = out.IncomeCents - out.ExpenseCents
 	for _, a := range raw.Balances {
 		out.NetWorthCents += conv.add(a.Currency, a.Cents)
+	}
+	// Assets/liabilities split (Phase 4): sign-partition the PER-ACCOUNT
+	// balances (the same accountBalanceExpr terms), then convert each side —
+	// partitioning must precede currency grouping or a +2000 / −500 pair in
+	// one currency would cancel before the split can see it. The conversion is
+	// a positive scalar per currency, so assets − liabilities == net worth
+	// exactly (invariant unit-tested); liabilities report as a positive
+	// magnitude.
+	for _, ab := range raw.AccountBalances {
+		if ab.Cents >= 0 {
+			out.AssetsCents += conv.add(ab.Currency, ab.Cents)
+		} else {
+			out.LiabilitiesCents += -conv.add(ab.Currency, ab.Cents)
+		}
 	}
 	var expense30 int64
 	for _, a := range raw.Expense30Days {

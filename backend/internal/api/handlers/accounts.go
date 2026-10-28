@@ -20,6 +20,7 @@ type accountRequest struct {
 	Currency            string             `json:"currency"`
 	OpeningBalanceCents int64              `json:"opening_balance_cents"`
 	CardLastDigits      string             `json:"card_last_digits,omitempty"`
+	GroupID             int64              `json:"group_id,omitempty"` // 0 = ungrouped
 }
 
 // accountReconcileRequest is the payload of POST /accounts/{id}/reconcile:
@@ -65,6 +66,7 @@ func (h *AccountHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Currency:            req.Currency,
 		OpeningBalanceCents: req.OpeningBalanceCents,
 		CardLastDigits:      req.CardLastDigits,
+		GroupID:             req.GroupID,
 	})
 	if err != nil {
 		respondServiceError(w, r, err)
@@ -90,6 +92,7 @@ func (h *AccountHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Currency:            req.Currency,
 		OpeningBalanceCents: req.OpeningBalanceCents,
 		CardLastDigits:      req.CardLastDigits,
+		GroupID:             req.GroupID,
 	})
 	if err != nil {
 		respondServiceError(w, r, err)
@@ -213,4 +216,70 @@ func (h *CategoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // pathID parses {id} path values.
 func pathID(r *http.Request) (int64, error) {
 	return strconv.ParseInt(r.PathValue("id"), 10, 64)
+}
+
+// AccountGroupHandler handles /api/v1/accounts/groups — the presentation-only
+// account folders. The literal /groups route must register BEFORE the
+// {id} wildcards in the router.
+type AccountGroupHandler struct{ Svc *service.AccountGroupService }
+
+type accountGroupRequest struct {
+	Name string `json:"name"`
+}
+
+// List returns all account groups.
+func (h *AccountGroupHandler) List(w http.ResponseWriter, r *http.Request) {
+	groups, err := h.Svc.List(r.Context())
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, groups)
+}
+
+// Create creates an account group.
+func (h *AccountGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var req accountGroupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	g, err := h.Svc.Create(r.Context(), service.AccountGroupInput{Name: req.Name})
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusCreated, g)
+}
+
+// Update renames an account group.
+func (h *AccountGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req accountGroupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	g, err := h.Svc.Update(r.Context(), id, service.AccountGroupInput{Name: req.Name})
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, g)
+}
+
+// Delete removes the account group (its accounts become ungrouped).
+func (h *AccountGroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.Svc.Delete(r.Context(), id); err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

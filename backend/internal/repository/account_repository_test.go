@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"home-finance-planner/backend/internal/domain"
@@ -283,5 +284,59 @@ func TestAccountLedgerRunningBalance(t *testing.T) {
 	empty, err := r.Ledger(ctx, 999999, 0, 0)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("unknown account ledger = %+v, err %v; want empty", empty, err)
+	}
+}
+
+// TestAccountGroupCRUDAndSetNull (Phase 4): the presentation groups — create
+// with a unique name, rename, membership rides the account row, and deleting
+// a group UNGROUPS its accounts (ON DELETE SET NULL) without touching them.
+func TestAccountGroupCRUDAndSetNull(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	r := NewAccountRepository(db)
+	g := NewAccountGroupRepository(db)
+
+	group, err := g.Create(ctx, domain.AccountGroup{Name: "German banks"})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if _, err := g.Create(ctx, domain.AccountGroup{Name: "German banks"}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("duplicate group name: expected ErrConflict, got %v", err)
+	}
+
+	a, err := r.Create(ctx, domain.Account{Name: "Giro", Type: domain.AccountChecking, Currency: "EUR", GroupID: &group.ID})
+	if err != nil {
+		t.Fatalf("create account in group: %v", err)
+	}
+	if a.GroupID == nil || *a.GroupID != group.ID {
+		t.Fatalf("account group_id = %v, want %d", a.GroupID, group.ID)
+	}
+
+	if _, err := g.Update(ctx, domain.AccountGroup{ID: group.ID, Name: "DE banks"}); err != nil {
+		t.Fatalf("rename group: %v", err)
+	}
+
+	// A create/update against a vanished group id must surface a real FK
+	// error (not silently store NULL) — the service validates first, this is
+	// the DB's backstop.
+	missing := int64(9999)
+	_, err = r.Create(ctx, domain.Account{Name: "Bad", Type: domain.AccountCash, Currency: "EUR", GroupID: &missing})
+	if err == nil {
+		t.Fatalf("account with unknown group_id accepted; want FK error")
+	}
+
+	// Deleting the group ungroups the account; the account row survives.
+	if err := g.Delete(ctx, group.ID); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+	after, err := r.GetByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("get account after group delete: %v", err)
+	}
+	if after.GroupID != nil {
+		t.Fatalf("account still carries group_id %d after group delete; want NULL", *after.GroupID)
+	}
+	if g2, err := g.GetByID(ctx, group.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("get deleted group = %v, %v; want ErrNotFound", g2, err)
 	}
 }

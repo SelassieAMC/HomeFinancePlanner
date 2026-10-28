@@ -93,7 +93,7 @@ func (r *AccountRepository) Ledger(ctx context.Context, accountID int64, limit, 
 // accountColumns is the column list used for SELECTs, in scan order. The
 // balance is computed, not stored.
 const accountColumns = `a.id, a.name, a.type, a.currency, ` + accountBalanceExpr + ` AS balance_cents,
-	a.opening_balance_cents, a.card_last_digits, a.created_at, a.updated_at`
+	a.opening_balance_cents, a.card_last_digits, a.group_id, a.created_at, a.updated_at`
 
 // AccountRepository is the SQLite-backed implementation of the account store.
 type AccountRepository struct{ db *sql.DB }
@@ -136,9 +136,9 @@ func (r *AccountRepository) GetByID(ctx context.Context, id int64) (domain.Accou
 func (r *AccountRepository) Create(ctx context.Context, a domain.Account) (domain.Account, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO accounts (name, type, currency, opening_balance_cents, card_last_digits, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.Name, string(a.Type), a.Currency, a.OpeningBalanceCents, a.CardLastDigits, now, now)
+		INSERT INTO accounts (name, type, currency, opening_balance_cents, card_last_digits, group_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Name, string(a.Type), a.Currency, a.OpeningBalanceCents, a.CardLastDigits, a.GroupID, now, now)
 	if err != nil {
 		return domain.Account{}, mapWriteError("create account", err)
 	}
@@ -155,9 +155,9 @@ func (r *AccountRepository) Create(ctx context.Context, a domain.Account) (domai
 func (r *AccountRepository) Update(ctx context.Context, a domain.Account) (domain.Account, error) {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE accounts
-		SET name = ?, type = ?, currency = ?, opening_balance_cents = ?, card_last_digits = ?, updated_at = ?
+		SET name = ?, type = ?, currency = ?, opening_balance_cents = ?, card_last_digits = ?, group_id = ?, updated_at = ?
 		WHERE id = ?`,
-		a.Name, string(a.Type), a.Currency, a.OpeningBalanceCents, a.CardLastDigits, time.Now().Unix(), a.ID)
+		a.Name, string(a.Type), a.Currency, a.OpeningBalanceCents, a.CardLastDigits, a.GroupID, time.Now().Unix(), a.ID)
 	if err != nil {
 		return domain.Account{}, mapWriteError("update account", err)
 	}
@@ -185,7 +185,7 @@ func scanAccount(row interface{ Scan(dest ...any) error }) (domain.Account, erro
 		typ            string
 		createdAt, upd int64
 	)
-	if err := row.Scan(&a.ID, &a.Name, &typ, &a.Currency, &a.BalanceCents, &a.OpeningBalanceCents, &a.CardLastDigits, &createdAt, &upd); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &typ, &a.Currency, &a.BalanceCents, &a.OpeningBalanceCents, &a.CardLastDigits, &a.GroupID, &createdAt, &upd); err != nil {
 		return domain.Account{}, err
 	}
 	a.Type = domain.AccountType(typ)

@@ -78,6 +78,9 @@ func (r *SummaryRepository) RawGlance(ctx context.Context, monthFrom, monthTo, b
 	if raw.Balances, err = r.balances(ctx); err != nil {
 		return raw, err
 	}
+	if raw.AccountBalances, err = r.accountBalances(ctx); err != nil {
+		return raw, err
+	}
 	if raw.PendingReceipts, raw.PendingTotals, err = r.pendingReceipts(ctx); err != nil {
 		return raw, err
 	}
@@ -159,8 +162,31 @@ func (r *SummaryRepository) balances(ctx context.Context) ([]domain.CurrencyAmou
 	return out, rows.Err()
 }
 
-// dailyExpenses lists each day in the range that had expenses, grouped per
-// native currency, in date order.
+// accountBalances returns one row per account — its derived balance
+// (accountBalanceExpr, the exact net-worth terms) in its own currency. The
+// per-currency `balances` fold above stays the net-worth source; this grain
+// feeds the assets/liabilities sign split, which must partition BEFORE
+// currency grouping so a +2000 and a −500 in one currency don't cancel
+// before the split can see them.
+func (r *SummaryRepository) accountBalances(ctx context.Context) ([]domain.AccountCurrencyAmount, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT a.id, a.currency, `+accountBalanceExpr+` AS balance_cents
+		FROM accounts a`)
+	if err != nil {
+		return nil, fmt.Errorf("summary account balances: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.AccountCurrencyAmount{}
+	for rows.Next() {
+		var a domain.AccountCurrencyAmount
+		if err := rows.Scan(&a.AccountID, &a.Currency, &a.Cents); err != nil {
+			return nil, fmt.Errorf("scan account balance: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
 func (r *SummaryRepository) dailyExpenses(ctx context.Context, from, to string) ([]domain.DayCurrencyTotal, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT date, currency, SUM(amount_cents)

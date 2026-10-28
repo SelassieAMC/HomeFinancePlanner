@@ -18,8 +18,15 @@ export interface Account {
   opening_balance_cents: number; // the pre-ledger seed money; the only editable money field
   balance_cents: number; // derived per read: opening + Σ transactions (income +, expense −, transfers both legs)
   card_last_digits?: string; // for bill matching (card •1234)
+  group_id?: number | null; // presentation-only account group (0045); absent/null = ungrouped
   created_at: string;
   updated_at: string;
+}
+
+// Folder-style presentation grouping of accounts — zero money semantics.
+export interface AccountGroup {
+  id: number;
+  name: string;
 }
 
 export interface AccountInput {
@@ -28,6 +35,7 @@ export interface AccountInput {
   currency: string;
   opening_balance_cents: number;
   card_last_digits?: string;
+  group_id?: number; // omit/0 = ungrouped
 }
 
 // The account register (MoneyWiz pillar): one transaction plus the balance as
@@ -523,6 +531,8 @@ export interface Glance {
   expense_cents: number;
   net_cents: number; // income minus expense for month
   net_worth_cents: number;
+  assets_cents: number; // positive derived balances, converted (sign split)
+  liabilities_cents: number; // |negative derived balances| — a POSITIVE magnitude
   burn_rate_cents: number;
   pending_receipts: number;
   pending_receipt_cents: number;

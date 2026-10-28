@@ -114,7 +114,7 @@ func run() error {
 	analyticsRepo := repository.NewAnalyticsRepository(db)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
-	svc := service.New(accounts, categories, storeSvc, productSvc, stores, products, productMappings,
+	svc := service.New(accounts, repository.NewAccountGroupRepository(db), categories, storeSvc, productSvc, stores, products, productMappings,
 		transactions, budgets, summary, settingsSvc, billSvc, cartSearchSvc, fxSvc, analyticsSvc,
 		promptSvc, service.NewInsightService(insights),
 		repository.NewGoalRepository(db), repository.NewBagRepository(db),

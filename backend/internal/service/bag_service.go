@@ -444,6 +444,15 @@ func (s *BagService) build(ctx context.Context, existing domain.Bag, in BagInput
 	if err != nil {
 		return domain.Bag{}, fmt.Errorf("validate account_id: %w", err)
 	}
+	// A bag partitions an account's OWN money. A credit account has none —
+	// its derived balance is debt — so new bags refuse it (Phase 4). Existing
+	// bags on credit accounts (there should be none) keep working: only
+	// creation is guarded, never an existing ledger read.
+	if existing.ID == 0 && acc.Type == domain.AccountCredit {
+		return domain.Bag{}, validationError(
+			"bag on account %q refused: a credit account holds debt, not money to reserve",
+			acc.Name)
+	}
 	if existing.ID > 0 && existing.AccountID != acc.ID {
 		return domain.Bag{}, validationError(
 			"bag %q belongs to account #%d — a reserve does not move between accounts",

@@ -81,3 +81,41 @@ func TestRawGlanceWindowsAndPendingBacklog(t *testing.T) {
 		t.Errorf("PendingTotals = %+v, want EUR 2500 + USD 1500", raw.PendingTotals)
 	}
 }
+
+// TestAccountBalancesPerAccountSplit (Phase 4): accountBalances returns one
+// row per account with its FULL derived balance — opposite-signed accounts
+// sharing one currency must stay separate rows, never cancel, so the
+// service's sign partition (assets vs liabilities) sees both sides.
+func TestAccountBalancesPerAccountSplit(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	mustExec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query, args...); err != nil {
+			t.Fatalf("seed: %v (%s)", err, query)
+		}
+	}
+	// Explicit ids: migrations seed a default wallet that claims id 1.
+	mustExec(`INSERT INTO accounts (id, name, type, currency, opening_balance_cents, created_at, updated_at)
+		VALUES (10, 'Checking', 'checking', 'EUR', 100000, 1, 1),
+		       (30, 'Card', 'credit', 'EUR', 0, 1, 1)`)
+
+	mustExec(`INSERT INTO transactions (account_id, kind, amount_cents, currency, date, created_at, updated_at)
+		VALUES (30, 'expense', 25000, 'EUR', '2026-10-05', 1, 1)`)
+
+	rows, err := NewSummaryRepository(db).accountBalances(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]domain.AccountCurrencyAmount{}
+	for _, r := range rows {
+		got[r.AccountID] = r
+	}
+	if g, ok := got[10]; !ok || g.Currency != "EUR" || g.Cents != 100_000 {
+		t.Errorf("account 10 = %+v (present %v), want EUR 100000", g, ok)
+	}
+	if g, ok := got[30]; !ok || g.Currency != "EUR" || g.Cents != -25_000 {
+		t.Errorf("account 30 = %+v (present %v), want EUR -25000 (debt, uncanceled)", g, ok)
+	}
+}

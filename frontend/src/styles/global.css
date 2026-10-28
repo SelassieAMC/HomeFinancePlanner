@@ -343,6 +343,17 @@ body {
   min-width: 0;
 }
 
+.glance-split-head {
+  margin-top: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+}
+
+.glance-liability-row .glance-account-amount {
+  color: var(--danger, #d33a2c);
+}
+
 .glance-account-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -3390,6 +3401,17 @@ textarea:focus,
   align-items: baseline;
   gap: 0.4rem;
 }
+
+/* Account group sections mirror the bag sections (same visual language,
+   distinct class so the two features stay independent). */
+.acct-group-section { margin-top: 1.5rem; }
+
+.acct-group-title { margin: 0 0 0.5rem; font-size: 1rem; }
+
+.group-manage-list { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.4rem; }
+
+.group-manage-row { display: flex; align-items: center; gap: 0.6rem; }
+.group-manage-row > span:nth-child(1) { flex: 1; }
 
 .ledger-list {
   display: flex;

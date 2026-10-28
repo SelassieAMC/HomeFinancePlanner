@@ -58,6 +58,9 @@ export const dashboard: LocaleBundle = {
       accountsError: 'Account balances unavailable.',
       manageAccounts: 'Manage accounts',
       noRate: 'No exchange rate — converted 1:1',
+      assets: 'Assets',
+      liabilities: 'Liabilities',
+      debtIncl: 'incl. {{liabilities}} in liabilities',
     },
     insights: {
       title: 'Purchase insights',
@@ -313,6 +316,9 @@ export const dashboard: LocaleBundle = {
       accountsError: 'Kontosalden nicht verfügbar.',
       manageAccounts: 'Konten verwalten',
       noRate: 'Kein Wechselkurs — 1:1 umgerechnet',
+      assets: 'Aktiva',
+      liabilities: 'Schulden',
+      debtIncl: 'davon {{liabilities}} Schulden',
     },
     insights: {
       title: 'Kauf-Insights',
@@ -568,6 +574,9 @@ export const dashboard: LocaleBundle = {
       accountsError: 'Saldos de cuentas no disponibles.',
       manageAccounts: 'Gestionar cuentas',
       noRate: 'Sin tipo de cambio — convertido 1:1',
+      assets: 'Activos',
+      liabilities: 'Deudas',
+      debtIncl: 'incl. {{liabilities}} de deudas',
     },
     insights: {
       title: 'Avisos de compra',
