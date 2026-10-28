@@ -169,6 +169,29 @@ type AccountLedger struct {
 	Entries []LedgerEntry `json:"entries"`
 }
 
+// BudgetTransfer is one auditable envelope transfer (migration 0044, the
+// roadmap's Phase 3): allowance moved between two OPEN monthly rows of the
+// SAME month — the source cap shrank, the target cap grew. FromBudgetID NULL
+// is the carried-balance SEED: the amount applied to the target row's
+// carried_cents (signed; a negative seed models "already overspent") — a
+// first-month manual carry is a transfer from nothing. The transfer row is
+// plan-level bookkeeping: no money moves anywhere, it is deliberately not a
+// bag allocation.
+type BudgetTransfer struct {
+	ID           int64     `json:"id"`
+	FromBudgetID *int64    `json:"from_budget_id,omitempty"` // NULL = carried-balance seed
+	ToBudgetID   int64     `json:"to_budget_id"`
+	Month        string    `json:"month"` // YYYY-MM, shared by both rows
+	AmountCents  int64     `json:"amount_cents"`
+	Note         string    `json:"note,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	// Display-only joins: the from category is empty for seeds.
+	FromCategoryID   int64  `json:"from_category_id,omitempty"`
+	FromCategoryName string `json:"from_category_name,omitempty"`
+	ToCategoryID     int64  `json:"to_category_id"`
+	ToCategoryName   string `json:"to_category_name"`
+}
+
 // TransactionItem is one article line of a manually entered transaction.
 // Bill lines live in bill_items and carry budget attribution, returns and
 // receipt analysis; these are the purchase-relevant subset, in the

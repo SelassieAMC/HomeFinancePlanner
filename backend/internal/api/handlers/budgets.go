@@ -26,6 +26,17 @@ type budgetStatusRequest struct {
 	Status domain.BudgetLifecycle `json:"status"`
 }
 
+// budgetTransferRequest is the payload of POST /budgets/transfer: allowance
+// moved between two open monthly rows of one month (from_budget_id set), or
+// a carried-balance seed riding onto the target row (from_budget_id absent;
+// signed amount). Recorded as one auditable row.
+type budgetTransferRequest struct {
+	FromBudgetID *int64 `json:"from_budget_id,omitempty"`
+	ToBudgetID   int64  `json:"to_budget_id"`
+	AmountCents  int64  `json:"amount_cents"`
+	Note         string `json:"note"`
+}
+
 // List returns budget envelopes; the optional status query param filters by
 // lifecycle ("open" / "closed", default all).
 func (h *BudgetHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +118,48 @@ func (h *BudgetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Transfer moves allowance between two open monthly rows of one month, or
+// (from_budget_id absent) seeds the target row's carried balance. Responds
+// {from, to} — from is null on a seed.
+func (h *BudgetHandler) Transfer(w http.ResponseWriter, r *http.Request) {
+	var req budgetTransferRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	from, to, err := h.Svc.Transfer(r.Context(), service.BudgetTransferInput{
+		FromBudgetID: req.FromBudgetID,
+		ToBudgetID:   req.ToBudgetID,
+		AmountCents:  req.AmountCents,
+		Note:         req.Note,
+	})
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, struct {
+		From *domain.Budget `json:"from"`
+		To   domain.Budget  `json:"to"`
+	}{fromBudgetPtr(from), to})
+}
+
+// Transfers lists the auditable transfer history.
+func (h *BudgetHandler) Transfers(w http.ResponseWriter, r *http.Request) {
+	out, err := h.Svc.Transfers(r.Context())
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, out)
+}
+
+// fromBudgetPtr shapes the response envelope's from field (null on a seed).
+func fromBudgetPtr(from domain.Budget) *domain.Budget {
+	if from.ID == 0 {
+		return nil
+	}
+	return &from
 }
 
 // SummaryHandler handles /api/v1/summary.

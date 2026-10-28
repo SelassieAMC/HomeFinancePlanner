@@ -8,7 +8,7 @@ import { dollarsToCents } from '../../lib/money';
 import { summaryApi } from '../../api/summary';
 import { categoriesApi } from '../../api/categories';
 import type { Budget, BudgetCadence } from '../../types/domain';
-import { formatCents } from '../../lib/money';
+import { formatCents, formatSignedCents } from '../../lib/money';
 import {
   Button,
   Card,
@@ -20,6 +20,7 @@ import {
   IconButton,
   IconCloseCircle,
   IconEdit,
+  IconMoveBetween,
   IconReopen,
   IconTrash,
   ProgressBar,
@@ -141,6 +142,57 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       reload();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : t('errors.update'));
+    }
+  }
+
+  // Envelope transfers (moneywiz roadmap Phase 3): move allowance between
+  // open monthly rows of this same month — or, on a carrying series, seed
+  // the row's running carried balance "from nothing".
+  // The audit history reloads whenever the table reloads (a transfer is
+  // visible in both).
+  const transferHistory = useAsync(() => budgetsApi.transfers(), [data]);
+
+  const [transferring, setTransferring] = useState<Budget | null>(null);
+  const [transferMode, setTransferMode] = useState<'move' | 'seed'>('move');
+  const [transferTo, setTransferTo] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [transferNote, setTransferNote] = useState('');
+  const [transferError, setTransferError] = useState<string | null>(null);
+
+  function openTransfer(b: Budget) {
+    setTransferring(b);
+    setTransferMode('move');
+    setTransferTo('');
+    setTransferAmount('');
+    setTransferNote('');
+    setTransferError(null);
+  }
+
+  async function handleTransfer(e: React.FormEvent) {
+    e.preventDefault();
+    if (!transferring) return;
+    const cents = dollarsToCents(transferAmount);
+    if (!Number.isFinite(cents) || (transferMode === 'move' && cents <= 0)) {
+      setTransferError(t('validation.positive_amount'));
+      return;
+    }
+    const target = transferMode === 'seed' ? transferring.id : Number(transferTo);
+    if (!target) {
+      setTransferError(t('transfer.choose_target'));
+      return;
+    }
+    try {
+      await budgetsApi.transfer({
+        // Absent from_budget_id = carried-balance seed.
+        from_budget_id: transferMode === 'move' ? transferring.id : undefined,
+        to_budget_id: target,
+        amount_cents: cents,
+        note: transferNote.trim() || undefined,
+      });
+      setTransferring(null);
+      reload();
+    } catch (err) {
+      setTransferError(err instanceof Error ? err.message : t('transfer.error'));
     }
   }
 
@@ -288,6 +340,14 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
                     <td className="cell-actions">
                       {b.status !== 'closed' && (
                         <>
+                          {b.cadence === 'monthly' && (
+                            <IconButton
+                              icon={<IconMoveBetween />}
+                              label={t('actions.transfer')}
+                              disabled={busy}
+                              onClick={() => openTransfer(b)}
+                            />
+                          )}
                           <IconButton
                             icon={<IconEdit />}
                             label={t('card.edit')}
@@ -366,6 +426,103 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
             </div>
           </form>
         </Dialog>
+      )}
+
+      {transferring && (
+        <Dialog title={t('transfer.title', { month: monthTag(transferring.month ?? '') })}>
+          <form className="form-stack" onSubmit={handleTransfer}>
+            {transferring.carry_over && (
+              <label className="hint-text" aria-label={t('transfer.seed_aria')}>
+                <input
+                  type="checkbox"
+                  checked={transferMode === 'seed'}
+                  onChange={(e) => setTransferMode(e.target.checked ? 'seed' : 'move')}
+                />{' '}
+                {t('transfer.seed')}
+              </label>
+            )}
+            <p className="hint-text">
+              {transferMode === 'seed' ? t('transfer.seed_hint') : t('transfer.hint')}
+            </p>
+            {transferMode === 'move' && (
+              <select
+                value={transferTo}
+                onChange={(e) => setTransferTo(e.target.value)}
+                aria-label={t('transfer.target_aria')}
+                required
+              >
+                <option value="">{t('transfer.choose_target')}</option>
+                {budgets
+                  .filter(
+                    (o) =>
+                      o.id !== transferring.id &&
+                      o.cadence === 'monthly' &&
+                      o.status === 'open' &&
+                      o.month === transferring.month,
+                  )
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {categoryNames.get(o.category_id) ?? `#${o.category_id}`}
+                    </option>
+                  ))}
+              </select>
+            )}
+            <input
+              placeholder={
+                transferMode === 'seed'
+                  ? t('transfer.seed_amount', { currency })
+                  : t('add.amount_placeholder', { currency })
+              }
+              inputMode="decimal"
+              value={transferAmount}
+              onChange={(e) => setTransferAmount(e.target.value)}
+              required
+              autoFocus
+            />
+            <input
+              placeholder={t('transfer.note')}
+              maxLength={200}
+              value={transferNote}
+              onChange={(e) => setTransferNote(e.target.value)}
+            />
+            {transferError && <ErrorMessage message={transferError} />}
+            <div className="dialog-actions">
+              <Button variant="ghost" onClick={() => setTransferring(null)} disabled={busy}>
+                {t('edit.cancel')}
+              </Button>
+              <Button variant="primary" type="submit" disabled={busy}>
+                {transferMode === 'seed' ? t('transfer.seed_submit') : t('transfer.submit')}
+              </Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+
+      {(transferHistory.data ?? []).length > 0 && (
+        <Card title={t('transfer.history_title')}>
+          <div className="table-scroll">
+            <table className="plan-table">
+              <tbody>
+                {(transferHistory.data ?? []).map((tr) => (
+                  <tr key={tr.id}>
+                    <td className="cell-muted">{tr.month}</td>
+                    <td>
+                      {tr.from_budget_id == null
+                        ? t('transfer.from_nothing')
+                        : tr.from_category_name || `#${tr.from_category_id ?? ''}`}
+                    </td>
+                    <td aria-hidden="true">→</td>
+                    <td>{tr.to_category_name || `#${tr.to_category_id}`}</td>
+                    <td className="num">
+                      <strong>{formatSignedCents(tr.amount_cents, currency)}</strong>
+                    </td>
+                    <td className="cell-muted">{tr.note || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </>
   );

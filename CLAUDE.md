@@ -185,7 +185,22 @@ bounds transaction spend to the row's own month (the `CategoryMonthSpend`
 bucketing) while explicit bill-line links stay all-time, so historical
 comparisons never re-evaluate old months against a changed amount; a carrying
 row's remaining is `amount + carried − month spend` (open rows edit the cap
-and the flag; nil `carry_over` in the PUT leaves it untouched). Bills link to stores via `store_id`; on confirm/update
+and the flag; nil `carry_over` in the PUT leaves it untouched). **Envelope
+transfers** (migration 0044 `budget_transfers`, roadmap Phase 3 — MoneyWiz
+rule 5): `POST /budgets/transfer` moves allowance between two OPEN monthly
+rows of the SAME month — the source cap shrinks (`amount_cents > ?` guarded
+in the UPDATE, refused below the amount), the target cap grows, and one
+auditable reallocation row rides the same transaction (`ApplyTransfer`; the
+SQL re-guards closed rows, so a concurrent close refuses the whole move).
+`from_budget_id` NULL is the **carried-balance seed** — "a transfer from
+nothing": a signed amount rides onto the target row's `carried_cents`
+(`ApplySeed`), refused on rollover-off rows (the number would be unread).
+`GET /budgets/transfers` lists the audit history with both categories joined;
+deleting a budget cascades its audit rows (the caps stay moved). Not bag
+allocations — plan-level bookkeeping; no money moves. Frontend: a
+"Move money" button on open monthly rows (target select among same-month
+open rows; seed checkbox on carrying rows) and the transfers audit table
+below the budgets table. Bills link to stores via `store_id`; on confirm/update
 the service find-or-creates the store from the (case-insensitive) market name,
 while `market_name` stays a denormalized snapshot. Bill items link to products
 via `product_id`: on confirm the service find-or-creates the product from the

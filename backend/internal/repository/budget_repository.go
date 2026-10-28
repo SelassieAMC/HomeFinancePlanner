@@ -261,6 +261,135 @@ func (r *BudgetRepository) RolloverMonthly(ctx context.Context, month string, ca
 	return nil
 }
 
+// ApplyTransfer moves allowance between two OPEN monthly rows of the same
+// month in ONE transaction: the source cap shrinks, the target cap grows, and
+// the auditable reallocation row is written. The SQL re-guards what the
+// service validated (both rows open, source cap stays positive) — a concurrent
+// close or edit fails the move with ErrNotFound/ErrValidation instead of
+// half-applying it.
+func (r *BudgetRepository) ApplyTransfer(ctx context.Context, fromID, toID int64, amountCents int64, note string, month string) (domain.Budget, domain.Budget, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf("budget transfer begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().Unix()
+	res, err := tx.ExecContext(ctx, `
+		UPDATE budgets SET amount_cents = amount_cents - ?, updated_at = ?
+		WHERE id = ? AND status = 'open' AND cadence = 'monthly' AND amount_cents > ?`,
+		amountCents, now, fromID, amountCents)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf("budget transfer source: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf(
+			"source budget #%d is not an open monthly row or its cap is not above the amount: %w", fromID, domain.ErrValidation)
+	}
+	res, err = tx.ExecContext(ctx, `
+		UPDATE budgets SET amount_cents = amount_cents + ?, updated_at = ?
+		WHERE id = ? AND status = 'open' AND cadence = 'monthly'`,
+		amountCents, now, toID)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf("budget transfer target: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf(
+			"target budget #%d is not an open monthly row: %w", toID, domain.ErrValidation)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO budget_transfers (from_budget_id, to_budget_id, month, amount_cents, note, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		fromID, toID, month, amountCents, note, now); err != nil {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf("budget transfer record: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf("budget transfer commit: %w", err)
+	}
+	from, err := r.GetByID(ctx, fromID)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, err
+	}
+	to, err := r.GetByID(ctx, toID)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, err
+	}
+	return from, to, nil
+}
+
+// ApplySeed applies a carried-balance seed ("a transfer from nothing"): the
+// signed amount rides onto the target row's carried_cents and the audit row
+// records from_budget_id NULL. Same open-monthly guard as a transfer.
+func (r *BudgetRepository) ApplySeed(ctx context.Context, toID int64, amountCents int64, note string, month string) (domain.Budget, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Budget{}, fmt.Errorf("budget seed begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().Unix()
+	res, err := tx.ExecContext(ctx, `
+		UPDATE budgets SET carried_cents = carried_cents + ?, updated_at = ?
+		WHERE id = ? AND status = 'open' AND cadence = 'monthly'`,
+		amountCents, now, toID)
+	if err != nil {
+		return domain.Budget{}, fmt.Errorf("budget seed target: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.Budget{}, fmt.Errorf(
+			"target budget #%d is not an open monthly row: %w", toID, domain.ErrValidation)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO budget_transfers (from_budget_id, to_budget_id, month, amount_cents, note, created_at)
+		VALUES (NULL, ?, ?, ?, ?, ?)`,
+		toID, month, amountCents, note, now); err != nil {
+		return domain.Budget{}, fmt.Errorf("budget seed record: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Budget{}, fmt.Errorf("budget seed commit: %w", err)
+	}
+	return r.GetByID(ctx, toID)
+}
+
+// ListTransfers returns the transfer history joined with the categories both
+// rows live under, newest first — the audit line under the budgets table.
+func (r *BudgetRepository) ListTransfers(ctx context.Context) ([]domain.BudgetTransfer, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT bt.id, bt.from_budget_id, bt.to_budget_id, bt.month, bt.amount_cents, bt.note, bt.created_at,
+			COALESCE(fb.category_id, 0), COALESCE(fc.name, ''),
+			tb.category_id, tc.name
+		FROM budget_transfers bt
+		JOIN budgets tb ON tb.id = bt.to_budget_id
+		JOIN categories tc ON tc.id = tb.category_id
+		LEFT JOIN budgets fb ON fb.id = bt.from_budget_id
+		LEFT JOIN categories fc ON fc.id = fb.category_id
+		ORDER BY bt.created_at DESC, bt.id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list budget transfers: %w", err)
+	}
+	defer rows.Close()
+
+	out := []domain.BudgetTransfer{}
+	for rows.Next() {
+		var (
+			t            domain.BudgetTransfer
+			fromBudgetID sql.NullInt64
+			createdAt    int64
+		)
+		if err := rows.Scan(&t.ID, &fromBudgetID, &t.ToBudgetID, &t.Month, &t.AmountCents, &t.Note, &createdAt,
+			&t.FromCategoryID, &t.FromCategoryName, &t.ToCategoryID, &t.ToCategoryName); err != nil {
+			return nil, fmt.Errorf("scan budget transfer: %w", err)
+		}
+		if fromBudgetID.Valid {
+			v := fromBudgetID.Int64
+			t.FromBudgetID = &v
+		}
+		t.CreatedAt = time.Unix(createdAt, 0).UTC()
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func scanBudget(row interface{ Scan(dest ...any) error }) (domain.Budget, error) {
 	var (
 		b              domain.Budget

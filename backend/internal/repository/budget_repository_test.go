@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -181,5 +182,83 @@ func TestRolloverMonthlyCarriesBalance(t *testing.T) {
 	}
 	if succOff.CarryOver || succOff.CarriedCents != 0 {
 		t.Errorf("no-carry successor = %+v; want carry_over off, carried 0 (map ignored)", succOff)
+	}
+}
+
+// TestBudgetTransfersAndSeeds covers migration 0044: a transfer moves the
+// caps both ways and records one auditable row; a closed source refuses the
+// WHOLE move (both caps unchanged — the transaction guards); a seed rides
+// carried_cents with from_budget NULL; the history joins read back with
+// amounts and NULL-from intact.
+func TestBudgetTransfersAndSeeds(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewBudgetRepository(db)
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO categories (name, created_at) VALUES ('T Cat A', 1), ('T Cat B', 1)`); err != nil {
+		t.Fatalf("seed categories: %v", err)
+	}
+	var catA, catB int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM categories WHERE name = 'T Cat A'`).Scan(&catA); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT id FROM categories WHERE name = 'T Cat B'`).Scan(&catB); err != nil {
+		t.Fatal(err)
+	}
+	src, err := repo.Create(ctx, domain.Budget{CategoryID: catA, AmountCents: 10_000, Cadence: domain.BudgetMonthly, Month: "2026-09", CarryOver: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst, err := repo.Create(ctx, domain.Budget{CategoryID: catB, AmountCents: 4_000, Cadence: domain.BudgetMonthly, Month: "2026-09"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	from, to, err := repo.ApplyTransfer(ctx, src.ID, dst.ID, 1_500, "leftover", "2026-09")
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if from.AmountCents != 8_500 || to.AmountCents != 5_500 {
+		t.Fatalf("caps = %d/%d; want 8500/5500", from.AmountCents, to.AmountCents)
+	}
+
+	// A closed source refuses atomically: no cap moves, no audit row.
+	if _, err := repo.Update(ctx, domain.Budget{ID: dst.ID, CategoryID: catB, AmountCents: 5_500,
+		Status: domain.BudgetClosed, Cadence: domain.BudgetMonthly, Month: "2026-09", ClosedAt: &time.Time{}}); err != nil {
+		t.Fatalf("close dst: %v", err)
+	}
+	if _, _, err := repo.ApplyTransfer(ctx, src.ID, dst.ID, 1_500, "", "2026-09"); err == nil {
+		t.Fatal("closed-target transfer accepted")
+	}
+	hist, err := repo.ListTransfers(ctx)
+	if err != nil {
+		t.Fatalf("transfers: %v", err)
+	}
+	if len(hist) != 1 {
+		t.Fatalf("audit rows = %d; want 1 (the refused move recorded nothing)", len(hist))
+	}
+	if hist[0].FromCategoryName != "T Cat A" || hist[0].ToCategoryName != "T Cat B" || hist[0].AmountCents != 1_500 {
+		t.Fatalf("audit row = %+v; want the joined move", hist[0])
+	}
+
+	// Reopen and seed: carried rides signed, from NULL in the audit.
+	if _, err := repo.Update(ctx, domain.Budget{ID: dst.ID, CategoryID: catB, AmountCents: 5_500,
+		Status: domain.BudgetOpen, Cadence: domain.BudgetMonthly, Month: "2026-09"}); err != nil {
+		t.Fatalf("reopen dst: %v", err)
+	}
+	seeded, err := repo.ApplySeed(ctx, dst.ID, -2_000, "overspent seed", "2026-09")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if seeded.CarriedCents != -2_000 {
+		t.Fatalf("seeded carry = %d; want -2000", seeded.CarriedCents)
+	}
+	hist, err = repo.ListTransfers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 || hist[0].FromBudgetID != nil || hist[0].AmountCents != -2_000 || hist[1].FromBudgetID == nil {
+		t.Fatalf("audit rows = %+v; want seed (from NULL) first, move second", hist)
 	}
 }

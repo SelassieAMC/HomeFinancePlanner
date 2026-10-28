@@ -331,6 +331,24 @@ export interface BudgetStatus extends Budget {
   remaining_cents: number;
 }
 
+// One auditable envelope transfer (budget→budget): the source cap shrank,
+// the target cap grew, the reallocation is recorded. from_budget_id null is
+// a carried-balance SEED — the (signed) amount rode onto the target row's
+// carried_cents ("a transfer from nothing"). Display-only category joins.
+export interface BudgetTransfer {
+  id: number;
+  from_budget_id?: number | null;
+  to_budget_id: number;
+  month: string; // YYYY-MM, shared by both rows
+  amount_cents: number;
+  note?: string;
+  created_at: string;
+  from_category_id?: number;
+  from_category_name?: string;
+  to_category_id: number;
+  to_category_name: string;
+}
+
 // --- Stores (recurring markets bills link to) --------------------------------
 
 export interface Store {

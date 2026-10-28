@@ -95,6 +95,8 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	mux.HandleFunc("DELETE /api/v1/transactions/{id}", transactionH.Delete)
 
 	mux.HandleFunc("GET /api/v1/budgets", budgetH.List)
+	mux.HandleFunc("GET /api/v1/budgets/transfers", budgetH.Transfers)
+	mux.HandleFunc("POST /api/v1/budgets/transfer", budgetH.Transfer)
 	mux.HandleFunc("POST /api/v1/budgets", budgetH.Create)
 	mux.HandleFunc("PUT /api/v1/budgets/{id}", budgetH.Update)
 	mux.HandleFunc("PUT /api/v1/budgets/{id}/status", budgetH.SetStatus)

@@ -72,6 +72,15 @@ type BudgetStore interface {
 	// carries maps each closed row's id to the carried_cents its successor
 	// inherits (carry_over rows only; absent rows inherit 0).
 	RolloverMonthly(ctx context.Context, month string, carries map[int64]int64) error
+	// ApplyTransfer moves allowance between two open monthly rows of one
+	// month (caps adjusted both ways; the auditable reallocation recorded
+	// inside the same transaction).
+	ApplyTransfer(ctx context.Context, fromID, toID int64, amountCents int64, note, month string) (domain.Budget, domain.Budget, error)
+	// ApplySeed rides a signed carried-balance seed onto the target row
+	// (from-budget NULL in the audit table — "a transfer from nothing").
+	ApplySeed(ctx context.Context, toID int64, amountCents int64, note, month string) (domain.Budget, error)
+	// ListTransfers the transfer audit history, newest first.
+	ListTransfers(ctx context.Context) ([]domain.BudgetTransfer, error)
 }
 
 // GoalStore is the persistence contract for financial goals.

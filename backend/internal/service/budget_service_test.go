@@ -19,6 +19,7 @@ type fakeBudgetStore struct {
 	carries    []map[int64]int64 // carries of each RolloverMonthly call
 	catSpend   []domain.CategoryMonthCurrencyTotal
 	billSpend  []domain.BudgetCurrencySpend
+	transfers  []fakeTransfer
 }
 
 func (f *fakeBudgetStore) List(context.Context) ([]domain.Budget, error) {
@@ -70,6 +71,72 @@ func (f *fakeBudgetStore) CarryCategoryMonthSpend(context.Context) ([]domain.Cat
 
 func (f *fakeBudgetStore) CarryBillSpend(context.Context) ([]domain.BudgetCurrencySpend, error) {
 	return f.billSpend, nil
+}
+
+// ApplyTransfer mirrors the real store's transaction: the source cap shrinks
+// (refused below the amount), the target cap grows, and the audit row rides
+// the in-memory list.
+func (f *fakeBudgetStore) ApplyTransfer(_ context.Context, fromID, toID int64, amountCents int64, note, month string) (domain.Budget, domain.Budget, error) {
+	src := f.find(fromID)
+	dst := f.find(toID)
+	if src == nil || dst == nil || src.Status != domain.BudgetOpen || dst.Status != domain.BudgetOpen ||
+		src.Cadence != domain.BudgetMonthly || dst.Cadence != domain.BudgetMonthly {
+		return domain.Budget{}, domain.Budget{}, domain.ErrNotFound
+	}
+	if src.AmountCents <= amountCents {
+		return domain.Budget{}, domain.Budget{}, domain.ErrValidation
+	}
+	src.AmountCents -= amountCents
+	dst.AmountCents += amountCents
+	f.transfers = append(f.transfers, fakeTransfer{from: fromID, to: toID, month: month, amount: amountCents, note: note})
+	return *src, *dst, nil
+}
+
+// ApplySeed mirrors the seed: the signed amount rides onto carried_cents of
+// the open monthly target.
+func (f *fakeBudgetStore) ApplySeed(_ context.Context, toID int64, amountCents int64, note, month string) (domain.Budget, error) {
+	dst := f.find(toID)
+	if dst == nil || dst.Status != domain.BudgetOpen || dst.Cadence != domain.BudgetMonthly {
+		return domain.Budget{}, domain.ErrNotFound
+	}
+	dst.CarriedCents += amountCents
+	f.transfers = append(f.transfers, fakeTransfer{to: toID, month: month, amount: amountCents, note: note})
+	return *dst, nil
+}
+
+func (f *fakeBudgetStore) ListTransfers(context.Context) ([]domain.BudgetTransfer, error) {
+	out := make([]domain.BudgetTransfer, 0, len(f.transfers))
+	for i, t := range f.transfers {
+		lt := domain.BudgetTransfer{
+			ID:          int64(i + 1),
+			ToBudgetID:  t.to,
+			Month:       t.month,
+			AmountCents: t.amount,
+			Note:        t.note,
+		}
+		if t.from != 0 {
+			v := t.from
+			lt.FromBudgetID = &v
+		}
+		out = append(out, lt)
+	}
+	return out, nil
+}
+
+func (f *fakeBudgetStore) find(id int64) *domain.Budget {
+	for i := range f.items {
+		if f.items[i].ID == id {
+			return &f.items[i]
+		}
+	}
+	return nil
+}
+
+type fakeTransfer struct {
+	from, to int64
+	month    string
+	amount   int64
+	note     string
 }
 
 func (f *fakeBudgetStore) RolloverMonthly(_ context.Context, month string, carries map[int64]int64) error {
@@ -411,6 +478,97 @@ func TestBudgetUpdateTogglesCarryOver(t *testing.T) {
 	got, _ = svc.budgets.GetByID(context.Background(), b.ID)
 	if !got.CarryOver {
 		t.Errorf("nil carry_over update changed the flag; want untouched")
+	}
+}
+
+// TestBudgetTransferMovesAllowance: two open monthly rows of one month —
+// the source cap shrinks (refused below the amount), the target cap grows,
+// and the reallocation lands in the audit list.
+func TestBudgetTransferMovesAllowance(t *testing.T) {
+	svc, store := newTestBudgetService()
+	ID := func(v int64) *int64 { return &v }
+	store.items = []domain.Budget{
+		{ID: 1, CategoryID: 1, AmountCents: 10_000, Status: domain.BudgetOpen, Cadence: domain.BudgetMonthly, Month: "2026-06"},
+		{ID: 2, CategoryID: 2, AmountCents: 5_000, Status: domain.BudgetOpen, Cadence: domain.BudgetMonthly, Month: "2026-06"},
+		{ID: 3, CategoryID: 3, AmountCents: 9_000, Status: domain.BudgetOpen, Cadence: domain.BudgetMonthly, Month: "2026-07"},
+	}
+
+	from, to, err := svc.Transfer(context.Background(), BudgetTransferInput{FromBudgetID: ID(1), ToBudgetID: 2, AmountCents: 2_000, Note: "spare grocery cap"})
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if from.AmountCents != 8_000 || to.AmountCents != 7_000 {
+		t.Fatalf("caps = %d/%d; want 8000/7000", from.AmountCents, to.AmountCents)
+	}
+	if len(store.transfers) != 1 || store.transfers[0].amount != 2_000 {
+		t.Fatalf("audit rows = %+v; want one 2000 transfer", store.transfers)
+	}
+	history, err := svc.Transfers(context.Background())
+	if err != nil || len(history) != 1 || history[0].FromBudgetID == nil || *history[0].FromBudgetID != 1 {
+		t.Fatalf("transfers list = %+v err %v; want the recorded move", history, err)
+	}
+
+	// Same month only.
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{FromBudgetID: ID(1), ToBudgetID: 3, AmountCents: 1}); err == nil {
+		t.Fatal("cross-month transfer accepted")
+	}
+	// Cap stays positive.
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{FromBudgetID: ID(1), ToBudgetID: 2, AmountCents: 8_000}); err == nil {
+		t.Fatal("source cap bled to ≤ 0")
+	}
+	// Closed or envelope rows ride nothing.
+	store.items = append(store.items, domain.Budget{ID: 4, CategoryID: 4, AmountCents: 5_000, Status: domain.BudgetClosed, Cadence: domain.BudgetMonthly, Month: "2026-06"})
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{FromBudgetID: ID(4), ToBudgetID: 2, AmountCents: 1}); err == nil {
+		t.Fatal("closed-row transfer accepted")
+	}
+	env := domain.Budget{ID: 5, CategoryID: 5, AmountCents: 5_000, Status: domain.BudgetOpen, Cadence: domain.BudgetEnvelope}
+	store.items = append(store.items, env)
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{FromBudgetID: ID(5), ToBudgetID: 2, AmountCents: 1}); err == nil {
+		t.Fatal("envelope transfer accepted")
+	}
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{FromBudgetID: ID(1), ToBudgetID: 1, AmountCents: 1}); err == nil {
+		t.Fatal("self transfer accepted")
+	}
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{FromBudgetID: ID(1), ToBudgetID: 2}); err == nil {
+		t.Fatal("zero-amount transfer accepted")
+	}
+}
+
+// TestBudgetTransferCarriedSeed: from nothing — a signed seed rides onto the
+// carrying row's carried_cents; non-carrying rows refuse.
+func TestBudgetTransferCarriedSeed(t *testing.T) {
+	svc, store := newTestBudgetService()
+	store.items = []domain.Budget{
+		{ID: 1, CategoryID: 1, AmountCents: 10_000, Status: domain.BudgetOpen, Cadence: domain.BudgetMonthly,
+			Month: "2026-06", CarryOver: true},
+		{ID: 2, CategoryID: 2, AmountCents: 5_000, Status: domain.BudgetOpen, Cadence: domain.BudgetMonthly, Month: "2026-06"},
+	}
+
+	_, to, err := svc.Transfer(context.Background(), BudgetTransferInput{ToBudgetID: 1, AmountCents: 3_000, Note: "seed"})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if to.CarriedCents != 3_000 {
+		t.Fatalf("seeded carry = %d; want 3000", to.CarriedCents)
+	}
+	if _, to, err := svc.Transfer(context.Background(), BudgetTransferInput{ToBudgetID: 1, AmountCents: -1_500}); err != nil {
+		t.Fatalf("negative seed: %v", err)
+	} else if to.CarriedCents != 1_500 {
+		t.Fatalf("negative-seeded carry = %d; want 1500", to.CarriedCents)
+	}
+	if store.transfers[1].from != 0 {
+		t.Fatalf("seed audit = %+v; want from = nothing", store.transfers[1])
+	}
+	// The seed never touches the cap.
+	if to.AmountCents != 10_000 {
+		t.Fatalf("seeded cap = %d; want untouched 10000", to.AmountCents)
+	}
+	// Non-carry rows refuse: the carried number would be unread.
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{ToBudgetID: 2, AmountCents: 100}); err == nil {
+		t.Fatal("seed accepted on a rollover-off row")
+	}
+	if _, _, err := svc.Transfer(context.Background(), BudgetTransferInput{ToBudgetID: 1, AmountCents: 0}); err == nil {
+		t.Fatal("zero seed accepted")
 	}
 }
 

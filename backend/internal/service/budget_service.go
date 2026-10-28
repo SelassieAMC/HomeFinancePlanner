@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
@@ -242,6 +243,93 @@ func (s *BudgetService) SetStatus(ctx context.Context, id int64, status domain.B
 
 func (s *BudgetService) Delete(ctx context.Context, id int64) error {
 	return s.budgets.Delete(ctx, id)
+}
+
+// BudgetTransferInput is the payload of a budget→budget transfer. A nil
+// FromBudgetID is the carried-balance seed: the amount (signed) rides onto
+// the target row's carried_cents — a first-month manual carry is a transfer
+// from nothing.
+type BudgetTransferInput struct {
+	FromBudgetID *int64
+	ToBudgetID   int64
+	// AmountCents is a positive allowance magnitude for transfers; for seeds
+	// it may carry either sign (a negative seed models "already overspent").
+	AmountCents int64
+	Note        string
+}
+
+// Transfer moves allowance between two OPEN monthly budgets of the SAME
+// month (MoneyWiz rule 5): the source cap shrinks (staying positive), the
+// target cap grows, and one auditable reallocation row records the move.
+// With FromBudgetID nil the amount seeds the target row's carried_cents —
+// only rows whose series carries (carry_over) may be seeded, a non-carry
+// row would hold an unreadable number. The carry chains stay honest by
+// construction: a mid-month cap change feeds the next rollover's leftover
+// exactly like a direct cap edit.
+func (s *BudgetService) Transfer(ctx context.Context, in BudgetTransferInput) (domain.Budget, domain.Budget, error) {
+	if in.FromBudgetID == nil {
+		if in.AmountCents == 0 {
+			return domain.Budget{}, domain.Budget{}, validationError("a carried-balance seed must not be zero")
+		}
+	} else if in.AmountCents <= 0 {
+		return domain.Budget{}, domain.Budget{}, validationError("amount_cents must be a positive allowance magnitude")
+	}
+	if len(in.Note) > 200 {
+		return domain.Budget{}, domain.Budget{}, validationError("note must be at most 200 characters")
+	}
+	if in.ToBudgetID <= 0 {
+		return domain.Budget{}, domain.Budget{}, validationError("to_budget_id must be a positive budget id")
+	}
+	seed := in.FromBudgetID == nil
+	if !seed && in.FromBudgetID != nil && *in.FromBudgetID == in.ToBudgetID {
+		return domain.Budget{}, domain.Budget{}, validationError("source and target budgets must differ")
+	}
+
+	target, err := s.budgets.GetByID(ctx, in.ToBudgetID)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf("validate to_budget_id: %w", err)
+	}
+	if target.Cadence != domain.BudgetMonthly || target.Status != domain.BudgetOpen {
+		return domain.Budget{}, domain.Budget{}, validationError(
+			"budget #%d is not an open monthly row — transfers ride open rows of one month", target.ID)
+	}
+	if seed {
+		// A carried number is unread unless the series rolls it forward.
+		if !target.CarryOver {
+			return domain.Budget{}, domain.Budget{}, validationError(
+				"budget #%d does not roll over — carried-balance seeds only affect carrying series", target.ID)
+		}
+		to, err := s.budgets.ApplySeed(ctx, target.ID, in.AmountCents, strings.TrimSpace(in.Note), target.Month)
+		if err != nil {
+			return domain.Budget{}, domain.Budget{}, err
+		}
+		return domain.Budget{}, to, nil
+	}
+
+	source, err := s.budgets.GetByID(ctx, *in.FromBudgetID)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, fmt.Errorf("validate from_budget_id: %w", err)
+	}
+	if source.Cadence != domain.BudgetMonthly || source.Status != domain.BudgetOpen {
+		return domain.Budget{}, domain.Budget{}, validationError(
+			"budget #%d is not an open monthly row — closed months are history", source.ID)
+	}
+	if source.Month != target.Month {
+		return domain.Budget{}, domain.Budget{}, validationError(
+			"budgets #%d and #%d cover different months (%s vs %s) — transfers stay inside one month",
+			source.ID, target.ID, source.Month, target.Month)
+	}
+	from, to, err := s.budgets.ApplyTransfer(
+		ctx, source.ID, target.ID, in.AmountCents, strings.TrimSpace(in.Note), source.Month)
+	if err != nil {
+		return domain.Budget{}, domain.Budget{}, err
+	}
+	return from, to, nil
+}
+
+// Transfers lists the auditable transfer history, newest first.
+func (s *BudgetService) Transfers(ctx context.Context) ([]domain.BudgetTransfer, error) {
+	return s.budgets.ListTransfers(ctx)
 }
 
 func (s *BudgetService) build(ctx context.Context, in BudgetInput) (domain.Budget, error) {
