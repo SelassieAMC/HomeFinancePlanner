@@ -31,6 +31,7 @@ import {
   IconSliders,
   IconTrash,
   IconWithdraw,
+  Field,
   ProgressBar,
 } from '../../components/ui';
 
@@ -182,34 +183,38 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
     <>
       <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
-          <input
-            placeholder={t('add.namePlaceholder')}
-            value={createName}
-            onChange={(e) => setCreateName(e.target.value)}
-            maxLength={100}
-            aria-label={t('add.nameAria')}
-            required
-          />
-          <select
-            value={createAccount}
-            onChange={(e) => setCreateAccount(e.target.value)}
-            aria-label={t('add.accountAria')}
-            required
-          >
-            <option value="">{t('add.accountPlaceholder')}</option>
-            {accountsData.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.currency})
-              </option>
-            ))}
-          </select>
-          <input
-            placeholder={t('add.targetPlaceholder')}
-            inputMode="decimal"
-            value={createTarget}
-            onChange={(e) => setCreateTarget(e.target.value)}
-            aria-label={t('add.targetAria')}
-          />
+          <Field label={t('add.namePlaceholder')}>
+            <input
+              value={createName}
+              onChange={(e) => setCreateName(e.target.value)}
+              maxLength={100}
+              aria-label={t('add.nameAria')}
+              required
+            />
+          </Field>
+          <Field label={t('add.accountAria')} hint={t('add.accountHint')}>
+            <select
+              value={createAccount}
+              onChange={(e) => setCreateAccount(e.target.value)}
+              aria-label={t('add.accountAria')}
+              required
+            >
+              <option value="">{t('add.accountPlaceholder')}</option>
+              {accountsData.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.currency})
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('add.targetPlaceholder')}>
+            <input
+              inputMode="decimal"
+              value={createTarget}
+              onChange={(e) => setCreateTarget(e.target.value)}
+              aria-label={t('add.targetAria')}
+            />
+          </Field>
           <Button type="submit">{t('actions.add')}</Button>
         </form>
         <p className="hint-text">
@@ -222,7 +227,9 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
 
       <div className="form-row">
         <form className="form-row" onSubmit={openYearClose}>
-          <input type="number" name="year" defaultValue={new Date().getFullYear()} min={2000} max={2999} aria-label={t('dialogs.yearClose.yearAria')} />
+          <Field label={t('dialogs.yearClose.yearAria')} layout="row">
+            <input type="number" name="year" defaultValue={new Date().getFullYear()} min={2000} max={2999} aria-label={t('dialogs.yearClose.yearAria')} />
+          </Field>
           <Button type="submit" variant="secondary" disabled={busy}>
             {t('actions.yearPreview')}
           </Button>
@@ -594,18 +601,16 @@ function BagEditForm({
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
-      <label>
-        {t('dialogs.edit.nameLabel')}
+      <Field label={t('dialogs.edit.nameLabel')}>
         <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
-      </label>
-      <label>
-        {t('dialogs.edit.targetLabel', { currency })}
+      </Field>
+      <Field label={t('dialogs.edit.targetLabel', { currency })}>
         <input
           inputMode="decimal"
           value={target}
           onChange={(e) => setTarget(e.target.value)}
         />
-      </label>
+      </Field>
       <p className="hint-text">
         {t('dialogs.edit.notice')}
       </p>
@@ -664,26 +669,22 @@ function AllocateForm({
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
-      <label>
-        {t('dialogs.allocate.actionLabel')}
+      <Field label={t('dialogs.allocate.actionLabel')}>
         <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
           <option value="fund">{t('dialogs.allocate.kindFund')}</option>
           <option value="withdraw">{t('dialogs.allocate.kindWithdraw')}</option>
           <option value="adjust">{t('dialogs.allocate.kindAdjust')}</option>
         </select>
-      </label>
-      <label>
-        {t('dialogs.allocate.amountLabel', { currency })}
+      </Field>
+      <Field label={t('dialogs.allocate.amountLabel', { currency })}>
         <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-      </label>
-      <label>
-        {t('dialogs.allocate.noteLabel')}
+      </Field>
+      <Field label={t('dialogs.allocate.noteLabel')}>
         <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
-      </label>
-      <label>
-        {t('dialogs.allocate.dateLabel')}
+      </Field>
+      <Field label={t('dialogs.allocate.dateLabel')}>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-      </label>
+      </Field>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
@@ -789,35 +790,36 @@ function RebalanceForm({
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
       <div className="form-row">
-        <select value={fromBag} onChange={(e) => setFromBag(e.target.value)} aria-label={t('dialogs.rebalance.fromAria')} required>
-          <option value="">{t('dialogs.rebalance.fromPlaceholder')}</option>
-          {open.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name} ({formatCents(b.balance_cents, account?.currency ?? '')})
-            </option>
-          ))}
-        </select>
-        <select value={toBag} onChange={(e) => setToBag(e.target.value)} aria-label={t('dialogs.rebalance.toAria')} required>
-          <option value="">{t('dialogs.rebalance.toPlaceholder')}</option>
-          {others.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
+        <Field label={t('dialogs.rebalance.fromAria')}>
+          <select value={fromBag} onChange={(e) => setFromBag(e.target.value)} aria-label={t('dialogs.rebalance.fromAria')} required>
+            <option value="">{t('dialogs.rebalance.fromPlaceholder')}</option>
+            {open.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} ({formatCents(b.balance_cents, account?.currency ?? '')})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={t('dialogs.rebalance.toAria')}>
+          <select value={toBag} onChange={(e) => setToBag(e.target.value)} aria-label={t('dialogs.rebalance.toAria')} required>
+            <option value="">{t('dialogs.rebalance.toPlaceholder')}</option>
+            {others.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
-      <label>
-        {t('dialogs.allocate.amountLabel', { currency: account?.currency ?? '' })}
+      <Field label={t('dialogs.allocate.amountLabel', { currency: account?.currency ?? '' })}>
         <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-      </label>
-      <label>
-        {t('dialogs.allocate.noteLabel')}
+      </Field>
+      <Field label={t('dialogs.allocate.noteLabel')}>
         <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
-      </label>
-      <label>
-        {t('dialogs.allocate.dateLabel')}
+      </Field>
+      <Field label={t('dialogs.allocate.dateLabel')}>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-      </label>
+      </Field>
       {from && from.balance_cents < 0 && (
         <p className="hint-text">{t('dialogs.rebalance.warnOverspending')}</p>
       )}
@@ -959,14 +961,16 @@ function YearCloseRow({
         <div className="camera-row">
           {bags.length > 0 && (
             <>
-              <select value={targetBag} onChange={(e) => setTargetBag(e.target.value)} aria-label={t('dialogs.yearClose.row.moveToAria')}>
-                <option value="">{t('dialogs.yearClose.row.moveToPlaceholder')}</option>
-                {bags.map((b) => (
-                  <option key={b.bag_id} value={b.bag_id}>
-                    {b.bag_name}
-                  </option>
-                ))}
-              </select>
+              <Field label={t('dialogs.yearClose.row.moveToAria')}>
+                <select value={targetBag} onChange={(e) => setTargetBag(e.target.value)} aria-label={t('dialogs.yearClose.row.moveToAria')}>
+                  <option value="">{t('dialogs.yearClose.row.moveToPlaceholder')}</option>
+                  {bags.map((b) => (
+                    <option key={b.bag_id} value={b.bag_id}>
+                      {b.bag_name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
               <Button
                 variant="secondary"
                 className="btn-sm"

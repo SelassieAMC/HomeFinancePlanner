@@ -14,6 +14,7 @@ import {
   Card,
   CategorySelect,
   Dialog,
+  Field,
   Spinner,
   ErrorMessage,
   EmptyState,
@@ -227,29 +228,40 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
     <>
       <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
-          <CategorySelect
-            categories={categories.data ?? []}
-            kind="expense"
-            value={categoryId ? Number(categoryId) : null}
-            onChange={(id) => setCategoryId(id ? String(id) : '')}
-            ariaLabel={t('add.category_aria')}
-            emptyLabel={t('add.category_empty')}
-          />
-          <input
-            placeholder={t('add.amount_placeholder', { currency })}
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            required
-          />
-          <select
-            value={cadence}
-            onChange={(e) => setCadence(e.target.value as BudgetCadence)}
-            aria-label={t('add.cadence_aria')}
+          <Field label={t('add.category_label')}>
+            <CategorySelect
+              categories={categories.data ?? []}
+              kind="expense"
+              value={categoryId ? Number(categoryId) : null}
+              onChange={(id) => setCategoryId(id ? String(id) : '')}
+              ariaLabel={t('add.category_aria')}
+              emptyLabel={t('add.category_empty')}
+            />
+          </Field>
+          <Field
+            label={cadence === 'monthly' ? t('add.amount_monthly_label', { currency }) : t('add.amount_open_label', { currency })}
           >
-            <option value="monthly">{t('add.cadence_monthly')}</option>
-            <option value="open">{t('add.cadence_open')}</option>
-          </select>
+            <input
+              placeholder={t('add.amount_placeholder', { currency })}
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
+          </Field>
+          <Field
+            label={t('add.cadence_label')}
+            hint={t('add.cadence_hint')}
+          >
+            <select
+              value={cadence}
+              onChange={(e) => setCadence(e.target.value as BudgetCadence)}
+              aria-label={t('add.cadence_aria')}
+            >
+              <option value="monthly">{t('add.cadence_monthly')}</option>
+              <option value="open">{t('add.cadence_open')}</option>
+            </select>
+          </Field>
           {cadence === 'monthly' && (
             <label className="hint-text" aria-label={t('add.carry_over_aria')}>
               <input
@@ -395,15 +407,25 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
           }
         >
           <form className="form-row" onSubmit={handleEdit}>
-            <input
-              placeholder={t('add.amount_placeholder', { currency })}
-              inputMode="decimal"
-              value={editAmount}
-              onChange={(e) => setEditAmount(e.target.value)}
-              autoFocus
-              aria-label={t('add.amount_aria')}
-              required
-            />
+            <Field
+              label={
+                editing.cadence === 'monthly'
+                  ? t('add.amount_monthly_label', { currency })
+                  : t('add.amount_open_label', { currency })
+              }
+              hint={t('edit.hint')}
+              className="edit-amount-field"
+            >
+              <input
+                placeholder={t('add.amount_placeholder', { currency })}
+                inputMode="decimal"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                autoFocus
+                aria-label={t('add.amount_aria')}
+                required
+              />
+            </Field>
             {editing.cadence === 'monthly' && (
               <label className="hint-text" aria-label={t('edit.carry_over_aria')}>
                 <input
@@ -414,7 +436,6 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
                 {t('add.carry_over')}
               </label>
             )}
-            <p className="hint-text">{t('edit.hint')}</p>
             {editError && <ErrorMessage message={editError} />}
             <div className="dialog-actions">
               <Button variant="ghost" onClick={() => setEditing(null)} disabled={busy}>
@@ -444,47 +465,58 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
             <p className="hint-text">
               {transferMode === 'seed' ? t('transfer.seed_hint') : t('transfer.hint')}
             </p>
+            <p className="hint-text">
+              {transferMode === 'seed' ? t('transfer.seed_hint') : t('transfer.hint')}
+            </p>
             {transferMode === 'move' && (
-              <select
-                value={transferTo}
-                onChange={(e) => setTransferTo(e.target.value)}
-                aria-label={t('transfer.target_aria')}
-                required
-              >
-                <option value="">{t('transfer.choose_target')}</option>
-                {budgets
-                  .filter(
-                    (o) =>
-                      o.id !== transferring.id &&
-                      o.cadence === 'monthly' &&
-                      o.status === 'open' &&
-                      o.month === transferring.month,
-                  )
-                  .map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {categoryNames.get(o.category_id) ?? `#${o.category_id}`}
-                    </option>
-                  ))}
-              </select>
+              <Field label={t('transfer.target_label')}>
+                <select
+                  value={transferTo}
+                  onChange={(e) => setTransferTo(e.target.value)}
+                  aria-label={t('transfer.target_aria')}
+                  required
+                >
+                  <option value="">{t('transfer.choose_target')}</option>
+                  {budgets
+                    .filter(
+                      (o) =>
+                        o.id !== transferring.id &&
+                        o.cadence === 'monthly' &&
+                        o.status === 'open' &&
+                        o.month === transferring.month,
+                    )
+                    .map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {categoryNames.get(o.category_id) ?? `#${o.category_id}`}
+                      </option>
+                    ))}
+                </select>
+              </Field>
             )}
-            <input
-              placeholder={
-                transferMode === 'seed'
-                  ? t('transfer.seed_amount', { currency })
-                  : t('add.amount_placeholder', { currency })
-              }
-              inputMode="decimal"
-              value={transferAmount}
-              onChange={(e) => setTransferAmount(e.target.value)}
-              required
-              autoFocus
-            />
-            <input
-              placeholder={t('transfer.note')}
-              maxLength={200}
-              value={transferNote}
-              onChange={(e) => setTransferNote(e.target.value)}
-            />
+            <Field
+              label={transferMode === 'seed' ? t('transfer.seed_label', { currency }) : t('transfer.amount_label', { currency })}
+            >
+              <input
+                placeholder={
+                  transferMode === 'seed'
+                    ? t('transfer.seed_amount', { currency })
+                    : t('add.amount_placeholder', { currency })
+                }
+                inputMode="decimal"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                required
+                autoFocus
+              />
+            </Field>
+            <Field label={t('transfer.note_label')}>
+              <input
+                placeholder={t('transfer.note')}
+                maxLength={200}
+                value={transferNote}
+                onChange={(e) => setTransferNote(e.target.value)}
+              />
+            </Field>
             {transferError && <ErrorMessage message={transferError} />}
             <div className="dialog-actions">
               <Button variant="ghost" onClick={() => setTransferring(null)} disabled={busy}>

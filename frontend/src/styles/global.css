@@ -42,6 +42,43 @@
   --font-money: 'Spline Sans Mono', ui-monospace, 'SF Mono', monospace;
 }
 
+/* Dark theme — same slate-blue hue family, raised lightness band. Set via
+   `data-theme` on <html> (see lib/theme.ts + the index.html bootstrap);
+   'system' resolves in JS before it gets here, so this block only ever sees
+   a resolved light/dark. Charts, scrims and tinted chips keep working because
+   every derived color reads these tokens (the tints below use color-mix on
+   the token, never a hardcoded hex). */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces. */
+  --bg: #101318;
+  --bg-raised: #161b22;
+  --surface: #1b212b;
+
+  /* Text. */
+  --text: #dce3ee;
+  --text-muted: #8a94a6;
+  --ink: var(--text);
+  --ink-muted: var(--text-muted);
+
+  --border: #2a323d;
+  --border-strong: #3a4451;
+  --hairline: #232a34;
+
+  /* Brand + semantics. */
+  --accent: #4472ff;
+  --accent-hover: #5d87ff;
+  --accent-contrast: #ffffff;
+  --accent-text: #7ea3ff;
+  --focus: #7ea3ff;
+  --positive: #45b581;
+  --negative: #e8685c;
+  --violet: #a58af5;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 10px rgb(0 0 0 / 0.4);
+  --shadow-raised: 0 4px 8px -2px rgb(0 0 0 / 0.55), 0 2px 4px rgb(0 0 0 / 0.4);
+}
+
 /* Money is set in print type. One rule carries the whole list; add a selector
    here when a new money-bearing surface appears. */
 .stat-value,
@@ -128,9 +165,45 @@ body {
 .sidebar {
   width: 220px;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border-right: 1px solid var(--border);
   padding: 1rem 0.75rem;
+}
+
+/* Theme switch parked under the nav; pushed to the bottom on tall viewports. */
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-start;
+  padding: 0.25rem 0.5rem;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .sidebar-brand {
@@ -2180,12 +2253,12 @@ textarea:focus,
 
 /* Bill stat slips mix their semantic tint directly into paper so they stay
    legible over whichever surface they land on (they are not card-wrapped). */
-.stat-market  { background: color-mix(in srgb, #2f6bff 13%, var(--surface)); }
-.stat-date    { background: color-mix(in srgb, #0b7f9f 13%, var(--surface)); }
-.stat-total   { background: color-mix(in srgb, #0b8a4b 15%, var(--surface)); }
-.stat-account { background: color-mix(in srgb, #6c49c9 15%, var(--surface)); }
-.stat-savings { background: color-mix(in srgb, #b45309 12%, var(--surface)); }
-.stat-budget  { background: color-mix(in srgb, #c1458e 12%, var(--surface)); }
+.stat-market  { background: color-mix(in srgb, var(--chart-1) 13%, var(--surface)); }
+.stat-date    { background: color-mix(in srgb, var(--chart-6) 13%, var(--surface)); }
+.stat-total   { background: color-mix(in srgb, var(--positive) 15%, var(--surface)); }
+.stat-account { background: color-mix(in srgb, var(--violet) 15%, var(--surface)); }
+.stat-savings { background: color-mix(in srgb, var(--chart-7) 12%, var(--surface)); }
+.stat-budget  { background: color-mix(in srgb, var(--chart-5) 12%, var(--surface)); }
 
 .stat-card-label {
   font-size: 0.72rem;
@@ -2226,8 +2299,8 @@ textarea:focus,
 .bill-warning {
   padding: 0.6rem 0.75rem;
   border-radius: var(--radius);
-  background: rgba(211, 58, 44, 0.08);
-  border: 1px solid rgba(211, 58, 44, 0.4);
+  background: color-mix(in srgb, var(--negative) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--negative) 40%, transparent);
   color: var(--negative);
   font-size: 0.88rem;
   margin-bottom: 0.75rem;
@@ -2761,6 +2834,27 @@ textarea:focus,
   --chart-axis: #66738c;
 }
 
+/* Dark equivalents of the chart ramp (validated against the dark surface by
+   eye for now — same fixed order, lightness raised so marks clear 3:1 against
+   the dark card). The heat ramp flips direction in lightness only. */
+:root[data-theme='dark'] {
+  --chart-1: #6f9bff;
+  --chart-2: #e09a5e;
+  --chart-3: #6fbd7d;
+  --chart-4: #b39bff;
+  --chart-5: #ea86c0;
+  --chart-6: #5cbede;
+  --chart-7: #d3b062;
+  --chart-8: #7fb0e8;
+  --seq-0: #232a34;
+  --seq-1: #1d5a34;
+  --seq-2: #2e7a41;
+  --seq-3: #469a4e;
+  --seq-4: #66bd67;
+  --seq-5: #96d88f;
+  --chart-axis: #8a94a6;
+}
+
 /* Chart layout. Two large charts, then a row of four cards (single column
    under 900px). min-width: 0 is required or recharts' SVG overflows the
    grid track. */
@@ -2970,7 +3064,7 @@ textarea:focus,
 }
 
 .product-autocomplete-option.is-active {
-  background: rgba(47, 107, 255, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .product-autocomplete-name {
@@ -3069,7 +3163,7 @@ textarea:focus,
 }
 
 .category-select-option.is-active {
-  background: rgba(47, 107, 255, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .category-select-option.is-selected {
@@ -3298,12 +3392,12 @@ textarea:focus,
 }
 
 .offer-best {
-  background: rgba(11, 138, 75, 0.12);
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
   font-weight: 600;
 }
 
 .offer-worst {
-  background: rgba(211, 58, 44, 0.1);
+  background: color-mix(in srgb, var(--negative) 10%, transparent);
 }
 
 /* Pinned-scope rows without a price: store does not carry / publish the
@@ -3363,7 +3457,7 @@ textarea:focus,
   padding: 0.05rem 0.4rem;
   border-radius: 999px;
   font-size: 0.75rem;
-  background: rgba(47, 107, 255, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .offer-table-scroll {
@@ -3417,11 +3511,11 @@ textarea:focus,
 }
 
 .offer-status-done {
-  background: rgba(11, 138, 75, 0.12);
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
 }
 
 .offer-status-failed {
-  background: rgba(211, 58, 44, 0.1);
+  background: color-mix(in srgb, var(--negative) 10%, transparent);
 }
 
 /* Bags: allocation envelopes inside one account. Reuses the budget card
@@ -3795,4 +3889,114 @@ textarea:focus,
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+/* --- Form field wrapper ------------------------------------------------------ */
+/* Visible label + optional hint + optional error on top of the repo's
+   wrapping-label pattern. Stack layout: label text above the control, hint
+   below. Row layout: label and control side by side (filter bars, compact
+   toolbar fields); the label text scrolls under long controls. */
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field > label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.field > label > input,
+.field > label > select,
+.field > label > textarea,
+.field > label input,
+.field > label select,
+.field > label textarea {
+  font-weight: 400;
+  color: var(--text);
+}
+
+.field-hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin: 0;
+  font-weight: 400;
+}
+
+.field-msg {
+  color: var(--negative);
+  font-size: 0.78rem;
+  margin: 0;
+  font-weight: 500;
+}
+
+.field-error .field-msg {
+  font-weight: 600;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.field-row > label {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.field-row .field-hint,
+.field-row .field-msg {
+  grid-column: 1 / -1;
+}
+
+/* Fields inside the legacy flex create-forms (.form-row) share the row width
+   like the bare controls they replaced; in the grid dialogs (.form-grid) each
+   field sits in its own implicit track and can span both columns on demand. */
+.form-row .field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+
+.form-grid > .field > label,
+.form-stack > .field > label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+
+/* --- Details modal rows ------------------------------------------------------ */
+/* The card-with-details pattern's modal body: label at left (the stat-label
+   styling), value right, one row per fact. */
+.detail-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.75rem 0;
+}
+
+.detail-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, max-content) 1fr;
+  align-items: baseline;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.detail-row .stat-label {
+  color: var(--text-muted);
+}
+
+/* A bag account's expansion names a negative available amount as overspend. */
+.item-field.over > strong {
+  color: var(--negative);
 }

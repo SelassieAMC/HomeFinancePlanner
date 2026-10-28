@@ -9,6 +9,7 @@ import {
   CategorySelect,
   Dialog,
   ErrorMessage,
+  Field,
   UnitSelect,
 } from '../../components/ui';
 
@@ -173,37 +174,36 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
                 <input value={brand} onChange={(e) => setBrand(e.target.value)} />
               </label>
               <div className="form-row-2">
-                <label>
-                  {t('labels.measure')}
-                  <div className="unit-value-row">
-                    <UnitSelect
-                      value={unit}
-                      ariaLabel={t('edit.measureAria')}
-                      emptyLabel={t('edit.noMeasure')}
-                      onChange={setUnit}
-                    />
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={unitValue}
-                      onChange={(e) => setUnitValue(e.target.value)}
-                      placeholder="500"
-                      aria-label={t('edit.sizeAria')}
-                      title={t('edit.sizeTitle')}
-                    />
-                  </div>
-                </label>
-                <label>
-                  {t('edit.category')}
-                  <CategorySelect
-                    categories={categories}
-                    kind="product"
-                    value={categoryId}
-                    ariaLabel={t('edit.categoryAria')}
-                    onChange={setCategoryId}
+                {/* Unit and size get their own fields: one wrapping label over
+                    two controls left the size input unlabeled on the wire. */}
+                <Field label={t('labels.measure')}>
+                  <UnitSelect
+                    value={unit}
+                    ariaLabel={t('edit.measureAria')}
+                    emptyLabel={t('edit.noMeasure')}
+                    onChange={setUnit}
                   />
-                </label>
+                </Field>
+                <Field label={t('edit.sizeLabel')} hint={t('edit.sizeTitle')}>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={unitValue}
+                    onChange={(e) => setUnitValue(e.target.value)}
+                    placeholder="500"
+                    aria-label={t('edit.sizeAria')}
+                  />
+                </Field>
               </div>
+              <Field label={t('edit.category')}>
+                <CategorySelect
+                  categories={categories}
+                  kind="product"
+                  value={categoryId}
+                  ariaLabel={t('edit.categoryAria')}
+                  onChange={setCategoryId}
+                />
+              </Field>
               <label>
                 {t('edit.standardName')}{' '}
                 <span className="item-field-note">{t('edit.rawName', { name: name.trim() || '—' })}</span>

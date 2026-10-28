@@ -17,6 +17,7 @@ export const products: LocaleBundle = {
       descending: 'Descending',
     },
     search: {
+      label: 'Filter products',
       placeholder: 'Search generic name',
       categoryAria: 'Filter by category',
       allCategories: 'All categories',
@@ -87,6 +88,7 @@ export const products: LocaleBundle = {
       measureAria: 'Product measure',
       noMeasure: 'No measure',
       sizeAria: 'Product size value',
+      sizeLabel: 'Size',
       sizeTitle: 'Printed size magnitude, e.g. 500 for a 500ml bottle; 0 clears it',
       standardName: 'Standardized name',
       rawName: 'raw name: {{name}}',
@@ -162,6 +164,7 @@ export const products: LocaleBundle = {
       descending: 'Absteigend',
     },
     search: {
+      label: 'Produkte filtern',
       placeholder: 'Generischen Namen suchen',
       categoryAria: 'Nach Kategorie filtern',
       allCategories: 'Alle Kategorien',
@@ -232,6 +235,7 @@ export const products: LocaleBundle = {
       measureAria: 'Produktmenge',
       noMeasure: 'Keine Menge',
       sizeAria: 'Größenwert des Produkts',
+      sizeLabel: 'Größe',
       sizeTitle: 'Aufgedruckte Größenangabe, z. B. 500 bei einer 500-ml-Flasche; 0 löscht sie',
       standardName: 'Standardisierter Name',
       rawName: 'Originalname: {{name}}',
@@ -307,6 +311,7 @@ export const products: LocaleBundle = {
       descending: 'Descendente',
     },
     search: {
+      label: 'Filtrar productos',
       placeholder: 'Buscar nombre genérico',
       categoryAria: 'Filtrar por categoría',
       allCategories: 'Todas las categorías',
@@ -377,6 +382,7 @@ export const products: LocaleBundle = {
       measureAria: 'Medida del producto',
       noMeasure: 'Sin medida',
       sizeAria: 'Valor del tamaño del producto',
+      sizeLabel: 'Tamaño',
       sizeTitle: 'Magnitud del tamaño impresa, p. ej. 500 para una botella de 500 ml; 0 la borra',
       standardName: 'Nombre estandarizado',
       rawName: 'nombre original: {{name}}',

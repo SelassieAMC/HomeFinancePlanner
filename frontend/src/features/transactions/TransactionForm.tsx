@@ -12,6 +12,7 @@ import {
   Button,
   CategorySelect,
   ErrorMessage,
+  Field,
   ProductAutocomplete,
   UnitSelect,
 } from '../../components/ui';
@@ -449,8 +450,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
         </button>
       </div>
       <div className="form-grid">
-        <label>
-          {t('form.label.date')}
+        <Field label={t('form.label.date')}>
           <input
             type="date"
             value={date}
@@ -459,9 +459,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             // No future dating: transactions record money that already moved.
             max={new Date().toLocaleDateString('en-CA')}
           />
-        </label>
-        <label>
-          {t('form.label.amount')}
+        </Field>
+        <Field label={t('form.label.amount')}>
           <input
             placeholder={hasLines ? t('form.placeholder.fromItems') : '0.00'}
             inputMode="decimal"
@@ -472,9 +471,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             title={hasLines ? t('form.amountCalcTitle') : undefined}
             aria-label={hasLines ? t('form.aria.amountCalc') : t('form.aria.amount')}
           />
-        </label>
-        <label>
-          {isTransfer ? t('form.label.fromAccount') : t('form.label.account')}
+        </Field>
+        <Field label={isTransfer ? t('form.label.fromAccount') : t('form.label.account')}>
           <select
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
@@ -487,11 +485,10 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               </option>
             ))}
           </select>
-        </label>
+        </Field>
         {isTransfer ? (
           <>
-            <label>
-              {t('form.label.toAccount')}
+            <Field label={t('form.label.toAccount')}>
               <select
                 value={counterAccountId}
                 onChange={(e) => setCounterAccountId(e.target.value)}
@@ -505,9 +502,8 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              {t('form.label.fee')}
+            </Field>
+            <Field label={t('form.label.fee')}>
               <input
                 placeholder="0.00"
                 inputMode="decimal"
@@ -515,11 +511,10 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 onChange={(e) => setFee(e.target.value)}
                 aria-label={t('form.aria.fee')}
               />
-            </label>
+            </Field>
           </>
         ) : (
-          <label>
-            {t('form.label.category')}
+          <Field label={t('form.label.category')}>
             <CategorySelect
               categories={kind === 'income' ? incomeCategories(categories) : categories}
               kind="expense"
@@ -528,11 +523,10 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               ariaLabel={t('form.label.category')}
               emptyLabel={t('form.placeholder.category')}
             />
-          </label>
+          </Field>
         )}
         {kind === 'expense' && accountBags.length > 0 && (
-          <label>
-            {t('form.label.fromBag')}
+          <Field label={t('form.label.fromBag')}>
             <select
               value={bagId}
               onChange={(e) => setBagId(e.target.value)}
@@ -545,11 +539,10 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 </option>
               ))}
             </select>
-          </label>
+          </Field>
         )}
         {kind === 'expense' && (
-          <label>
-            {t('form.label.store')}
+          <Field label={t('form.label.store')}>
           {customStore ? (
             <input
               autoFocus
@@ -588,10 +581,9 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
               <option value="__custom__">{t('form.option.addMarket')}</option>
             </select>
           )}
-        </label>
+        </Field>
         )}
-        <label>
-          {t('form.label.description')}
+        <Field label={t('form.label.description')}>
           <input
             placeholder={t('form.placeholder.note')}
             value={description}
@@ -599,14 +591,22 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
             maxLength={500}
             aria-label={t('form.aria.description')}
           />
-        </label>
+        </Field>
       </div>
 
       {isTransfer && transferAccount &&
         accounts.find((a) => String(a.id) === accountId)?.currency !== transferAccount.currency && (
           <>
-            <label className="hint-inline">
-              {t('form.label.rate', { from: currency, to: transferAccount.currency })}
+            <Field
+              label={t('form.label.rate', { from: currency, to: transferAccount.currency })}
+              hint={
+                counterPreviewCents != null
+                  ? t('form.rateHint', {
+                      amount: formatCents(counterPreviewCents, transferAccount.currency),
+                    }) + (fee.trim() !== '' ? t('form.rateFeeNote', { currency }) : '')
+                  : undefined
+              }
+            >
               <input
                 inputMode="decimal"
                 value={rate}
@@ -617,15 +617,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
                 placeholder={refRate !== undefined ? Number(refRate.toPrecision(6)).toString() : ''}
                 aria-label={t('form.aria.rate')}
               />
-            </label>
-            {counterPreviewCents != null && (
-              <p className="hint-inline">
-                {t('form.rateHint', {
-                  amount: formatCents(counterPreviewCents, transferAccount.currency),
-                })}
-                {fee.trim() !== '' && t('form.rateFeeNote', { currency })}
-              </p>
-            )}
+            </Field>
             {!rate && refRate === undefined && (
               <p className="hint-inline">{t('form.crossCurrency', { currency })}</p>
             )}
@@ -646,77 +638,104 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
           const total = lineCents(line, categories);
           return (
             <div className="transaction-line" key={line.key}>
-              <ProductAutocomplete
-                value={line.name}
-                onValueChange={(name) => updateLine(line.key, { name })}
-                onPick={(p) => {
-                  // Picking an existing product seeds its brand/unit and
-                  // canonicalizes the name; an Escape-kept name is
-                  // auto-created on save. A pick wins over the
-                  // normalization hint, which is cleared.
-                  updateLine(line.key, {
-                    name: p ? p.name : line.name,
-                    brand: p?.brand || line.brand,
-                    unit: p?.unit || line.unit,
-                    unit_value: p?.unit_value != null ? String(p.unit_value) : line.unit_value,
-                    category_id: p?.category_id ?? line.category_id,
-                    normalizedFor: undefined,
-                    normalizedName: undefined,
-                    normalizedGeneric: undefined,
-                  });
-                }}
-                onBlur={() => void lookupNormalization(line)}
-                currency={currency}
-                placeholder={t('form.placeholder.itemName', { n: i + 1 })}
-                ariaLabel={t('form.placeholder.itemName', { n: i + 1 })}
-              />
-              <input
-                className="transaction-line-num"
-                type="text"
-                inputMode="decimal"
-                value={line.qty}
-                onChange={(e) => updateLine(line.key, { qty: e.target.value })}
-                aria-label={t('form.lines.qtyAria', { n: i + 1 })}
-                placeholder={t('form.lines.qty')}
-              />
-              <div className="unit-value-row">
-                <UnitSelect
-                  value={line.unit}
-                  onChange={(unit) => updateLine(line.key, { unit })}
-                  ariaLabel={t('form.lines.unitAria', { n: i + 1 })}
-                />
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={line.unit_value}
-                  onChange={(e) => updateLine(line.key, { unit_value: e.target.value })}
-                  aria-label={t('form.lines.sizeAria', { n: i + 1 })}
-                  placeholder="500"
-                />
+              {/* Line cells keep the flex geometry the controls used to carry
+                  (the wrapper takes over the flex sizing so switching to
+                  labeled Fields doesn't reflow the row). */}
+              <div style={{ flex: '3 1 180px' }}>
+                <Field label={t('form.line.name', { n: i + 1 })}>
+                  <ProductAutocomplete
+                    value={line.name}
+                    onValueChange={(name) => updateLine(line.key, { name })}
+                    onPick={(p) => {
+                      // Picking an existing product seeds its brand/unit and
+                      // canonicalizes the name; an Escape-kept name is
+                      // auto-created on save. A pick wins over the
+                      // normalization hint, which is cleared.
+                      updateLine(line.key, {
+                        name: p ? p.name : line.name,
+                        brand: p?.brand || line.brand,
+                        unit: p?.unit || line.unit,
+                        unit_value: p?.unit_value != null ? String(p.unit_value) : line.unit_value,
+                        category_id: p?.category_id ?? line.category_id,
+                        normalizedFor: undefined,
+                        normalizedName: undefined,
+                        normalizedGeneric: undefined,
+                      });
+                    }}
+                    onBlur={() => void lookupNormalization(line)}
+                    currency={currency}
+                    placeholder={t('form.placeholder.itemName', { n: i + 1 })}
+                    ariaLabel={t('form.line.name', { n: i + 1 })}
+                  />
+                </Field>
               </div>
-              <input
-                className="transaction-line-num"
-                inputMode="decimal"
-                value={line.price}
-                onChange={(e) => updateLine(line.key, { price: e.target.value })}
-                aria-label={t('form.lines.unitPriceAria', { n: i + 1 })}
-                placeholder={t('form.lines.price')}
-              />
-              <input
-                className="transaction-line-num"
-                inputMode="decimal"
-                value={line.discount}
-                onChange={(e) => updateLine(line.key, { discount: e.target.value })}
-                aria-label={t('form.lines.discountAria', { n: i + 1 })}
-                placeholder={t('form.lines.discount')}
-              />
-              <CategorySelect
-                categories={categories}
-                kind="product"
-                value={line.category_id}
-                onChange={(id) => updateLine(line.key, { category_id: id })}
-                ariaLabel={t('form.lines.categoryAria', { n: i + 1 })}
-              />
+              <div style={{ flex: '0 1 76px', minWidth: 64 }}>
+                <Field label={t('form.line.qty', { n: i + 1 })}>
+                  <input
+                    className="transaction-line-num"
+                    type="text"
+                    inputMode="decimal"
+                    value={line.qty}
+                    onChange={(e) => updateLine(line.key, { qty: e.target.value })}
+                    aria-label={t('form.line.qty', { n: i + 1 })}
+                    placeholder={t('form.lines.qty')}
+                  />
+                </Field>
+              </div>
+              <div style={{ flex: '0 1 150px', minWidth: 130 }}>
+                <Field label={t('form.line.unitSize', { n: i + 1 })}>
+                  <span className="unit-value-row">
+                    <UnitSelect
+                      value={line.unit}
+                      onChange={(unit) => updateLine(line.key, { unit })}
+                      ariaLabel={t('form.line.unitSize', { n: i + 1 })}
+                    />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={line.unit_value}
+                      onChange={(e) => updateLine(line.key, { unit_value: e.target.value })}
+                      aria-label={t('form.lines.sizeAria', { n: i + 1 })}
+                      placeholder="500"
+                    />
+                  </span>
+                </Field>
+              </div>
+              <div style={{ flex: '0 1 76px', minWidth: 64 }}>
+                <Field label={t('form.line.price', { n: i + 1 })}>
+                  <input
+                    className="transaction-line-num"
+                    inputMode="decimal"
+                    value={line.price}
+                    onChange={(e) => updateLine(line.key, { price: e.target.value })}
+                    aria-label={t('form.lines.unitPriceAria', { n: i + 1 })}
+                    placeholder={t('form.lines.price')}
+                  />
+                </Field>
+              </div>
+              <div style={{ flex: '0 1 76px', minWidth: 64 }}>
+                <Field label={t('form.line.discount', { n: i + 1 })}>
+                  <input
+                    className="transaction-line-num"
+                    inputMode="decimal"
+                    value={line.discount}
+                    onChange={(e) => updateLine(line.key, { discount: e.target.value })}
+                    aria-label={t('form.lines.discountAria', { n: i + 1 })}
+                    placeholder={t('form.lines.discount')}
+                  />
+                </Field>
+              </div>
+              <div style={{ flex: '0 1 130px', minWidth: 72 }}>
+                <Field label={t('form.line.category', { n: i + 1 })}>
+                  <CategorySelect
+                    categories={categories}
+                    kind="product"
+                    value={line.category_id}
+                    onChange={(id) => updateLine(line.key, { category_id: id })}
+                    ariaLabel={t('form.lines.categoryAria', { n: i + 1 })}
+                  />
+                </Field>
+              </div>
               <span className="transaction-line-total">
                 {Number.isNaN(total) ? '—' : formatCents(total, currency)}
               </span>

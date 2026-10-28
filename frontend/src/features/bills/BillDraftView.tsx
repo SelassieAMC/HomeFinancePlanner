@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Bill, Category } from '../../types/domain';
 import { formatCents } from '../../lib/money';
-import { EmptyState } from '../../components/ui';
+import { EmptyState, Field } from '../../components/ui';
 import { ReceiptPreviewModal } from './ReceiptPreviewModal';
 
 // BillDraftView renders an accepted bill in the same mobile-first style as
@@ -124,14 +124,16 @@ export function BillDraftView({ bill, categories = [] }: { bill: Bill; categorie
       )}
 
       {items.length > 1 && (
-        <input
-          className="search-input"
-          type="search"
-          placeholder={t('search.placeholder')}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label={t('search.aria')}
-        />
+        <Field label={t('search.label')} className="bill-search-field">
+          <input
+            className="search-input"
+            type="search"
+            placeholder={t('search.placeholder')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label={t('search.aria')}
+          />
+        </Field>
       )}
 
       {items.length === 0 ? (

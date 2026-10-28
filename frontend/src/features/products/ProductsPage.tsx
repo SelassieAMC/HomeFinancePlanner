@@ -13,6 +13,7 @@ import {
   CategorySelect,
   EmptyState,
   ErrorMessage,
+  Field,
   Pagination,
   Spinner,
 } from '../../components/ui';
@@ -108,36 +109,43 @@ export function ProductsPage() {
       <h2 className="page-title">{t('title')}</h2>
 
       <div className="filter-row">
-        <input
-          placeholder={t('search.placeholder')}
-          value={nameInput}
-          onChange={(e) => setNameInput(e.target.value)}
-        />
-        <CategorySelect
-          categories={categories.data ?? []}
-          kind="product"
-          value={categoryId}
-          ariaLabel={t('search.categoryAria')}
-          emptyLabel={t('search.allCategories')}
-          onChange={(id) => {
-            setCategoryId(id);
-            setOffset(0);
-          }}
-        />
-        <select
-          value={sort}
-          aria-label={t('sort.orderBy')}
-          onChange={(e) => {
-            setSort(e.target.value as ProductSort);
-            setOffset(0);
-          }}
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {t('sort.prefix')} {t(o.labelKey)}
-            </option>
-          ))}
-        </select>
+        <Field label={t('search.label')} layout="row">
+          <input
+            placeholder={t('search.placeholder')}
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+            aria-label={t('search.label')}
+          />
+        </Field>
+        <Field label={t('search.categoryAria')} layout="row">
+          <CategorySelect
+            categories={categories.data ?? []}
+            kind="product"
+            value={categoryId}
+            ariaLabel={t('search.categoryAria')}
+            emptyLabel={t('search.allCategories')}
+            onChange={(id) => {
+              setCategoryId(id);
+              setOffset(0);
+            }}
+          />
+        </Field>
+        <Field label={t('sort.orderBy')} layout="row">
+          <select
+            value={sort}
+            aria-label={t('sort.orderBy')}
+            onChange={(e) => {
+              setSort(e.target.value as ProductSort);
+              setOffset(0);
+            }}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {t('sort.prefix')} {t(o.labelKey)}
+              </option>
+            ))}
+          </select>
+        </Field>
         <button
           className="btn btn-secondary sort-order"
           onClick={() => {

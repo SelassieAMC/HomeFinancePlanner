@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Spinner } from '../ui';
+import { Spinner, ThemeToggle } from '../ui';
 import { useAuth } from '../../features/auth/AuthContext';
 import { UserAvatar } from './UserAvatar';
 
@@ -116,6 +116,9 @@ export function AppLayout() {
             )}
           </ul>
         </nav>
+        <div className="sidebar-footer">
+          <ThemeToggle />
+        </div>
       </aside>
       <main className="app-main">
         <Outlet />

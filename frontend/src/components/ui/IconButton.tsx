@@ -33,6 +33,17 @@ export function IconEdit() {
   );
 }
 
+/** Details: circle with an "i" — opens the read-everything modal for a row. */
+export function IconInfo() {
+  return (
+    <Svg>
+      <circle cx="12" cy="12" r="9.5" />
+      <path d="M12 11v5" />
+      <path d="M12 8v.5" />
+    </Svg>
+  );
+}
+
 export function IconTrash() {
   return (
     <Svg>

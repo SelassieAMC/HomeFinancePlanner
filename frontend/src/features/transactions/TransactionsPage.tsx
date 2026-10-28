@@ -28,6 +28,7 @@ import {
   Dialog,
   ItemPanel,
   ItemPanels,
+  Field,
 } from '../../components/ui';
 import { TransactionForm } from './TransactionForm';
 
@@ -327,27 +328,31 @@ export function TransactionsPage() {
           ) : (
             <>
               <div className="filter-row">
-                <input
-                  type="month"
-                  value={month}
-                  onChange={(e) => setMonth(e.target.value)}
-                  aria-label={t('filters.monthAria')}
-                />
+                <Field label={t('filters.month')} layout="row">
+                  <input
+                    type="month"
+                    value={month}
+                    onChange={(e) => setMonth(e.target.value)}
+                    aria-label={t('filters.monthAria')}
+                  />
+                </Field>
                 {(bagsView.data?.accounts ?? []).some((v) => v.bags.length > 0) && (
-                  <select
-                    value={bagFilter}
-                    onChange={(e) => setBagFilter(e.target.value)}
-                    aria-label={t('filters.bagAria')}
-                  >
-                    <option value="">{t('filters.allBags')}</option>
-                    {(bagsView.data?.accounts ?? []).flatMap((v) =>
-                      v.bags.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name} ({v.account_name})
-                        </option>
-                      )),
-                    )}
-                  </select>
+                  <Field label={t('filters.bag')} layout="row">
+                    <select
+                      value={bagFilter}
+                      onChange={(e) => setBagFilter(e.target.value)}
+                      aria-label={t('filters.bagAria')}
+                    >
+                      <option value="">{t('filters.allBags')}</option>
+                      {(bagsView.data?.accounts ?? []).flatMap((v) =>
+                        v.bags.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name} ({v.account_name})
+                          </option>
+                        )),
+                      )}
+                    </select>
+                  </Field>
                 )}
                 <Button
                   variant="primary"

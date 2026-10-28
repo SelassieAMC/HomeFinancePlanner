@@ -1,0 +1,3985 @@
+/* Design tokens — light minimal system: a near-white canvas, pure-white
+   surfaces, one blue brand accent, slate-gray text. Everything else stays
+   semantic (green/red/violet are state colors only). Money figures keep
+   Spline Sans Mono (`--font-money`) with tabular figures. The page shell and
+   the white document surfaces use the same ink, so the historic paper remap
+   rule (--ink/--text) is now effectively an identity — kept so components
+   never need to know which surface they sit on. */
+:root {
+  color-scheme: light;
+
+  /* Surfaces. */
+  --bg: #f5f6f8; /* app canvas */
+  --bg-raised: #eceef2; /* recessed chrome (tab bar blur, wells on canvas) */
+  --surface: #ffffff; /* cards, tables, dialogs, inputs */
+
+  /* Text. */
+  --text: #17233a; /* primary */
+  --text-muted: #66738c; /* secondary */
+  --ink: var(--text); /* alias for surface-context rules */
+  --ink-muted: var(--text-muted);
+  --border: #dfe3ea; /* borders & dividers */
+  --border-strong: #cfd4dd; /* control borders, one step up */
+  --hairline: #e8ebf0; /* finer dividers inside surfaces */
+
+  /* Brand + semantics. */
+  --accent: #2f6bff; /* blue — buttons, active states, progress, focus */
+  --accent-hover: #1e56e0;
+  --accent-contrast: #ffffff; /* text on accent fills */
+  --accent-text: #1e56e0; /* accent as text on white */
+  --focus: var(--accent);
+  --positive: #0b8a4b; /* savings, underspending, accepted */
+  --negative: #d33a2c; /* over budget, warnings */
+  --violet: #6c49c9; /* fixed expenses, recurring bills */
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 2px 10px rgb(16 24 40 / 0.06);
+  --shadow-raised:
+    0 4px 8px -2px rgb(16 24 40 / 0.08), 0 2px 4px rgb(16 24 40 / 0.05);
+
+  --radius: 10px;
+
+  --font-body: 'Instrument Sans Variable', system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-body);
+  --font-money: 'Spline Sans Mono', ui-monospace, 'SF Mono', monospace;
+}
+
+/* Dark theme — same slate-blue hue family, raised lightness band. Set via
+   `data-theme` on <html> (see lib/theme.ts + the index.html bootstrap);
+   'system' resolves in JS before it gets here, so this block only ever sees
+   a resolved light/dark. Charts, scrims and tinted chips keep working because
+   every derived color reads these tokens (the tints below use color-mix on
+   the token, never a hardcoded hex). */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Surfaces. */
+  --bg: #101318;
+  --bg-raised: #161b22;
+  --surface: #1b212b;
+
+  /* Text. */
+  --text: #dce3ee;
+  --text-muted: #8a94a6;
+  --ink: var(--text);
+  --ink-muted: var(--text-muted);
+
+  --border: #2a323d;
+  --border-strong: #3a4451;
+  --hairline: #232a34;
+
+  /* Brand + semantics. */
+  --accent: #4472ff;
+  --accent-hover: #5d87ff;
+  --accent-contrast: #ffffff;
+  --accent-text: #7ea3ff;
+  --focus: #7ea3ff;
+  --positive: #45b581;
+  --negative: #e8685c;
+  --violet: #a58af5;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 10px rgb(0 0 0 / 0.4);
+  --shadow-raised: 0 4px 8px -2px rgb(0 0 0 / 0.55), 0 2px 4px rgb(0 0 0 / 0.4);
+}
+
+/* Money is set in print type. One rule carries the whole list; add a selector
+   here when a new money-bearing surface appears. */
+.stat-value,
+.stat-card-value,
+.item-price,
+.item-line-total,
+.budget-amounts,
+.budget-status,
+.day-header,
+.num,
+.money-input-row input,
+.cell-input-num,
+.transaction-line-num,
+.transaction-line-total,
+.tx-item-meta,
+.tx-item-total,
+.cart-last-price,
+.product-autocomplete-meta,
+.category-select-meta,
+.chart-tooltip {
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* --- Page primitives ------------------------------------------------------- */
+/* Vertical rhythm for every feature page; replaces ad-hoc margin stacks.
+   Direct children surrender their own block margins so the gap is the only
+   source of spacing. The column is minmax(0, 1fr): without it the implicit
+   track sizes to the widest child's min-content (a chart's intrinsic pixel
+   width) and the whole page overflows horizontally on phones. */
+.page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-content: start;
+}
+
+.page > * {
+  margin-block: 0;
+}
+
+/* --- Layout ---------------------------------------------------------------- */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Document surfaces inherit body ink; the historic two-context remap is
+   identity under the light token set — the selector list is kept so any
+   future dark mode only needs new values here. */
+.card,
+.data-table,
+.dialog,
+.item-panel,
+.item-detail,
+.stat-card,
+.more-sheet,
+.fab-item,
+.product-autocomplete-list,
+.category-select-panel {
+  color: var(--text);
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 1rem 0.75rem;
+}
+
+/* Theme switch parked under the nav; pushed to the bottom on tall viewports. */
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-start;
+  padding: 0.25rem 0.5rem;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 1.25rem;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.nav-link {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .nav-link:hover {
+    background: var(--bg);
+    color: var(--text);
+  }
+}
+
+.nav-link.active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.app-main {
+  flex: 1;
+  padding: 1.5rem 2rem;
+  max-width: 1100px;
+}
+
+/* --- Page primitives ------------------------------------------------------- */
+.page-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.45rem, 5vw, 1.7rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  box-shadow: var(--shadow);
+}
+
+.card-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.stat-tile {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.stat-positive {
+  color: var(--positive);
+}
+
+.stat-negative {
+  color: var(--negative);
+}
+
+/* The at-a-glance row: four measures fused into one strip, separated by
+   dashed rules instead of card gaps. */
+.stat-grid.glance {
+  gap: 0;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.glance > .stat-tile {
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
+  padding: 1rem 1.25rem 1.1rem;
+}
+
+.glance > .stat-tile + .stat-tile {
+  border-left: 1px dashed var(--hairline);
+}
+
+.glance .stat-value {
+  font-size: 1.5rem;
+}
+
+@media (min-width: 900px) {
+  .stat-grid.glance {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 899px) {
+  .glance > .stat-tile:nth-child(n + 3) {
+    border-top: 1px dashed var(--hairline);
+  }
+}
+
+@media (max-width: 480px) {
+  .glance > .stat-tile {
+    padding: 0.9rem 0.85rem;
+  }
+}
+
+/* Net-worth tile: the tile's whole header is the toggle; the per-account
+   balances it rolls up expand inside the tile (collapsed by default, so the
+   strip keeps its height until the reader asks). */
+.glance-net-tile {
+  align-self: start;
+}
+
+.glance-net-toggle {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.glance-net-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.glance-net-value {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.glance-chev {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.glance-chev.open {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glance-chev {
+    transition: none;
+  }
+}
+
+.glance-accounts {
+  margin-top: 0.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--hairline);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.glance-account-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.glance-split-head {
+  margin-top: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+}
+
+.glance-liability-row .glance-account-amount {
+  color: var(--danger, #d33a2c);
+}
+
+.glance-account-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glance-account-amount {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Foreign-currency accounts trail their raw balance muted; the converted
+   amount (base currency) is what adds up to the tile's net worth. */
+.glance-account-native {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.glance-account-norate {
+  flex: none;
+}
+
+.glance-accounts-link {
+  font-size: 0.8rem;
+  color: var(--accent);
+  text-decoration: none;
+  padding-top: 0.25rem;
+}
+
+.glance-accounts-link:hover,
+.glance-accounts-link:focus-visible {
+  text-decoration: underline;
+}
+
+/* Currency-tile tint (accent family, matching the tile rhythm). */
+.stat-currency {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.75rem;
+}
+
+/* --- Forms & filters ------------------------------------------------------- */
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.form-row input,
+.form-row select,
+.form-row .category-select {
+  min-width: 120px;
+  flex: 1;
+}
+
+/* Edit-in-place forms (inside collapsible panels): always stack vertically —
+   the panel body is narrow even on desktop, so a wrapping row never fits. */
+.form-stack {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.filter-row {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0 0.75rem;
+}
+
+/* The category combobox trigger shows only the current choice, so it needs a
+   steadier width than the old select (which sized to its longest option). */
+.filter-row .category-select {
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+
+/* --- Tabs (page-level view switcher) ---------------------------------------- */
+/* Underline tabs: quiet gray labels, the active one claims the accent
+   underline. Content switching stays with the caller. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.4rem 0.5rem 0.55rem;
+  margin-bottom: -1px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  .tab-btn {
+    min-height: 44px;
+    padding-inline: 0.75rem;
+  }
+}
+
+@media (hover: hover) {
+  .tab-btn:hover {
+    color: var(--text);
+  }
+}
+
+.tab-btn.active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+}
+
+/* Controls: white fill, one border gray, a focus ring in the accent. 16px
+   (1rem — body's 15px lives on body, not html) on inputs so iOS never
+   auto-zooms a focused control; the category combobox's trigger rides along
+   so it looks exactly like the selects it replaces. */
+input,
+select,
+textarea,
+.category-select-trigger {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* 44px touch targets on touch devices and narrow viewports only — desktop
+   keeps compact inline controls (see the cell-input split below). */
+@media (pointer: coarse), (max-width: 768px) {
+  input,
+  select,
+  textarea,
+  .category-select-trigger {
+    min-height: 44px;
+  }
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+.category-select-trigger:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* --- Buttons --------------------------------------------------------------- */
+/* No icons on buttons, ever — type only. Desktop is compact (a row of buttons
+   reads as a toolbar, not a lineup of slabs); touch keeps 44px targets. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  .btn {
+    min-height: 44px;
+  }
+}
+
+/* A compact size for tables/rows/toolbars. */
+.btn-sm {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 7px;
+}
+
+/* Pressed feedback for every tappable control (no transform jump). */
+.btn:active,
+.segmented button:active,
+.nav-link:active,
+.hamburger:active,
+.item-remove:active {
+  filter: brightness(0.92);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, #4079ff, var(--accent));
+  color: var(--accent-contrast);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.22),
+    0 1px 2px rgb(16 24 40 / 0.16);
+}
+
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(180deg, #2f6bf1, var(--accent-hover));
+  }
+}
+
+.btn-primary:active:not(:disabled) {
+  box-shadow:
+    inset 0 1px 2px rgb(16 24 40 / 0.25),
+    0 0 0 1px var(--accent);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.05);
+}
+
+@media (hover: hover) {
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--bg);
+  }
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--negative);
+  border-color: color-mix(in srgb, var(--negative) 40%, transparent);
+}
+
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    background: var(--negative);
+    color: #fff;
+    border-color: var(--negative);
+  }
+}
+
+/* --- Tables & lists -------------------------------------------------------- */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.simple-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.simple-list li {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.simple-list li:last-child {
+  border-bottom: none;
+}
+
+/* --- Transactions grouped by day -------------------------------------------- */
+.day-group {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.25rem 0.35rem 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* --- Budget progress ------------------------------------------------------- */
+.budget-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.budget-row {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-bottom: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One envelope in the dashboard budget card / budget page list. */
+.budget-item {
+  display: grid;
+  gap: 0.35rem;
+  padding-bottom: 0.4rem;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+.progress-fill.over {
+  background: var(--negative);
+}
+
+/* --- Budget envelope cards (mockup style) ----------------------------------- */
+/* Always-visible progress card: colored dot + name + spent/amount, a bar, and
+   a "left"/"over by" status line. Actions sit in a row underneath. */
+.budget-card {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.budget-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.budget-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.budget-dot.over {
+  background: var(--negative);
+}
+
+.budget-dot.closed {
+  background: var(--text-muted);
+}
+
+/* Due within the next 2 days (or overdue): the red highlight of the
+ * occurrences register — dot + badge + a tinted card edge. */
+.budget-dot.danger {
+  background: var(--negative);
+}
+
+.budget-card.due-soon {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+}
+
+/* Achieved goal: green dot / green fill (goals reuse the budget card layout). */
+.budget-dot.ok {
+  background: var(--positive);
+}
+
+.progress-fill.done {
+  background: var(--positive);
+}
+
+.budget-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.budget-amounts {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.budget-amounts strong {
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.budget-card .progress-track {
+  height: 10px;
+  border-radius: 5px;
+}
+
+/* Occurrences register (schedules tab): month paging header — nav arrows +
+ * month name left, owed/paid totals per currency right. */
+.payables-month-head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 8px 0 4px;
+  flex-wrap: wrap;
+}
+
+.payables-month-head strong {
+  font-size: 0.95rem;
+}
+
+.payables-month-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.payables-month-head + .budget-list {
+  margin-top: 4px;
+}
+
+.budget-status {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-status.ok {
+  color: var(--positive);
+}
+
+.budget-status.over {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.budget-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.budget-actions .btn {
+  flex: 1 1 auto;
+}
+
+/* --- Compact planning rows ------------------------------------------------- */
+/* The dashboard planning bodies render one line + a hairline bar per budget /
+   goal / bag instead of a stacked card each — a wall of entities shrinks to a
+   scannable column. Visual language (dot, fill, tabular amounts) matches the
+   envelope cards above. */
+.plan-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.plan-row {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.plan-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.plan-icon {
+  flex: none;
+  font-size: 0.95rem;
+}
+
+.plan-name {
+  flex: 1 1 auto;
+  min-width: 8rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-context {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plan-status {
+  flex: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plan-status.ok {
+  color: var(--positive);
+}
+
+.plan-status.over {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+/* When a row has no bar (bags without target), its status rides the name
+   line instead of the bar row. */
+.plan-status-inline {
+  margin-left: auto;
+}
+
+.plan-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.plan-bar-row .progress-track {
+  flex: 1 1 auto;
+  height: 5px;
+  border-radius: 3px;
+}
+
+.plan-bar-row .progress-fill {
+  border-radius: 3px;
+}
+
+/* Bags group under their account: the header carries the account's balance
+   and unbagged remainder once, not repeated in every bag. */
+.plan-account {
+  display: grid;
+  gap: 0.45rem;
+  padding-top: 0.35rem;
+}
+
+.plan-account + .plan-account {
+  margin-top: 0.35rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.plan-account-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.plan-account-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.plan-account-figures {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.plan-flag {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--negative) 12%, transparent);
+  color: var(--negative);
+}
+
+/* --- Icon-only action buttons ---------------------------------------------- */
+/* Actions in tables collapse to icons; the string (title + aria-label) is the
+   accessible name, the icon is decoration. */
+.icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+/* The tooltip: anchored so its right edge meets the button's (actions sit at
+   the table's right edge, so it always extends inward, never out of the scroll
+   container), shown on hover AND keyboard focus after a short delay so
+   traversing a table doesn't pop bubbles on every row. */
+.icon-btn::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 5px);
+  right: 0;
+  padding: 0.28rem 0.55rem;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 0.12s ease 0.35s, transform 0.12s ease 0.35s;
+  z-index: 30;
+}
+
+.icon-btn:hover::after,
+.icon-btn:focus-visible::after,
+.icon-btn:active::after {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.icon-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--negative) 12%, transparent);
+  color: var(--negative);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn {
+    transition: none;
+  }
+}
+
+/* --- Planning tables -------------------------------------------------------- */
+/* The management lists of the planning tabs (budgets, goals, bags, schedules)
+   read as tables: aligned columns for the figures, one hairline per row, and
+   a trailing icon-action cell. Scrolled horizontally on narrow screens. */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-table th {
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
+.plan-table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+  font-size: 0.92rem;
+  min-width: 0;
+}
+
+.plan-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.plan-table td.num,
+.plan-table th.num {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.plan-table .cell-actions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.plan-table .cell-actions .icon-btn {
+  margin-left: 0.15rem;
+}
+
+.plan-table .cell-progress {
+  min-width: 120px;
+  width: 12%;
+}
+
+/* Entity cell: state dot + display name. */
+.plan-table .cell-entity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.plan-table .cell-entity .plan-name,
+.plan-table .cell-entity {
+  overflow: hidden;
+}
+
+.plan-table .cell-entity .entity-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-table .cell-muted {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.plan-table .cell-tag {
+  margin-left: 0.35rem;
+  padding: 0.02rem 0.45rem;
+  border-radius: 999px;
+  background: var(--bg-raised);
+}
+
+.plan-table .cell-status .ok {
+  color: var(--positive);
+}
+
+/* Status cell: colored dot + short text (or dot alone when the color is enough). */
+.plan-table .cell-status {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.plan-table .cell-status.over {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.plan-table .cell-status.ok {
+  color: var(--positive);
+}
+
+/* --- Feedback -------------------------------------------------------------- */
+.spinner-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text-muted);
+  padding: 2rem 0;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error-message {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--negative) 12%, var(--surface));
+  color: var(--negative);
+  font-weight: 500;
+}
+
+.empty-state {
+  padding: 2rem 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+/* --- Ghost button ---------------------------------------------------------- */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+@media (hover: hover) {
+  .btn-ghost:hover:not(:disabled) {
+    color: var(--text);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+}
+
+/* --- Segmented control / filter chips (period switcher, kind filter) --------- */
+/* Pill chips with a gap — the active one fills with ink, like the reference
+   design's filter row. */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.segmented button {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+/* 44px touch targets on touch devices and narrow viewports only. */
+@media (pointer: coarse), (max-width: 768px) {
+  .segmented button {
+    min-height: 44px;
+    padding: 0.4rem 1rem;
+    font-size: 0.9rem;
+  }
+}
+
+@media (hover: hover) {
+  .segmented button:hover:not(.active) {
+    color: var(--text);
+    background: var(--bg);
+  }
+}
+
+.segmented button.active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent-text);
+}
+
+.period-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 0.75rem;
+  flex-wrap: wrap;
+}
+
+.period-nav-label {
+  font-weight: 600;
+  min-width: 8ch;
+}
+
+/* --- Status badges --------------------------------------------------------- */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.badge.danger {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+  color: var(--negative);
+}
+
+.badge-draft {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.badge-accepted {
+  border-color: color-mix(in srgb, var(--positive) 45%, transparent);
+  color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 10%, var(--surface));
+}
+
+.badge-discarded {
+  opacity: 0.7;
+  text-decoration: line-through;
+}
+
+.badge-analyzing {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.badge-failed {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+  color: var(--negative);
+  background: color-mix(in srgb, var(--negative) 10%, var(--surface));
+}
+
+/* Insight-kind badges (dashboard): green = opportunity worth acting on,
+   red = watch list (shrunk pack, creeping price). */
+.badge-insight-opportunity {
+  border-color: color-mix(in srgb, var(--positive) 45%, transparent);
+  color: var(--positive);
+  background: color-mix(in srgb, var(--positive) 10%, var(--surface));
+}
+
+.badge-insight-watch {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+  color: var(--negative);
+  background: color-mix(in srgb, var(--negative) 10%, var(--surface));
+}
+
+/* --- Dashboard insights card ------------------------------------------------ */
+.insights-card,
+.budgets-card {
+  margin: 0.5rem 0;
+}
+
+.insight-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.insight-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.insight-row:last-child {
+  border-bottom: none;
+}
+
+.insight-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.insight-message {
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.insight-age {
+  white-space: nowrap;
+  padding-top: 0.1rem;
+}
+
+/* Rank number of a consumption card's ranked list (top products, stores). */
+.toplist-rank {
+  min-width: 1.4rem;
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 0.1rem;
+}
+
+@media (max-width: 640px) {
+  .insight-row {
+    flex-wrap: wrap;
+  }
+
+  .insight-body {
+    flex-basis: 100%;
+    order: 3;
+  }
+}
+
+/* --- Horizontal scroll for wide tables ------------------------------------- */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll .data-table {
+  min-width: 480px;
+}
+
+/* Long labels (article names in the analysis table) ellipsize instead of
+   blowing the first column out — full text is available by scrolling. */
+.table-scroll .data-table td:first-child {
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Bill scanning --------------------------------------------------------- */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.camera-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.bill-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  margin-top: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.store-logo {
+  display: block;
+  max-width: 100%;
+  max-height: 120px;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Product photos: large preview inside the edit form, small square as the
+ * table thumbnail. */
+.product-photo {
+  display: block;
+  max-width: 100%;
+  max-height: 120px;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.product-photo-small {
+  width: 1.75rem;
+  height: 1.75rem;
+  max-height: none;
+  margin: 0;
+  object-fit: cover;
+  border-radius: var(--radius);
+}
+
+/* Products table: thumbnail + name cell, icon-only row actions. */
+.product-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 10rem;
+}
+
+.product-name {
+  font-weight: 600;
+}
+
+/* Grouped products view: each family row expands into a nested mini table of
+ * its member products. The expander chevron sits in front of the family name;
+ * the member count is a small pill beside it. */
+.group-toggle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.group-count {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.group-members > td {
+  background: color-mix(in srgb, var(--surface) 92%, var(--border));
+  padding: 0 0.5rem 0.5rem;
+  /* The wrapper cell spans the whole table — it must not inherit the
+   * first-column ellipsis clipping (the mini table would be cut off). */
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+}
+
+.group-members-table {
+  margin: 0.4rem 0 0;
+}
+
+.group-members-table th,
+.group-members-table td {
+  padding: 0.35rem 0.6rem;
+}
+
+.group-members-table th {
+  font-size: 0.68rem;
+}
+
+/* Standardized (normalized) name of a product, muted next to the raw text. */
+.product-standard {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.icon-btn {
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+  padding: 0.3rem 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+/* Product details modal: stat grid + per-store price breakdown. */
+.product-details-brand,
+.product-details-description {
+  margin: 0.35rem 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.product-details-heading {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.product-details-empty {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.store-prices-table {
+  min-width: 100%;
+}
+
+/* Product merge dialog: side-by-side comparison of the two records; the
+ * column (and header) of the record chosen to keep is highlighted. The
+ * leading column is a row-label column, so it uses th styling like thead. */
+.merge-compare-table {
+  margin-top: 0.5rem;
+}
+
+.merge-compare-table th[scope='row'] {
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.merge-compare-table td.selected,
+.merge-compare-table th.selected {
+  background: color-mix(in srgb, var(--accent, #4d8ef7) 12%, transparent);
+}
+
+.merge-keep-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text, inherit);
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+/* Product edit modal: a two-column mini editor page (basic information and
+ * purchase stats on the left; photo card and footer actions on the right),
+ * collapsing to one column on narrow screens. */
+.edit-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  margin-top: 0.25rem;
+}
+
+.edit-main,
+.edit-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.edit-card {
+  padding: 0.85rem 0.95rem;
+}
+
+.edit-section-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.edit-main .form-grid {
+  grid-template-columns: 1fr;
+  margin-top: 0;
+}
+
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.form-grid textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.product-photo-preview {
+  max-height: 180px;
+  margin: 0 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.product-photo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 180px;
+  margin-bottom: 0.5rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.photo-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.photo-dropzone.dragover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+@media (max-width: 800px) {
+  .edit-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Prev/Next pager for server-paginated lists. */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.pagination-status {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.sort-order {
+  padding: 0.35rem 0.6rem;
+}
+
+/* Per-file summary after a scan upload batch. */
+.upload-results {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.upload-results li {
+  padding: 0.15rem 0;
+  word-break: break-word;
+}
+
+/* ✕ button on a staged (not yet sent) receipt photo — inline, compact. */
+.remove-picked {
+  padding: 0.05rem 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+/* One staged entry: thumbnail, name/size, rotate + remove actions. The
+   thumbnail is what makes a sideways receipt obvious before the scan runs. */
+.picked-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.picked-thumb {
+  width: 3.25rem;
+  height: 3.25rem;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.picked-thumb-blank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+}
+
+.picked-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.picked-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.hint-text {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0;
+}
+
+.hint-inline {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.hint-banner {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--ink);
+}
+
+/* Default-connector marker in the settings list. */
+.default-badge {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.default-radio {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* --- Bill draft view ------------------------------------------------------- */
+.bill-draft {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.bill-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.bill-meta-value {
+  display: block;
+  font-weight: 600;
+}
+
+.bill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* --- Settings form grid ---------------------------------------------------- */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.form-grid input,
+.form-grid select,
+.form-grid .category-select-trigger {
+  font-weight: 400;
+  color: var(--text);
+}
+
+/* Primary actions of forms sit right-aligned at the form's end; on phones
+   they stretch full-width (handled in the 480px block near the bill rules). */
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* --- Mobile: bottom tab bar + speed-dial FAB + More sheet ------------------- */
+.tabbar,
+.tab-fab,
+.fab-menu,
+.fab-backdrop,
+.more-sheet,
+.sheet-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .app-main {
+    padding: 1.25rem 1rem;
+    /* Keep content clear of the fixed tab bar. */
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+  }
+
+  .filter-row {
+    flex-wrap: wrap;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 0.45rem 0.6rem;
+  }
+
+  .tabbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto 1fr 1fr;
+    align-items: center;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-top: 1px solid var(--border);
+  }
+
+  /* Text-only tabs (no icons): the active label carries the accent. */
+  .tab-link {
+    display: grid;
+    place-items: center;
+    padding: 0.3rem 0 0.2rem;
+    border: none;
+    background: none;
+    border-radius: 12px;
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .tab-link.active {
+    color: var(--accent-text);
+  }
+
+  /* Center quick-action button, lifted over the bar's top edge. */
+  .tab-fab-slot {
+    position: relative;
+    display: flex;
+    justify-content: center;
+  }
+
+  .tab-fab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    margin-top: -1.5rem;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font-size: 1.8rem;
+    font-weight: 400;
+    line-height: 1;
+    box-shadow: 0 6px 16px rgb(16 24 40 / 0.2);
+    cursor: pointer;
+    transition: transform 0.15s ease;
+  }
+
+  .tab-fab:active {
+    filter: brightness(0.94);
+  }
+
+  .tab-fab.open {
+    transform: rotate(45deg);
+  }
+
+  /* Speed-dial options, stacked above the FAB. */
+  .fab-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(5.25rem + env(safe-area-inset-bottom));
+    z-index: 70;
+  }
+
+  .fab-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    border: none;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+  }
+
+  .fab-item:active {
+    filter: brightness(0.94);
+  }
+
+  /* Transparent layer behind the open speed dial. */
+  .fab-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 65;
+    background: transparent;
+  }
+
+  /* "More" bottom sheet. */
+  .sheet-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 75;
+    background: rgb(16 24 40 / 0.45);
+  }
+
+  .more-sheet {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 80;
+    border-radius: 20px 20px 0 0;
+    background: var(--surface);
+    padding: 1rem 0.75rem calc(1rem + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 30px rgb(16 24 40 / 0.16);
+  }
+
+  .more-sheet ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .more-link {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.8rem 0.9rem;
+    border-radius: 12px;
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .more-link:active {
+    background: var(--bg);
+  }
+
+  .more-link.active {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent-text);
+  }
+}
+
+/* Phones: tighter cards, edge-to-edge padding that respects notches.
+   Only the side paddings are overridden here — .app-main's bottom padding
+   from the 768px block (6rem + safe area) must survive to keep the page
+   content clear of the fixed tab bar. */
+@media (max-width: 480px) {
+  .app-main {
+    padding-left: calc(env(safe-area-inset-left) + 0.75rem);
+    padding-right: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  .card {
+    padding: 0.9rem;
+  }
+}
+
+/* --- Inline editable table cells (bill draft) ------------------------------- */
+.cell-input {
+  min-width: 100px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* Money field with a ± sign toggle (bill draft). Phone decimal keypads
+   have no minus key, so negative-allowed lines (deposit/refund) get an
+   explicit tap target that flips the amount's sign. */
+.money-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.3rem;
+}
+
+.money-input-row input {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Currency code chip at the field's right edge (MoneyInput). */
+.money-currency {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.55em;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.sign-toggle {
+  flex: none;
+  width: 2.25rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .sign-toggle:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+}
+
+.cell-input-name {
+  min-width: 140px;
+}
+
+.cell-input-unit {
+  min-width: 52px;
+}
+
+.cell-input-num {
+  min-width: 72px;
+  text-align: right;
+}
+
+/* --- Bill summary cards (mobile-first) --------------------------------------
+   Colored tints use rgba so they read in both light and dark themes. */
+.stat-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .stat-cards {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+/* Odd card count (5 stat tiles in the bill editor): the leftover card spans
+   the full row instead of leaving a half-width cell. */
+.stat-card:last-child:nth-child(odd) {
+  grid-column: span 2;
+}
+
+/* Bill stat slips mix their semantic tint directly into paper so they stay
+   legible over whichever surface they land on (they are not card-wrapped). */
+.stat-market  { background: color-mix(in srgb, var(--chart-1) 13%, var(--surface)); }
+.stat-date    { background: color-mix(in srgb, var(--chart-6) 13%, var(--surface)); }
+.stat-total   { background: color-mix(in srgb, var(--positive) 15%, var(--surface)); }
+.stat-account { background: color-mix(in srgb, var(--violet) 15%, var(--surface)); }
+.stat-savings { background: color-mix(in srgb, var(--chart-7) 12%, var(--surface)); }
+.stat-budget  { background: color-mix(in srgb, var(--chart-5) 12%, var(--surface)); }
+
+.stat-card-label {
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+.stat-card-value {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.stat-card-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  min-height: 1em;
+}
+
+.stat-card-text {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.stat-card-input,
+.stat-card select {
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 0.25rem 0.4rem;
+  width: 100%;
+  min-width: 0;
+  background: var(--surface);
+}
+
+/* --- Mismatch warning -------------------------------------------------------- */
+.bill-warning {
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--negative) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--negative) 40%, transparent);
+  color: var(--negative);
+  font-size: 0.88rem;
+  margin-bottom: 0.75rem;
+}
+
+.warn-icon {
+  cursor: help;
+}
+
+/* --- Article search ----------------------------------------------------------- */
+.search-input {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+/* --- Collapsible item panels --------------------------------------------------- */
+.item-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.item-panel {
+  border: none;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.item-panel[open] {
+  box-shadow: 0 0 0 2px var(--accent-text), var(--shadow);
+}
+
+.item-panel summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.item-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.item-panel summary::after {
+  content: '▾';
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.item-panel[open] summary::after {
+  transform: rotate(180deg);
+}
+
+/* Small ✕ on a draft item summary — removes the line from the bill.
+   44px tap target, negative margin so the summary row height is unchanged. */
+.item-remove {
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: -0.4rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .item-remove:hover {
+    color: var(--negative);
+    border-color: var(--negative);
+  }
+}
+
+.item-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.item-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.item-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.item-brand {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.item-price {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.item-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.25rem 0.75rem 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.item-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.item-field > span:first-child {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Muted inline note inside an item-field label (e.g. the raw receipt text
+   next to the standardized-name override). */
+.item-field-note {
+  font-weight: 400;
+}
+
+.item-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.6rem;
+}
+
+/* Measure + size-value pair inside one item-field (the numeric magnitude the
+   AI reads — "500" for a 500ml line). */
+.unit-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(56px, 0.8fr);
+  gap: 0.3rem;
+  width: 100%;
+}
+
+.unit-value-row input {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.95rem;
+  min-width: 0;
+}
+
+.item-detail input,
+.item-detail select,
+.item-detail .category-select-trigger {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.95rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.item-detail .category-select {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Inline editor cells stay compact on desktop but get the 16px touch-safe
+   size on touch devices and narrow viewports (no iOS zoom); the 44px floor
+   comes from the base media rule above. */
+@media (pointer: coarse), (max-width: 768px) {
+  .cell-input,
+  .item-detail input,
+  .item-detail select,
+  .item-detail .category-select-trigger {
+    font-size: 1rem;
+  }
+}
+
+.item-line-total {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Bill totals block ---------------------------------------------------------- */
+.bill-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 0.75rem;
+}
+
+.bill-total-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+}
+
+.bill-total-line input {
+  max-width: 110px;
+}
+
+.bill-total-row {
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+/* --- Storage category legend (accepted bills) ------------------------------------ */
+.category-legend summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0.35rem 0;
+}
+
+.legend-section {
+  margin-top: 0.5rem;
+}
+
+.legend-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+}
+
+.legend-chip {
+  font-size: 0.8rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  cursor: help;
+}
+
+/* Bill meta edit row reuses the item grid spacing */
+.bill-meta-edit {
+  margin-bottom: 0.75rem;
+}
+
+/* --- Bill card adjustments ----------------------------------------------------
+   Editable controls inside the summary cards stay visually quiet on fine
+   pointers: smaller font than the card value so the cards don't feel
+   convoluted. Touch keeps the 16px zoom-proof size from the base rule. */
+@media (hover: hover) and (pointer: fine) {
+  .stat-card-input,
+  .stat-card select {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.3rem 0.45rem;
+  }
+}
+
+/* Bottom blocks (totals + meta row) share identical input sizing so the
+   controls line up in width and height. */
+.bill-totals input,
+.bill-meta-edit input,
+.bill-meta-edit select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  font-size: 1rem;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+/* Both bottom rows share one column template so fields line up in width
+   and height across the totals block and the meta row. */
+.bill-totals .item-field-grid,
+.bill-meta-edit {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 480px) {
+  .bill-totals .item-field-grid,
+  .bill-meta-edit {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Primary actions become full-width tappable rows on phones. */
+  .bill-actions .btn,
+  .camera-row .btn {
+    flex: 1 1 auto;
+  }
+
+  /* Create forms stack: one full-width field per row, buttons stretch. */
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .form-row input,
+  .form-row select,
+  .form-row .category-select {
+    min-width: 0;
+  }
+}
+
+/* --- Expenses-by-day bar chart ------------------------------------------------ */
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.bar-chart-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 150px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1px;
+}
+
+.bar-chart-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.bar-chart-bar {
+  width: 100%;
+  max-width: 22px;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+  transition: height 0.2s ease;
+}
+
+@media (hover: hover) {
+  .bar-chart-bar:hover {
+    background: var(--accent-hover);
+  }
+}
+
+.bar-chart-axis {
+  display: flex;
+  gap: 2px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.bar-chart-axis span {
+  flex: 1;
+  text-align: center;
+  min-width: 0;
+}
+
+/* --- Dialogs ----------------------------------------------------------------- */
+/* Tall dialogs scroll inside the backdrop instead of clipping (the on-screen
+   keyboard can easily push a dialog past the viewport on a phone). */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(16 24 40 / 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 1rem;
+  z-index: 100;
+}
+
+.dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-width: 420px;
+  width: 100%;
+  margin-block: 10vh;
+  padding: 1.1rem 1.25rem;
+}
+
+.dialog-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+
+.dialog-wide {
+  max-width: 760px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+/* --- Receipt preview (scan review) -------------------------------------------
+   The photo the draft was read from: a thumbnail card in the editor's summary
+   row and a near-fullscreen zoom viewer. */
+.receipt-thumb-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-block-start: 0.35rem;
+  cursor: zoom-in;
+  display: block;
+  align-self: center;
+}
+.receipt-thumb {
+  max-height: 72px;
+  max-width: 100%;
+  display: block;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.receipt-backdrop {
+  align-items: center;
+  padding: 12px;
+}
+.receipt-viewer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  width: min(960px, 100%);
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.receipt-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.receipt-viewer-spacer {
+  flex: 1;
+}
+.receipt-part-tab {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  cursor: pointer;
+}
+.receipt-part-tab.active {
+  background: var(--surface-strong, var(--border));
+  font-weight: 600;
+}
+.receipt-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.receipt-zoom-controls button {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 8px;
+  min-width: 2.1rem;
+  padding: 0.15rem 0.45rem;
+  cursor: pointer;
+}
+.receipt-zoom-controls button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.receipt-viewer-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.15rem 0.4rem;
+}
+.receipt-viewer-body {
+  overflow: auto;
+  flex: 1;
+  padding: 0.5rem;
+  text-align: center;
+}
+.receipt-viewer-body img {
+  display: block;
+  margin-inline: auto;
+  height: auto;
+}
+
+/* --- Analytics charts -------------------------------------------------------- */
+/* Categorical ramp validated with the dataviz six-checks script against the
+   white chart surface (lightness band, chroma floor, adjacent CVD ΔE,
+   normal-vision floor, 3:1 mark contrast — all pass; the one 6–8 CVD band
+   pair is covered by legends + tooltips). Order is fixed and never cycled per
+   rank: brand blue leads, then rust, green, violet, magenta, cyan, bronze,
+   navy. Series color is never the only cue (legend + tooltips). Heatmap is a
+   light-gray → spruce sequential ramp. */
+:root {
+  --chart-1: #2f6bff;
+  --chart-2: #a34210;
+  --chart-3: #43924a;
+  --chart-4: #6c49c9;
+  --chart-5: #c1458e;
+  --chart-6: #0b7f9f;
+  --chart-7: #8f6c16;
+  --chart-8: #2b62a0;
+  --seq-0: #eef0f3;
+  --seq-1: #c7e5b0;
+  --seq-2: #97cc7f;
+  --seq-3: #63ab57;
+  --seq-4: #3d8b3f;
+  --seq-5: #1f6b2c;
+  --chart-grid: var(--hairline);
+  --chart-axis: #66738c;
+}
+
+/* Dark equivalents of the chart ramp (validated against the dark surface by
+   eye for now — same fixed order, lightness raised so marks clear 3:1 against
+   the dark card). The heat ramp flips direction in lightness only. */
+:root[data-theme='dark'] {
+  --chart-1: #6f9bff;
+  --chart-2: #e09a5e;
+  --chart-3: #6fbd7d;
+  --chart-4: #b39bff;
+  --chart-5: #ea86c0;
+  --chart-6: #5cbede;
+  --chart-7: #d3b062;
+  --chart-8: #7fb0e8;
+  --seq-0: #232a34;
+  --seq-1: #1d5a34;
+  --seq-2: #2e7a41;
+  --seq-3: #469a4e;
+  --seq-4: #66bd67;
+  --seq-5: #96d88f;
+  --chart-axis: #8a94a6;
+}
+
+/* Chart layout. Two large charts, then a row of four cards (single column
+   under 900px). min-width: 0 is required or recharts' SVG overflows the
+   grid track. */
+.chart-grid-2 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+}
+
+.chart-grid-4 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+@media (max-width: 900px) {
+  .chart-grid-2,
+  .chart-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chart-card {
+  min-width: 0;
+}
+
+.chart-card .card-title {
+  margin-bottom: 0.75rem;
+}
+
+.chart-window {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: -0.4rem 0 0;
+}
+
+.chart-window + .chart-subtitle {
+  margin-top: 0;
+}
+
+.chart-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: -0.5rem 0 0.75rem;
+}
+
+/* ResponsiveContainer needs a sized parent. */
+.chart-body {
+  height: 280px;
+}
+
+.chart-body-tall {
+  height: 300px;
+}
+
+/* Recessive recharts chrome: grid hairlines, muted tick text. */
+.recharts-cartesian-axis-tick text {
+  fill: var(--chart-axis);
+  font-size: 11px;
+}
+
+.recharts-cartesian-grid line {
+  stroke: var(--chart-grid);
+}
+
+.recharts-surface {
+  overflow: visible;
+}
+
+.recharts-wrapper {
+  font-size: 0.8rem;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.6rem;
+}
+
+.chart-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+/* Custom recharts tooltip (the default one is hardcoded white). */
+.chart-tooltip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.78rem;
+  min-width: 140px;
+}
+
+.chart-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: var(--text);
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text);
+}
+
+.chart-tooltip-row + .chart-tooltip-row {
+  margin-top: 0.15rem;
+}
+
+/* Sunburst */
+.sunburst-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.sunburst-segment {
+  stroke: var(--surface);
+  stroke-width: 1;
+  transition: opacity 0.12s ease;
+  cursor: default;
+}
+
+.sunburst-segment.dim {
+  opacity: 0.35;
+}
+
+/* Heatmap: row label column + 7 day columns. */
+.heatmap {
+  display: grid;
+  grid-template-columns: auto repeat(7, 1fr);
+  gap: 3px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.heatmap-corner {
+  visibility: hidden;
+}
+
+.heatmap-day {
+  text-align: center;
+  padding-block: 2px;
+}
+
+.heatmap-label {
+  align-self: center;
+  padding-right: 0.4rem;
+  white-space: nowrap;
+}
+
+.heatmap-cell {
+  aspect-ratio: 1.6;
+  border-radius: 4px;
+  background: var(--seq-0);
+  border: 1px solid var(--border);
+}
+
+/* --- Product autocomplete (transaction lines) --------------------------------
+   Name input with a server-matched suggestion dropdown; positioning is
+   relative to the wrapping .product-autocomplete. */
+.product-autocomplete {
+  position: relative;
+  flex: 1;
+  min-width: 140px;
+}
+
+.product-autocomplete-input {
+  width: 100%;
+}
+
+.product-autocomplete-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.product-autocomplete-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.product-autocomplete-option.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.product-autocomplete-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-autocomplete-brand {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.product-autocomplete-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.product-autocomplete-empty {
+  padding: 0.45rem 0.55rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* --- Category dropdown (searchable) ------------------------------------------
+   A select-shaped trigger opening a panel with a search input and the
+   category list. Absolutely positioned like the product autocomplete's
+   dropdown, relative to the wrapping .category-select. */
+.category-select {
+  position: relative;
+}
+
+.category-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.category-select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-select-caret {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.category-select-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  min-width: 220px;
+  padding: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.category-select-search {
+  width: 100%;
+  margin-bottom: 0.35rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.category-select-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.category-select-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.category-select-option.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.category-select-option.is-selected {
+  font-weight: 700;
+}
+
+.category-select-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-select-meta {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.category-select-empty {
+  padding: 0.45rem 0.55rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* --- Manual transaction item lines -------------------------------------------
+   Two-row grid per line on narrow screens, one row on wide ones (name grows,
+   numbers stay compact like the bill draft's .cell-input-num). */
+.transaction-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.transaction-lines-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+.transaction-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.transaction-line .product-autocomplete {
+  flex: 3;
+  min-width: 180px;
+}
+
+/* Normalization-memory hint under a manual item line: the standardized name
+   the typed raw text maps to (wraps to its own row inside the flex line). */
+.transaction-line-normalized {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.transaction-line-num {
+  flex: 0 1 76px;
+  min-width: 64px;
+  width: 76px;
+  text-align: right;
+}
+
+.transaction-line select,
+.transaction-line .category-select {
+  flex: 0 1 auto;
+  min-width: 72px;
+}
+
+/* Unit + size-value pair inside a manual item line: keep it inline with the
+   other fields (the shared .unit-value-row is width:100% for the editor grid). */
+.transaction-line .unit-value-row {
+  flex: 0 1 150px;
+  width: auto;
+  min-width: 130px;
+}
+
+.transaction-line .btn {
+  flex: 0 0 auto;
+}
+
+.transaction-line-total {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.transaction-lines-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.transaction-lines-footer strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Transaction item lines (readonly view in the expanded panel) ------------ */
+.tx-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tx-item-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.tx-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tx-item-brand {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.tx-item-meta {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tx-item-total {
+  flex-shrink: 0;
+  min-width: 4.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Purchase cart / offer results -------------------------------------------
+   Colored tints use rgba so they read in both light and dark themes. */
+
+/* Cart page */
+.cart-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cart-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.cart-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart-qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.cart-last-price {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cart-add-row {
+  margin: 0.6rem 0;
+  position: relative;
+}
+
+/* Offer result table: green = best price, red = worst, per product and
+   currency (flags computed backend-side). */
+.offer-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.offer-table th,
+.offer-table td {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+}
+
+.offer-table th.num,
+.offer-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.offer-best {
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
+  font-weight: 600;
+}
+
+.offer-worst {
+  background: color-mix(in srgb, var(--negative) 10%, transparent);
+}
+
+/* Pinned-scope rows without a price: store does not carry / publish the
+   product. Muted, never tinted — they carry no best/worst flag. */
+.offer-unavailable td {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Variety actually sold in that market (loose name match). */
+.offer-variety {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Pre-search options: store scope + name-match toggle. */
+.search-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.search-options-group {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+
+.search-options-group legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0;
+}
+
+.search-options-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+  margin: 0.25rem 0;
+}
+
+.search-options-stores {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0 0.8rem;
+  margin: 0.3rem 0 0.3rem 1.5rem;
+}
+
+.offer-tag {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.offer-table-scroll {
+  overflow-x: auto;
+}
+
+.offer-notes {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Past searches list */
+.cart-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cart-history-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cart-history-link {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.offer-status {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.offer-status-done {
+  background: color-mix(in srgb, var(--positive) 12%, transparent);
+}
+
+.offer-status-failed {
+  background: color-mix(in srgb, var(--negative) 10%, transparent);
+}
+
+/* Bags: allocation envelopes inside one account. Reuses the budget card
+   language (.budget-card/.budget-*) plus these section bits. */
+.bag-account-section {
+  margin-top: 1.5rem;
+}
+
+.bag-account-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.bag-account-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.bag-unbagged {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+/* Account group sections mirror the bag sections (same visual language,
+   distinct class so the two features stay independent). */
+.acct-group-section { margin-top: 1.5rem; }
+
+.acct-group-title { margin: 0 0 0.5rem; font-size: 1rem; }
+
+.group-manage-list { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.4rem; }
+
+.group-manage-row { display: flex; align-items: center; gap: 0.6rem; }
+.group-manage-row > span:nth-child(1) { flex: 1; }
+
+.ledger-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.ledger-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ledger-kind {
+  flex-shrink: 0;
+  min-width: 5.5rem;
+  font-size: 0.75rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.ledger-amounts {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* Tabbed Planning card on the dashboard: the tab strip sits directly under
+   the card title, the active section's pane gets breathing room below it. */
+.planning-card .tabs {
+  margin-bottom: 0.9rem;
+}
+
+.planning-pane .budget-list:first-child,
+.planning-pane .plan-list:first-child,
+.planning-pane .empty-state:first-child {
+  margin-top: 0.25rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Auth & users: login screen, top-right avatar chip, profile/user admin tabs.
+   --------------------------------------------------------------------------- */
+.login-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(1200px 500px at 50% -10%,
+      color-mix(in srgb, var(--accent) 9%, var(--bg)) 0%, var(--bg) 60%);
+}
+
+.login-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 0.85rem;
+  padding: 1.5rem 1.6rem;
+}
+
+.login-title {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+
+.login-subtitle {
+  margin: -0.4rem 0 0.1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Labels inside the login card keep the form-grid label look (grid helper,
+   muted caption above the control) rather than the form-row inline look. */
+.login-card > label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.login-card > label input,
+.login-card > label select {
+  font-weight: 400;
+  color: var(--text);
+}
+
+.login-keep {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text) !important;
+  font-weight: 400 !important;
+  cursor: pointer;
+}
+
+.login-error {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--negative) 12%, var(--surface));
+  color: var(--negative);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.login-submit {
+  width: 100%;
+}
+
+/* Top-right profile chip. Fixed so it hugs the viewport corner over the page
+   content on both layouts; mobile pulls it inside the safe area. */
+.user-avatar-slot {
+  position: fixed;
+  top: 1rem;
+  right: 2rem;
+  z-index: 80;
+}
+
+.user-avatar-btn,
+.user-avatar-img {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+}
+
+.user-avatar-btn {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .user-avatar-btn:hover {
+    border-color: var(--border-strong);
+  }
+}
+
+.user-avatar-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.user-avatar-img,
+.user-menu-img,
+.user-row-photo {
+  object-fit: cover;
+}
+
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  padding: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+}
+
+.user-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0.25rem;
+}
+
+.user-menu-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+}
+
+.user-menu-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.user-menu-role {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.user-menu button {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .user-menu button:hover {
+    background: var(--bg-raised);
+  }
+}
+
+/* Settings: profile + admin users sections. */
+.profile-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.profile-photo {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--hairline);
+}
+
+.profile-photo-empty {
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.profile-pw-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.profile-pw-form label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.profile-pw-form label input {
+  font-weight: 400;
+  color: var(--text);
+}
+
+.profile-pw-form label.default-radio,
+.profile-pw-form label.login-keep {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.form-error-inline {
+  color: var(--negative);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.user-row-photo {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+}
+
+.user-photo-empty {
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* The avatar floats over the page content — give headings room. */
+.page-title {
+  padding-right: 3rem;
+}
+
+@media (max-width: 768px) {
+  .user-avatar-slot {
+    top: 0.65rem;
+    right: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  .page-title {
+    padding-right: 2.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .user-avatar-btn,
+  .user-avatar-img,
+  .user-avatar-initials {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/* Inline two-step user delete confirm inside a member panel. */
+.delete-confirm-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* --- Form field wrapper ------------------------------------------------------ */
+/* Visible label + optional hint + optional error on top of the repo's
+   wrapping-label pattern. Stack layout: label text above the control, hint
+   below. Row layout: label and control side by side (filter bars, compact
+   toolbar fields); the label text scrolls under long controls. */
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field > label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.field > label > input,
+.field > label > select,
+.field > label > textarea,
+.field > label input,
+.field > label select,
+.field > label textarea {
+  font-weight: 400;
+  color: var(--text);
+}
+
+.field-hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin: 0;
+  font-weight: 400;
+}
+
+.field-msg {
+  color: var(--negative);
+  font-size: 0.78rem;
+  margin: 0;
+  font-weight: 500;
+}
+
+.field-error .field-msg {
+  font-weight: 600;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.field-row > label {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.field-row .field-hint,
+.field-row .field-msg {
+  grid-column: 1 / -1;
+}
+
+/* Fields inside the legacy flex create-forms (.form-row) share the row width
+   like the bare controls they replaced; in the grid dialogs (.form-grid) each
+   field sits in its own implicit track and can span both columns on demand. */
+.form-row .field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.form-row > .field:has(button:not(.category-select-trigger)) {
+  flex: 0 0 auto;
+}
+
+.form-grid > .field > label,
+.form-stack > .field > label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* Stable conditional slots: forms whose fields appear/disappear keep their
+   row heights by rendering the wrapper (label + hint stay put) and only
+   mounting the control — the grid doesn't reflow. */
+.field.is-conditional {
+  min-height: 4.4rem;
+}

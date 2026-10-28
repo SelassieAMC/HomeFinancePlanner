@@ -14,6 +14,8 @@ export const transactions: LocaleBundle = {
       saved: 'Transaction saved.',
     },
     filters: {
+      month: 'Month',
+      bag: 'Bag',
       monthAria: 'Filter by month',
       bagAria: 'Filter by bag',
       allBags: 'All bags',
@@ -152,6 +154,14 @@ export const transactions: LocaleBundle = {
         "Cross-currency transfer — the amount is recorded in the source account's currency ({{currency}}).",
       rateHint: 'Receiving ≈ {{amount}}',
       rateFeeNote: ' (plus the fee, charged in {{currency}})',
+      line: {
+        name: 'Item {{n}} name',
+        qty: 'Qty {{n}}',
+        unitSize: 'Unit & size {{n}}',
+        price: 'Price {{n}}',
+        discount: 'Discount {{n}}',
+        category: 'Category {{n}}',
+      },
       lines: {
         header: 'Items',
         optional: '(optional)',
@@ -205,6 +215,8 @@ export const transactions: LocaleBundle = {
       saved: 'Transaktion gespeichert.',
     },
     filters: {
+      month: 'Monat',
+      bag: 'Umschlag',
       monthAria: 'Nach Monat filtern',
       bagAria: 'Nach Umschlag filtern',
       allBags: 'Alle Umschläge',
@@ -343,6 +355,14 @@ export const transactions: LocaleBundle = {
         'Währungsübergreifende Umbuchung — der Betrag wird in der Währung des Quellkontos erfasst ({{currency}}).',
       rateHint: 'Ankommen ≈ {{amount}}',
       rateFeeNote: ' (zuzüglich der Gebühr, abgebucht in {{currency}})',
+      line: {
+        name: 'Artikelname {{n}}',
+        qty: 'Menge {{n}}',
+        unitSize: 'Einheit & Größe {{n}}',
+        price: 'Preis {{n}}',
+        discount: 'Rabatt {{n}}',
+        category: 'Kategorie {{n}}',
+      },
       lines: {
         header: 'Artikel',
         optional: '(optional)',
@@ -396,6 +416,8 @@ export const transactions: LocaleBundle = {
       saved: 'Transacción guardada.',
     },
     filters: {
+      month: 'Mes',
+      bag: 'Bolsillo',
       monthAria: 'Filtrar por mes',
       bagAria: 'Filtrar por bolsillo',
       allBags: 'Todos los bolsillos',
@@ -534,6 +556,14 @@ export const transactions: LocaleBundle = {
         'Transferencia entre divisas — el importe se registra en la divisa de la cuenta de origen ({{currency}}).',
       rateHint: 'Recibe ≈ {{amount}}',
       rateFeeNote: ' (más la comisión, cobrada en {{currency}})',
+      line: {
+        name: 'Nombre del artículo {{n}}',
+        qty: 'Cant. {{n}}',
+        unitSize: 'Unidad y tamaño {{n}}',
+        price: 'Precio {{n}}',
+        discount: 'Descuento {{n}}',
+        category: 'Categoría {{n}}',
+      },
       lines: {
         header: 'Artículos',
         optional: '(opcional)',

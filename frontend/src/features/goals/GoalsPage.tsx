@@ -11,6 +11,7 @@ import {
   Dialog,
   ErrorMessage,
   EmptyState,
+  Field,
   Spinner,
   IconButton,
   IconEdit,
@@ -104,40 +105,48 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
     <>
       <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
-          <input
-            placeholder={t('add.name_placeholder')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={200}
-            aria-label={t('add.name_aria')}
-            required
-          />
-          <input
-            placeholder={t('add.amount_placeholder')}
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            required
-          />
-          <select
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            aria-label={t('add.account_aria')}
-            required
-          >
-            <option value="">{t('add.account_empty')}</option>
-            {(accounts.data ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.currency})
-              </option>
-            ))}
-          </select>
-          <input
-            type="date"
-            value={targetDate}
-            onChange={(e) => setTargetDate(e.target.value)}
-            aria-label={t('add.date_aria')}
-          />
+          <Field label={t('add.label_name')}>
+            <input
+              placeholder={t('add.name_placeholder')}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={200}
+              aria-label={t('add.name_aria')}
+              required
+            />
+          </Field>
+          <Field label={t('add.label_amount')}>
+            <input
+              placeholder={t('add.amount_placeholder')}
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
+          </Field>
+          <Field label={t('add.label_account')}>
+            <select
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              aria-label={t('add.account_aria')}
+              required
+            >
+              <option value="">{t('add.account_empty')}</option>
+              {(accounts.data ?? []).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.currency})
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('add.label_date')}>
+            <input
+              type="date"
+              value={targetDate}
+              onChange={(e) => setTargetDate(e.target.value)}
+              aria-label={t('add.date_aria')}
+            />
+          </Field>
           <Button type="submit">{t('add.submit')}</Button>
         </form>
         <p className="hint-text">
@@ -313,26 +322,23 @@ function GoalEditForm({
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
-      <label>
-        {t('edit.name')}
+      <Field label={t('edit.name')}>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={200}
           required
         />
-      </label>
-      <label>
-        {t('edit.target_amount', { currency: initial.currency })}
+      </Field>
+      <Field label={t('edit.target_amount', { currency: initial.currency })}>
         <input
           inputMode="decimal"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           required
         />
-      </label>
-      <label>
-        {t('edit.account')}
+      </Field>
+      <Field label={t('edit.account')}>
         <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
           {/* Same-currency accounts only: the backend refuses a cross-currency
               re-point — the target would silently change meaning. */}
@@ -344,16 +350,17 @@ function GoalEditForm({
               </option>
             ))}
         </select>
-      </label>
-      <label>
-        {t('edit.date')}
+      </Field>
+      <Field
+        label={t('edit.date')}
+        hint={t('hints.target_date')}
+      >
         <input
           type="date"
           value={targetDate}
           onChange={(e) => setTargetDate(e.target.value)}
         />
-      </label>
-      <p className="hint-text">{t('hints.target_date')}</p>
+      </Field>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         {onCancel && (

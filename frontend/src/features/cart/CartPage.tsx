@@ -9,7 +9,7 @@ import type { OfferResult } from '../../types/domain';
 import { useAsync } from '../../hooks/useAsync';
 import { usePolling } from '../../hooks/usePolling';
 import { formatCents } from '../../lib/money';
-import { Button, Card, Tabs, EmptyState, ErrorMessage, ProductAutocomplete, Spinner } from '../../components/ui';
+import { Button, Card, Tabs, EmptyState, ErrorMessage, Field, ProductAutocomplete, Spinner } from '../../components/ui';
 import { useCart } from './CartContext';
 import { OfferResultView } from './OfferResultView';
 
@@ -286,16 +286,18 @@ export function CartPage() {
           )}
 
           <div className="cart-add-row">
-            <ProductAutocomplete
-              value={pickName}
-              onValueChange={setPickName}
-              onPick={(product) => {
-                if (product) cart.add(product);
-                setPickName('');
-              }}
-              ariaLabel={t('add.aria')}
-              placeholder={t('add.placeholder')}
-            />
+            <Field label={t('add.label')} layout="row">
+              <ProductAutocomplete
+                value={pickName}
+                onValueChange={setPickName}
+                onPick={(product) => {
+                  if (product) cart.add(product);
+                  setPickName('');
+                }}
+                ariaLabel={t('add.aria')}
+                placeholder={t('add.placeholder')}
+              />
+            </Field>
           </div>
 
           <div className="camera-row">

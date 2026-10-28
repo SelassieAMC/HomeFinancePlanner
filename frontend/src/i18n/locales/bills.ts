@@ -208,6 +208,7 @@ export const bills: LocaleBundle = {
     },
     search: {
       placeholder: 'Search articles…',
+      label: 'Filter articles',
       aria: 'Filter articles',
       noMatch: 'No articles match “{{query}}”.',
     },
@@ -473,6 +474,7 @@ export const bills: LocaleBundle = {
     },
     search: {
       placeholder: 'Artikel suchen…',
+      label: 'Artikel filtern',
       aria: 'Artikel filtern',
       noMatch: 'Keine Artikel entsprechen „{{query}}“.',
     },
@@ -738,6 +740,7 @@ export const bills: LocaleBundle = {
     },
     search: {
       placeholder: 'Buscar artículos…',
+      label: 'Filtrar artículos',
       aria: 'Filtrar artículos',
       noMatch: 'Ningún artículo coincide con «{{query}}».',
     },

@@ -15,7 +15,17 @@ export const settings: LocaleBundle = {
     },
     language: {
       title: 'Language',
+      label: 'UI language',
       hint: 'Changes apply immediately and are saved for your account.',
+    },
+    theme: {
+      title: 'Theme',
+      label: 'Appearance',
+      hint:
+        '“System” follows your device’s light/dark setting. Dark mode applies to this browser only.',
+      system: 'System',
+      light: 'Light',
+      dark: 'Dark',
     },
     profile: {
       photoTitle: 'Profile photo',
@@ -171,7 +181,17 @@ export const settings: LocaleBundle = {
     },
     language: {
       title: 'Sprache',
+      label: 'Oberflächensprache',
       hint: 'Änderungen greifen sofort und werden für dein Konto gespeichert.',
+    },
+    theme: {
+      title: 'Design',
+      label: 'Aussehen',
+      hint:
+        '„System“ folgt der Hell-/Dunkel-Einstellung deines Geräts. Der Dunkelmodus gilt nur für diesen Browser.',
+      system: 'System',
+      light: 'Hell',
+      dark: 'Dunkel',
     },
     profile: {
       photoTitle: 'Profilfoto',
@@ -328,7 +348,17 @@ export const settings: LocaleBundle = {
     },
     language: {
       title: 'Idioma',
+      label: 'Idioma de la interfaz',
       hint: 'Los cambios se aplican al instante y se guardan para tu cuenta.',
+    },
+    theme: {
+      title: 'Tema',
+      label: 'Apariencia',
+      hint:
+        '«Sistema» sigue la configuración de claro/oscuro de tu dispositivo. El modo oscuro se aplica solo en este navegador.',
+      system: 'Sistema',
+      light: 'Claro',
+      dark: 'Oscuro',
     },
     profile: {
       photoTitle: 'Foto de perfil',

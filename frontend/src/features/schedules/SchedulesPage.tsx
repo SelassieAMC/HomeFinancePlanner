@@ -30,6 +30,7 @@ import {
   Dialog,
   ErrorMessage,
   EmptyState,
+  Field,
   Spinner,
   IconButton,
   MoneyInput,
@@ -37,6 +38,7 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconEdit,
+  IconInfo,
   IconTrash,
 } from '../../components/ui';
 
@@ -618,73 +620,94 @@ function ScheduleFormDialog({
 
   return (
     <Dialog title={initial ? t('form.edit_title') : t('form.add_title')} wide>
-      <form className="form-row" onSubmit={handleSubmit}>
-        <input
-          placeholder={t('form.name_placeholder')}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={100}
-          aria-label={t('form.name_aria')}
-          required
-        />
-        <select value={kind} onChange={(e) => setKind(e.target.value as ScheduleKind)} aria-label={t('form.kind_aria')}>
-          <option value="bag_funding">{t('kinds.bag_funding')}</option>
-          <option value="bag_rebalance">{t('kinds.bag_rebalance')}</option>
-          <option value="account_transfer">{t('kinds.account_transfer')}</option>
-          <option value="transaction">{t('kinds.transaction')}</option>
-          <option value="purchase">{t('kinds.purchase_checklist')}</option>
-        </select>
-        <select
-          value={recurrence}
-          onChange={(e) => setRecurrence(e.target.value as ScheduleRecurrence)}
-          aria-label={t('form.recurrence_aria')}
-        >
-          <option value="once">{t('recurrence.once')}</option>
-          <option value="monthly">{t('recurrence.monthly')}</option>
-          <option value="yearly">{t('recurrence.yearly')}</option>
-        </select>
-        <input
-          type="date"
-          value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          aria-label={t('form.start_aria')}
-          required
-        />
-        {(recurrence === 'monthly' || recurrence === 'yearly') && startDate.length === 10 && (
-          <p className="hint-text">
-            {t('form.day_derived_hint', { day: Number(startDate.slice(8, 10)) })}
-          </p>
-        )}
-
-        {kind !== 'bag_funding' && kind !== 'bag_rebalance' && (
-          <label className="default-radio">
-            {t('form.auto_apply_label')}
+      {/* Field-wrapped, visible labels everywhere (labels.* instead of the
+          old bare placeholder/aria-only controls). Layout: one always-visible
+          grid region, then ONE bounded section per kind — switching the kind
+          swaps whole blocks, so no field sits in a half-row and the shared
+          rows never reflow. Mid-flow hint paragraphs became Field hints
+          (same slot as the label, no content pushed around). */}
+      <form className="form-stack" onSubmit={handleSubmit}>
+        <div className="form-grid">
+          <Field label={t('form.labels.name')}>
             <input
-              type="checkbox"
-              checked={autoApply}
-              onChange={(e) => setAutoApply(e.target.checked)}
+              placeholder={t('form.name_placeholder')}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={100}
+              aria-label={t('form.name_aria')}
+              required
             />
-          </label>
-        )}
-        {kind !== 'bag_funding' && kind !== 'bag_rebalance' && autoApply && (
-          <p className="hint-text">{t('form.auto_apply_hint')}</p>
-        )}
-        {recurrence === 'yearly' && (
-          <select value={monthOfYear} onChange={(e) => setMonthOfYear(e.target.value)} aria-label={t('form.month_aria')}>
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-              <option key={m} value={m}>
-                {new Date(2000, m - 1, 1).toLocaleDateString(intlLocale(i18n.language), { month: 'long' })}
-              </option>
-            ))}
-          </select>
-        )}
+          </Field>
+          <Field label={t('form.labels.kind')}>
+            <select value={kind} onChange={(e) => setKind(e.target.value as ScheduleKind)} aria-label={t('form.kind_aria')}>
+              <option value="bag_funding">{t('kinds.bag_funding')}</option>
+              <option value="bag_rebalance">{t('kinds.bag_rebalance')}</option>
+              <option value="account_transfer">{t('kinds.account_transfer')}</option>
+              <option value="transaction">{t('kinds.transaction')}</option>
+              <option value="purchase">{t('kinds.purchase_checklist')}</option>
+            </select>
+          </Field>
+          <Field label={t('form.labels.recurrence')}>
+            <select
+              value={recurrence}
+              onChange={(e) => setRecurrence(e.target.value as ScheduleRecurrence)}
+              aria-label={t('form.recurrence_aria')}
+            >
+              <option value="once">{t('recurrence.once')}</option>
+              <option value="monthly">{t('recurrence.monthly')}</option>
+              <option value="yearly">{t('recurrence.yearly')}</option>
+            </select>
+          </Field>
+          <Field
+            label={t('form.labels.start')}
+            hint={
+              (recurrence === 'monthly' || recurrence === 'yearly') && startDate.length === 10
+                ? t('form.day_derived_hint', { day: Number(startDate.slice(8, 10)) })
+                : undefined
+            }
+          >
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              aria-label={t('form.start_aria')}
+              required
+            />
+          </Field>
+          {kind !== 'bag_funding' && kind !== 'bag_rebalance' && (
+            <div className="form-stack">
+              <label className="default-radio">
+                {t('form.auto_apply_label')}
+                <input
+                  type="checkbox"
+                  checked={autoApply}
+                  onChange={(e) => setAutoApply(e.target.checked)}
+                />
+              </label>
+              {/* Always shown within its cell — a checkbox whose explanation
+                  pops in/out of existence stays confusing (0046). */}
+              <p className="hint-text">{t('form.auto_apply_hint')}</p>
+            </div>
+          )}
+          {recurrence === 'yearly' && (
+            <Field label={t('form.labels.month')}>
+              <select value={monthOfYear} onChange={(e) => setMonthOfYear(e.target.value)} aria-label={t('form.month_aria')}>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {new Date(2000, m - 1, 1).toLocaleDateString(intlLocale(i18n.language), { month: 'long' })}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+        </div>
 
         {kind === 'bag_funding' && (
-          <>
+          <div className="form-grid">
             {fundingAccounts.length === 0 ? (
               <p className="hint-text">{t('form.funding_no_options')}</p>
             ) : (
-              <>
+              <Field label={t('form.labels.funding_account')}>
                 <select
                   value={fundAccountId}
                   onChange={(e) => { setFundAccountId(e.target.value); setBagId(''); }}
@@ -699,120 +722,167 @@ function ScheduleFormDialog({
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
                 </select>
-                {fundAccountId && (
-                  <select value={bagId} onChange={(e) => setBagId(e.target.value)} aria-label={t('form.bag_fund_aria')} required>
-                    <option value="">{t('form.bag_fund_empty')}</option>
-                    {fundAccountBags.map((b) => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
-                )}
-              </>
+              </Field>
             )}
-            {bagId && (
-              <p className="hint-text">
-                {t('form.bag_fund_hint', { label: bagAccountLabel(bagId, openBags) })}
-              </p>
+            {fundAccountId && (
+              <Field
+                label={t('form.labels.bag_fund')}
+                hint={bagId ? t('form.bag_fund_hint', { label: bagAccountLabel(bagId, openBags) }) : undefined}
+              >
+                <select value={bagId} onChange={(e) => setBagId(e.target.value)} aria-label={t('form.bag_fund_aria')} required>
+                  <option value="">{t('form.bag_fund_empty')}</option>
+                  {fundAccountBags.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </Field>
             )}
-          </>
+            <Field label={t('form.labels.amount')}>
+              <MoneyInput
+                valueCents={amountCents}
+                currency={amountCurrency()}
+                ariaLabel={t('form.amount_placeholder')}
+                placeholder={t('form.amount_placeholder')}
+                onCommit={setAmountCents}
+              />
+            </Field>
+          </div>
         )}
         {kind === 'bag_rebalance' && (
-          <>
-            <select value={fromBagId} onChange={(e) => { setFromBagId(e.target.value); setToBagId(''); }} aria-label={t('form.from_bag_aria')} required>
-              <option value="">{t('form.from_bag_empty')}</option>
-              {openBags.map((b) => (
-                <option key={b.id} value={b.id}>{b.name} · {b.account_name}</option>
-              ))}
-            </select>
-            <select value={toBagId} onChange={(e) => setToBagId(e.target.value)} aria-label={t('form.to_bag_aria')} required disabled={!fromBag}>
-              <option value="">{t('form.to_bag_empty')}</option>
-              {sameAccountBags.map((b) => (
-                <option key={b.id} value={b.id}>{b.name} · {b.account_name}</option>
-              ))}
-            </select>
-            {fromBagId && toBagId && (
-              <p className="hint-text">
-                {t('form.bag_rebalance_hint', { label: bagAccountLabel(fromBagId, openBags) })}
-              </p>
-            )}
-          </>
+          <div className="form-grid">
+            <Field label={t('form.labels.from_bag')}>
+              <select value={fromBagId} onChange={(e) => { setFromBagId(e.target.value); setToBagId(''); }} aria-label={t('form.from_bag_aria')} required>
+                <option value="">{t('form.from_bag_empty')}</option>
+                {openBags.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name} · {b.account_name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label={t('form.labels.to_bag')}
+              hint={fromBagId && toBagId ? t('form.bag_rebalance_hint', { label: bagAccountLabel(fromBagId, openBags) }) : undefined}
+            >
+              <select value={toBagId} onChange={(e) => setToBagId(e.target.value)} aria-label={t('form.to_bag_aria')} required disabled={!fromBag}>
+                <option value="">{t('form.to_bag_empty')}</option>
+                {sameAccountBags.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name} · {b.account_name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('form.labels.amount')}>
+              <MoneyInput
+                valueCents={amountCents}
+                currency={amountCurrency()}
+                ariaLabel={t('form.amount_placeholder')}
+                placeholder={t('form.amount_placeholder')}
+                onCommit={setAmountCents}
+              />
+            </Field>
+          </div>
         )}
         {(kind === 'account_transfer' || kind === 'transaction') && (
-          <select
-            value={accountId}
-            onChange={(e) => { setAccountId(e.target.value); setTxBagId(''); }}
-            aria-label={t('form.account_aria')}
-            required
-          >
-            <option value="">{kind === 'account_transfer' ? t('form.from_account_empty') : t('form.on_account_empty')}</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        )}
-        {kind === 'account_transfer' && (
-          <select value={counterId} onChange={(e) => setCounterId(e.target.value)} aria-label={t('form.counter_aria')} required>
-            <option value="">{t('form.to_account_empty')}</option>
-            {accounts.filter((a) => String(a.id) !== accountId).map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        )}
-        {kind === 'transaction' && (
-          <select value={txKind} onChange={(e) => { setTxKind(e.target.value as 'expense' | 'income'); setTxBagId(''); }} aria-label={t('form.tx_kind_aria')}>
-            <option value="expense">{t('form.tx_expense')}</option>
-            <option value="income">{t('form.tx_income')}</option>
-          </select>
-        )}
-        {kind === 'transaction' && txKind === 'expense' && accountBags.length > 0 && (
-          <select value={txBagId} onChange={(e) => setTxBagId(e.target.value)} aria-label={t('form.tx_bag_aria')}>
-            <option value="">{t('form.tx_bag_optional')}</option>
-            {accountBags.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-        )}
-        {kind === 'transaction' && (
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} aria-label={t('form.category_aria')}>
-            <option value="">{t('form.category_none')}</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        )}
-        {kind !== 'purchase' && (
-          <MoneyInput
-            valueCents={amountCents}
-            currency={amountCurrency()}
-            ariaLabel={t('form.amount_placeholder')}
-            placeholder={t('form.amount_placeholder')}
-            onCommit={setAmountCents}
-          />
-        )}
-        {kind === 'transaction' && (
-          <input
-            placeholder={t('form.description_placeholder')}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={200}
-          />
+          <div className="form-grid">
+            <Field label={t('form.labels.account')}>
+              <select
+                value={accountId}
+                onChange={(e) => { setAccountId(e.target.value); setTxBagId(''); }}
+                aria-label={t('form.account_aria')}
+                required
+              >
+                <option value="">{kind === 'account_transfer' ? t('form.from_account_empty') : t('form.on_account_empty')}</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </Field>
+            {kind === 'account_transfer' && (
+              <>
+                <Field label={t('form.labels.counter_account')}>
+                  <select value={counterId} onChange={(e) => setCounterId(e.target.value)} aria-label={t('form.counter_aria')} required>
+                    <option value="">{t('form.to_account_empty')}</option>
+                    {accounts.filter((a) => String(a.id) !== accountId).map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t('form.labels.amount')}>
+                  <MoneyInput
+                    valueCents={amountCents}
+                    currency={amountCurrency()}
+                    ariaLabel={t('form.amount_placeholder')}
+                    placeholder={t('form.amount_placeholder')}
+                    onCommit={setAmountCents}
+                  />
+                </Field>
+              </>
+            )}
+            {kind === 'transaction' && (
+              <>
+                <Field label={t('form.labels.tx_kind')}>
+                  <select value={txKind} onChange={(e) => { setTxKind(e.target.value as 'expense' | 'income'); setTxBagId(''); }} aria-label={t('form.tx_kind_aria')}>
+                    <option value="expense">{t('form.tx_expense')}</option>
+                    <option value="income">{t('form.tx_income')}</option>
+                  </select>
+                </Field>
+                {txKind === 'expense' && accountBags.length > 0 && (
+                  <Field label={t('form.labels.tx_bag')}>
+                    <select value={txBagId} onChange={(e) => setTxBagId(e.target.value)} aria-label={t('form.tx_bag_aria')}>
+                      <option value="">{t('form.tx_bag_optional')}</option>
+                      {accountBags.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label={t('form.labels.category')}>
+                  <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} aria-label={t('form.category_aria')}>
+                    <option value="">{t('form.category_none')}</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t('form.labels.amount')}>
+                  <MoneyInput
+                    valueCents={amountCents}
+                    currency={amountCurrency()}
+                    ariaLabel={t('form.amount_placeholder')}
+                    placeholder={t('form.amount_placeholder')}
+                    onCommit={setAmountCents}
+                  />
+                </Field>
+                <Field label={t('form.labels.description')}>
+                  <input
+                    placeholder={t('form.description_placeholder')}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    maxLength={200}
+                  />
+                </Field>
+              </>
+            )}
+          </div>
         )}
         {kind === 'purchase' && (
-          <>
-            <MoneyInput
-              valueCents={estimateCents}
-              currency={baseCurrency}
-              ariaLabel={t('form.estimate_placeholder')}
-              placeholder={t('form.estimate_placeholder')}
-              onCommit={setEstimateCents}
-            />
-            <input
-              placeholder={t('form.note_placeholder')}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              maxLength={200}
-            />
-          </>
+          <div className="form-grid">
+            <Field label={t('form.labels.estimate')}>
+              <MoneyInput
+                valueCents={estimateCents}
+                currency={baseCurrency}
+                ariaLabel={t('form.estimate_placeholder')}
+                placeholder={t('form.estimate_placeholder')}
+                onCommit={setEstimateCents}
+              />
+            </Field>
+            <Field label={t('form.labels.note')}>
+              <input
+                placeholder={t('form.note_placeholder')}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={200}
+              />
+            </Field>
+          </div>
         )}
 
         <p className="hint-text">
@@ -885,6 +955,11 @@ function PayablesCard({
   onShift: (delta: number) => void;
 }) {
   const { t } = useTranslation('schedules');
+  // The row shows the headline (name, badge, amount, actions for today);
+  // everything else — the full movement sentence, the plan pattern, the
+  // management actions — lives behind the details modal (card-with-details
+  // pattern, 2026-10-28).
+  const [detailsFor, setDetailsFor] = useState<Payable | null>(null);
 
   function monthLabel(m: string): string {
     return new Date(`${m}-01T00:00:00`).toLocaleDateString(intlLocale(i18n.language), {
@@ -949,17 +1024,101 @@ function PayablesCard({
               <span className={badge(it).danger ? 'badge danger' : 'badge'}>
                 {badge(it).label}
               </span>
+              {/* The head carries ONLY the four basic facts (name, value,
+                  status, date) — kind/recurrence/destination are details-modal
+                  material now. */}
+              <span className="cell-muted">{formatDate(it.due_date)}</span>
               <span className="budget-amounts">
                 {it.amount_cents > 0 ? formatCents(it.amount_cents, it.currency) : '—'}
               </span>
             </div>
-            <div className="budget-status">
-              {t(KIND_KEYS[it.kind])} · {t(RECURRENCE_KEYS[it.recurrence])}
-              {it.recurrence !== 'once' && it.day_of_month
-                ? ` · ${t('list.day', { count: it.day_of_month })}${it.recurrence === 'yearly' && it.month_of_year ? ` ${t('list.month_of', { count: it.month_of_year })}` : ''}`
-                : ''} · {formatDate(it.due_date)} · {describe(it.schedule)}
-              {it.auto_apply && ` · ${t('payables.auto_marker')}`}
-            </div>
+            {/* The card owns its details modal locally; actions close it
+                first so the plan form / confirm dialog the parent opens is
+                the only dialog on screen. */}
+            {detailsFor && it === detailsFor && (
+              <Dialog title={it.name}>
+                <div className="detail-list">
+                  <div className="detail-row">
+                    <span className="stat-label">{t('details.status')}</span>
+                    <span className={badge(it).danger ? 'badge danger' : 'badge'}>{badge(it).label}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="stat-label">{t('details.kind')}</span>
+                    <span>{t(KIND_KEYS[it.kind])}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="stat-label">{t('details.repeats')}</span>
+                    <span>
+                      {it.recurrence === 'once'
+                        ? t(RECURRENCE_KEYS.once)
+                        : [
+                            t(RECURRENCE_KEYS[it.recurrence]),
+                            it.recurrence === 'monthly' &&
+                              `— ${t('list.day', { count: it.day_of_month ?? 1 })}`,
+                            it.recurrence === 'yearly' &&
+                              `— ${t('list.month_of', { count: it.month_of_year ?? 1 })} · ${t('list.day', { count: it.day_of_month ?? 1 })}`,
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="stat-label">{t('details.starts')}</span>
+                    <span>{formatDate(it.start_date)}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="stat-label">{t('details.due')}</span>
+                    <span>{formatDate(it.due_date)}</span>
+                  </div>
+                  {it.is_payable && (
+                    <div className="detail-row">
+                      <span className="stat-label">{t('details.amount')}</span>
+                      <span className="num">
+                        {it.amount_cents > 0 ? formatCents(it.amount_cents, it.currency) : '—'}
+                      </span>
+                    </div>
+                  )}
+                  <div className="detail-row">
+                    <span className="stat-label">{t('details.mode')}</span>
+                    <span>{it.auto_apply ? t('details.mode_auto') : t('details.mode_manual')}</span>
+                  </div>
+                  {it.kind !== 'purchase' && (
+                    <div className="detail-row">
+                      <span className="stat-label">{t('details.movement')}</span>
+                      <span>{describe(it.schedule)}</span>
+                    </div>
+                  )}
+                </div>
+                {/* Read-only details: the management actions stay on the
+                    row (icons + tooltips), only the occurrence actions live
+                    here where they have room. */}
+                <div className="dialog-actions">
+                  {it.status === 'pending' && it.run_id !== undefined && !VIRTUAL_KINDS.includes(it.kind) && (
+                    <>
+                      <Button
+                        variant="primary"
+                        className="btn-sm"
+                        disabled={busy}
+                        onClick={() => { setDetailsFor(null); onApply(it); }}
+                      >
+                        {it.kind === 'purchase' ? t('todo.done') : t('todo.apply')}
+                      </Button>
+                      <Button variant="ghost" className="btn-sm" disabled={busy}
+                        onClick={() => { setDetailsFor(null); onRunAction(it, 'dismiss'); }}>
+                        {t('todo.dismiss')}
+                      </Button>
+                      <Button variant="ghost" className="btn-sm" disabled={busy}
+                        onClick={() => { setDetailsFor(null); onRunAction(it, 'skip'); }}>
+                        {t('todo.skip')}
+                      </Button>
+                    </>
+                  )}
+                  <Button variant="ghost" className="btn-sm" onClick={() => setDetailsFor(null)}>
+                    {t('details.close')}
+                  </Button>
+                </div>
+              </Dialog>
+            )}
             <div className="budget-actions">
               {it.status === 'pending' && it.run_id !== undefined && (
                 VIRTUAL_KINDS.includes(it.kind) ? (
@@ -978,7 +1137,15 @@ function PayablesCard({
                   </>
                 )
               )}
+              {/* Details first, then the plan management icons — every
+                  IconButton carries its own tooltip (title) + aria-label. */}
               <span className="cell-actions">
+                <IconButton
+                  icon={<IconInfo />}
+                  label={t('details.icon')}
+                  onClick={() => setDetailsFor(it)}
+                  disabled={busy}
+                />
                 <IconButton icon={<IconEdit />} label={t('list.edit')} onClick={() => onEdit(it)} disabled={busy} />
                 <IconButton icon={<IconArchive />} label={t('list.archive')} onClick={() => onArchive(it)} disabled={busy} />
                 <IconButton icon={<IconTrash />} label={t('list.delete')} variant="danger" onClick={() => onDelete(it)} disabled={busy} />

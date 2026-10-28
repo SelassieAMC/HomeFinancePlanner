@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { storesApi } from '../../api/stores';
 import type { Store, StoreInput } from '../../types/domain';
-import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
+import { Button, Card, Spinner, ErrorMessage, EmptyState, Field, ItemPanel, ItemPanels } from '../../components/ui';
 
 export function StoresPage() {
   const { t } = useTranslation('stores');
@@ -106,22 +106,28 @@ export function StoresPage() {
 
       <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
-          <input
-            placeholder={t('add.namePlaceholder')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-          <input
-            placeholder={t('add.descriptionPlaceholder')}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <input
-            placeholder={t('add.locationPlaceholder')}
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          />
+          <Field label={t('labels.name')}>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-label={t('labels.name')}
+              required
+            />
+          </Field>
+          <Field label={t('labels.description')}>
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              aria-label={t('labels.description')}
+            />
+          </Field>
+          <Field label={t('labels.location')}>
+            <input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              aria-label={t('labels.location')}
+            />
+          </Field>
           <Button type="submit">{t('add.submit')}</Button>
         </form>
         {formError && <ErrorMessage message={formError} />}
@@ -140,28 +146,28 @@ export function StoresPage() {
             >
               {editingId === store.id ? (
                 <form className="form-grid" onSubmit={handleSaveEdit}>
-                  <label>
-                    {t('labels.name')}
+                  <Field label={t('labels.name')}>
                     <input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
+                      aria-label={t('labels.name')}
                       required
                     />
-                  </label>
-                  <label>
-                    {t('labels.description')}
+                  </Field>
+                  <Field label={t('labels.description')}>
                     <input
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
+                      aria-label={t('labels.description')}
                     />
-                  </label>
-                  <label>
-                    {t('labels.location')}
+                  </Field>
+                  <Field label={t('labels.location')}>
                     <input
                       value={editLocation}
                       onChange={(e) => setEditLocation(e.target.value)}
+                      aria-label={t('labels.location')}
                     />
-                  </label>
+                  </Field>
                   <div className="camera-row">
                     <Button type="submit">{t('actions.save')}</Button>
                     <Button variant="ghost" onClick={() => setEditingId(null)}>

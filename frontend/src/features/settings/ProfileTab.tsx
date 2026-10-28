@@ -4,7 +4,9 @@ import i18n from '../../i18n';
 import { LOCALE_LABELS, SUPPORTED_LOCALES } from '../../i18n/core';
 import { authApi, avatarUrl } from '../../api/auth';
 import { useAuth } from '../auth/AuthContext';
-import { Button, Card, ErrorMessage } from '../../components/ui';
+import { Button, Card, ErrorMessage, Field } from '../../components/ui';
+import { useTheme } from '../../hooks/useTheme';
+import type { ThemeChoice } from '../../lib/theme';
 
 // Own-account profile (settings page, any family member): the UI language,
 // the avatar photo, the full name shown in the login dropdown and the header,
@@ -12,6 +14,7 @@ import { Button, Card, ErrorMessage } from '../../components/ui';
 export function ProfileTab() {
   const { t } = useTranslation('settings');
   const { user, setUser, reload } = useAuth();
+  const { choice: themeChoice, setChoice: setThemeChoice } = useTheme();
   const [localeError, setLocaleError] = useState<string | null>(null);
   const [fullName, setFullName] = useState('');
   const [nameSaved, setNameSaved] = useState(false);
@@ -121,22 +124,40 @@ export function ProfileTab() {
 
   return (
     <>
+      <Card title={t('theme.title')}>
+        <Field label={t('theme.label')} hint={t('theme.hint')}>
+          <select
+            value={themeChoice}
+            onChange={(e) => setThemeChoice(e.target.value as ThemeChoice)}
+          >
+            <option value="system">{t('theme.system')}</option>
+            <option value="light">{t('theme.light')}</option>
+            <option value="dark">{t('theme.dark')}</option>
+          </select>
+        </Field>
+      </Card>
+
       <Card title={t('language.title')}>
-        <select
-          className="form-row"
-          value={i18n.language}
-          onChange={(e) => {
-            void pickLocale(e.target.value);
-          }}
+        <Field
+          label={t('language.label')}
+          hint={t('language.hint')}
+          error={localeError}
         >
-          {SUPPORTED_LOCALES.map((lng) => (
-            <option key={lng} value={lng}>
-              {LOCALE_LABELS[lng]}
-            </option>
-          ))}
-        </select>
-        <p className="hint-text">{t('language.hint')}</p>
-        {localeError && <ErrorMessage message={localeError} />}
+          <select
+            value={i18n.language}
+            aria-label={t('language.label')}
+            onChange={(e) => {
+              setLocaleError(null);
+              void pickLocale(e.target.value);
+            }}
+          >
+            {SUPPORTED_LOCALES.map((lng) => (
+              <option key={lng} value={lng}>
+                {LOCALE_LABELS[lng]}
+              </option>
+            ))}
+          </select>
+        </Field>
       </Card>
 
       <Card title={t('profile.photoTitle')}>
@@ -184,16 +205,19 @@ export function ProfileTab() {
             void saveName(e);
           }}
         >
-          <input
-            value={fullName}
-            placeholder={t('profile.namePlaceholder')}
-            maxLength={80}
-            disabled={nameSaving}
-            onChange={(e) => {
-              setFullName(e.target.value);
-              setNameSaved(false);
-            }}
-          />
+          <Field label={t('profile.namePlaceholder')} className="profile-name-field">
+            <input
+              id="profile-full-name"
+              value={fullName}
+              placeholder={t('profile.namePlaceholder')}
+              maxLength={80}
+              disabled={nameSaving}
+              onChange={(e) => {
+                setFullName(e.target.value);
+                setNameSaved(false);
+              }}
+            />
+          </Field>
           <Button type="submit" disabled={nameSaving}>
             {nameSaving ? t('profile.saving') : t('profile.save')}
           </Button>

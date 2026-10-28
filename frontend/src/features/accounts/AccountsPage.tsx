@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { accountGroupsApi, accountsApi } from '../../api/accounts';
+import { bagsApi } from '../../api/bags';
 import { settingsApi } from '../../api/settings';
 import type { Account, AccountGroup, AccountInput, AccountType } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
 import { COMMON_CURRENCIES, type CurrencyOption } from '../../lib/currencies';
-import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels, Dialog } from '../../components/ui';
+import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels, Dialog, Field } from '../../components/ui';
 
 const ACCOUNT_TYPES: AccountType[] = ['checking', 'savings', 'credit', 'cash', 'other'];
 
@@ -33,6 +34,10 @@ export function AccountsPage() {
   }, []);
   // New accounts default to the user's base display currency.
   const baseCurrency = useAsync(() => settingsApi.getBaseCurrency(), []);
+  // Bag overview, for the split block a bag account shows in its expansion:
+  // the overview already folds allocations and tagged spend per bag in the
+  // account's own currency, so no second conversion happens here.
+  const bagViews = useAsync(() => bagsApi.overview(), []);
   const [name, setName] = useState('');
   const [type, setType] = useState<AccountType>('checking');
   const [balance, setBalance] = useState('');
@@ -246,55 +251,71 @@ export function AccountsPage() {
     </select>
   );
 
+  // The bag-overview row for an account, if the account has bags at all.
+  const bagViewFor = (id: number) =>
+    (bagViews.data?.accounts ?? []).find((v) => v.account_id === id);
+
   const renderAccount = (a: Account) => (
     <ItemPanel key={a.id} title={a.name} subtitle={t(`types.${a.type}`)} value={formatCents(a.balance_cents, a.currency)}>
       {editingId === a.id ? (
         <form className="form-stack" onSubmit={handleUpdate}>
-          <input
-            placeholder={t('add.namePlaceholder')}
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            required
-          />
+          <Field label={t('labels.name')}>
+            <input
+              placeholder={t('add.namePlaceholder')}
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              required
+            />
+          </Field>
           <div className="form-row">
+            <Field label={t('labels.type')}>
+              <select
+                value={editType}
+                onChange={(e) => setEditType(e.target.value as AccountType)}
+                aria-label={t('edit.typeAria')}
+              >
+                {ACCOUNT_TYPES.map((ty) => (
+                  <option key={ty} value={ty}>
+                    {t(`types.${ty}`)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('labels.group')}>
+              {groupSelect(editGroupId, setEditGroupId, t('groups.aria'))}
+            </Field>
+          </div>
+          <Field label={t('labels.currency')}>
             <select
-              value={editType}
-              onChange={(e) => setEditType(e.target.value as AccountType)}
-              aria-label={t('edit.typeAria')}
+              value={editCurrency}
+              onChange={(e) => setEditCurrency(e.target.value)}
+              aria-label={t('add.currencyAria')}
             >
-              {ACCOUNT_TYPES.map((ty) => (
-                <option key={ty} value={ty}>
-                  {t(`types.${ty}`)}
+              {currencyOptions(editCurrency).map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code}
                 </option>
               ))}
             </select>
-            {groupSelect(editGroupId, setEditGroupId, t('groups.aria'))}
-          </div>
-          <select
-            value={editCurrency}
-            onChange={(e) => setEditCurrency(e.target.value)}
-            aria-label={t('add.currencyAria')}
-          >
-            {currencyOptions(editCurrency).map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code}
-              </option>
-            ))}
-          </select>
-          <input
-            placeholder={t('edit.balancePlaceholder', { currency: editCurrency })}
-            inputMode="decimal"
-            value={editBalance}
-            onChange={(e) => setEditBalance(e.target.value)}
-            required
-          />
-          <input
-            placeholder={t('edit.cardDigitsPlaceholder')}
-            inputMode="numeric"
-            maxLength={4}
-            value={editCardDigits}
-            onChange={(e) => setEditCardDigits(e.target.value.replace(/\D/g, ''))}
-          />
+          </Field>
+          <Field label={t('labels.openingBalance')}>
+            <input
+              placeholder={t('edit.balancePlaceholder', { currency: editCurrency })}
+              inputMode="decimal"
+              value={editBalance}
+              onChange={(e) => setEditBalance(e.target.value)}
+              required
+            />
+          </Field>
+          <Field label={t('labels.card')}>
+            <input
+              placeholder={t('edit.cardDigitsPlaceholder')}
+              inputMode="numeric"
+              maxLength={4}
+              value={editCardDigits}
+              onChange={(e) => setEditCardDigits(e.target.value.replace(/\D/g, ''))}
+            />
+          </Field>
           <div className="camera-row">
             <Button type="submit">{t('actions.save')}</Button>
             <Button type="button" variant="secondary" onClick={cancelEdit}>
@@ -313,10 +334,46 @@ export function AccountsPage() {
               <span>{t('labels.currency')}</span>
               <span>{a.currency}</span>
             </div>
-            <div className="item-field">
-              <span>{t('labels.balance')}</span>
-              <strong>{formatCents(a.balance_cents, a.currency)}</strong>
-            </div>
+            {(() => {
+              // Accounts with bags split the balance in three on the spot:
+              // the total, what the bags currently hold (Σ their derived
+              // balances — allocations minus tagged spend, the overview
+              // folds it in the account's currency), and the unbagged rest.
+              const view = bagViewFor(a.id);
+              // Only accounts whose bags include at least one OPEN bag show
+              // the split — an all-closed account has no reservations.
+              if (!view || !view.bags.some((b) => b.status === 'open')) {
+                return (
+                  <div className="item-field">
+                    <span>{t('labels.balance')}</span>
+                    <strong>{formatCents(a.balance_cents, a.currency)}</strong>
+                  </div>
+                );
+              }
+              return (
+                <>
+                  <div className="item-field">
+                    <span>{t('labels.total')}</span>
+                    <strong>{formatCents(a.balance_cents, a.currency)}</strong>
+                  </div>
+                  <div className="item-field">
+                    <span>{t('labels.inBags')}</span>
+                    <strong>
+                      {formatCents(
+                        view.bags
+                          .filter((b) => b.status === 'open')
+                          .reduce((sum, b) => sum + b.balance_cents, 0),
+                        a.currency,
+                      )}
+                    </strong>
+                  </div>
+                  <div className={`item-field${view.unbagged_cents < 0 || view.oversubscribed ? ' over' : ''}`}>
+                    <span>{t('labels.available')}</span>
+                    <strong>{formatCents(view.unbagged_cents, a.currency)}</strong>
+                  </div>
+                </>
+              );
+            })()}
           </div>
           {a.card_last_digits && (
             <div className="item-field">
@@ -351,41 +408,53 @@ export function AccountsPage() {
 
       <Card title={t('add.title')}>
         <form className="form-row" onSubmit={handleCreate}>
-          <input
-            placeholder={t('add.namePlaceholder')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-          <select value={type} onChange={(e) => setType(e.target.value as AccountType)}>
-            {ACCOUNT_TYPES.map((ty) => (
-              <option key={ty} value={ty}>
-                {t(`types.${ty}`)}
-              </option>
-            ))}
-          </select>
-          <select
-            value={currency}
-            onChange={(e) => {
-              setCurrency(e.target.value);
-              setCurrencyTouched(true);
-            }}
-            aria-label={t('add.currencyAria')}
-          >
-            {currencyOptions(currency).map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code}
-              </option>
-            ))}
-          </select>
-          <input
-            placeholder={t('add.balancePlaceholder', { currency })}
-            inputMode="decimal"
-            value={balance}
-            onChange={(e) => setBalance(e.target.value)}
-            required
-          />
-          {groups.length > 0 && groupSelect(groupId, setGroupId, t('groups.aria'))}
+          <Field label={t('labels.name')}>
+            <input
+              placeholder={t('add.namePlaceholder')}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </Field>
+          <Field label={t('labels.type')}>
+            <select value={type} onChange={(e) => setType(e.target.value as AccountType)}>
+              {ACCOUNT_TYPES.map((ty) => (
+                <option key={ty} value={ty}>
+                  {t(`types.${ty}`)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('labels.currency')}>
+            <select
+              value={currency}
+              onChange={(e) => {
+                setCurrency(e.target.value);
+                setCurrencyTouched(true);
+              }}
+              aria-label={t('add.currencyAria')}
+            >
+              {currencyOptions(currency).map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label={t('labels.startingBalance')}>
+            <input
+              placeholder={t('add.balancePlaceholder', { currency })}
+              inputMode="decimal"
+              value={balance}
+              onChange={(e) => setBalance(e.target.value)}
+              required
+            />
+          </Field>
+          {groups.length > 0 && (
+            <Field label={t('labels.group')}>
+              {groupSelect(groupId, setGroupId, t('groups.aria'))}
+            </Field>
+          )}
           <Button type="submit">{t('actions.add')}</Button>
         </form>
         {formError && <ErrorMessage message={formError} />}
@@ -393,12 +462,14 @@ export function AccountsPage() {
 
       <Card title={t('groups.title')}>
         <form className="form-row" onSubmit={handleCreateGroup}>
-          <input
-            placeholder={t('groups.namePlaceholder')}
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-            maxLength={100}
-          />
+          <Field label={t('groups.nameLabel')}>
+            <input
+              placeholder={t('groups.namePlaceholder')}
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              maxLength={100}
+            />
+          </Field>
           <Button type="submit" variant="secondary">
             {t('groups.add')}
           </Button>
@@ -472,7 +543,9 @@ export function AccountsPage() {
       {renameId !== null && (
         <Dialog title={t('groups.renameTitle')}>
           <form className="form-stack" onSubmit={handleRenameGroup}>
-            <input value={renameName} onChange={(e) => setRenameName(e.target.value)} required autoFocus />
+            <Field label={t('groups.nameLabel')} hint={t('groups.nameHint')}>
+              <input value={renameName} onChange={(e) => setRenameName(e.target.value)} required autoFocus />
+            </Field>
             <div className="form-actions">
               <Button type="button" variant="secondary" onClick={() => setRenameId(null)}>
                 {t('actions.cancel')}

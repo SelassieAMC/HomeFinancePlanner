@@ -17,6 +17,7 @@ import {
   Spinner,
   ErrorMessage,
   EmptyState,
+  Field,
   UnitSelect,
 } from '../../components/ui';
 
@@ -169,12 +170,15 @@ function SignedMoneyInput({
   valueCents,
   negative,
   ariaLabel,
+  labelledby,
   onCommit,
 }: {
   valueCents: number;
   /** Negatives are legitimate on this field (deposit/refund lines). */
   negative: boolean;
   ariaLabel: string;
+  /** Visible-label association (item-field span id), when one exists. */
+  labelledby?: string;
   onCommit: (cents: number) => void;
 }) {
   const { t } = useTranslation('bills');
@@ -201,6 +205,7 @@ function SignedMoneyInput({
         inputMode="decimal"
         defaultValue={(valueCents / 100).toFixed(2)}
         aria-label={ariaLabel}
+        {...(labelledby ? { 'aria-labelledby': labelledby } : {})}
         onBlur={(e) => {
           const raw = e.target.value.trim();
           const cents = raw === '' ? 0 : dollarsToCents(raw);
@@ -659,7 +664,9 @@ export function BillDraftEditor({
     <div className="bill-draft">
       <div className="stat-cards">
         <div className="stat-card stat-market">
-          <span className="stat-card-label">{t('labels.market')}</span>
+          {/* Visible label + aria-labelledby association (id below): the three
+              market variants share one name, whichever variant renders. */}
+          <span className="stat-card-label" id="bill-editor-market">{t('labels.market')}</span>
           {stores.length === 0 && !customMarket ? (
             // No stores loaded yet — keep the plain input behavior.
             <input
@@ -667,6 +674,7 @@ export function BillDraftEditor({
               defaultValue={draft.market_name}
               placeholder={t('editor.unknownMarket')}
               aria-label={t('editor.marketAria')}
+              aria-labelledby="bill-editor-market"
               onBlur={(e) =>
                 e.target.value.trim() !== draft.market_name &&
                 updateHeader({ market_name: e.target.value.trim() })
@@ -679,6 +687,7 @@ export function BillDraftEditor({
               defaultValue={draft.market_name}
               placeholder={t('editor.newMarket')}
               aria-label={t('editor.newMarketAria')}
+              aria-labelledby="bill-editor-market"
               onBlur={(e) => {
                 const value = e.target.value.trim();
                 if (value !== draft.market_name) updateHeader({ market_name: value });
@@ -690,6 +699,7 @@ export function BillDraftEditor({
               className="stat-card-input"
               value={matchedStore ? String(matchedStore.id) : draft.market_name}
               aria-label={t('editor.marketAria')}
+              aria-labelledby="bill-editor-market"
               onChange={(e) => {
                 const value = e.target.value;
                 if (value === '__custom__') {
@@ -722,22 +732,24 @@ export function BillDraftEditor({
           )}
         </div>
         <div className="stat-card stat-date">
-          <span className="stat-card-label">{t('labels.date')}</span>
+          <span className="stat-card-label" id="bill-editor-date">{t('labels.date')}</span>
           <input
             type="date"
             className="stat-card-input"
             defaultValue={draft.date || new Date().toISOString().slice(0, 10)}
             aria-label={t('editor.dateAria')}
+            aria-labelledby="bill-editor-date"
             disabled={isBusy}
             onBlur={(e) => e.target.value !== draft.date && updateHeader({ date: e.target.value })}
           />
         </div>
         {accounts && accountChoice !== null && (
         <div className="stat-card stat-account">
-          <span className="stat-card-label">{t('labels.account')}</span>
+          <span className="stat-card-label" id="bill-editor-account">{t('labels.account')}</span>
           <select
             value={accountChoice}
             aria-label={t('editor.accountAria')}
+            aria-labelledby="bill-editor-account"
             onChange={(e) => handleAccountChange(e.target.value)}
             disabled={isBusy}
           >
@@ -761,13 +773,14 @@ export function BillDraftEditor({
         )}
         {fxRateNeeded && (
         <div className="stat-card stat-account">
-          <span className="stat-card-label">{t('labels.fxRate')}</span>
+          <span className="stat-card-label" id="bill-editor-fx">{t('labels.fxRate')}</span>
           <input
             className="stat-card-input"
             inputMode="decimal"
             value={fxRate}
             placeholder={fxRefRate !== undefined ? Number(fxRefRate.toPrecision(6)).toString() : ''}
             aria-label={t('editor.fxRateAria')}
+            aria-labelledby="bill-editor-fx"
             disabled={isBusy}
             onChange={(e) => {
               setFxRateTouched(true);
@@ -785,11 +798,12 @@ export function BillDraftEditor({
         </div>
         )}
         <div className="stat-card stat-currency">
-          <span className="stat-card-label">{t('labels.currency')}</span>
+          <span className="stat-card-label" id="bill-editor-currency">{t('labels.currency')}</span>
           <select
             className="stat-card-input"
             value={currency}
             aria-label={t('editor.currencyAria')}
+            aria-labelledby="bill-editor-currency"
             disabled={isBusy}
             onChange={(e) => updateHeader({ currency: e.target.value })}
           >
@@ -850,11 +864,12 @@ export function BillDraftEditor({
           </div>
         )}
         <div className="stat-card stat-budget">
-          <span className="stat-card-label">{t('labels.budget')}</span>
+          <span className="stat-card-label" id="bill-editor-budget">{t('labels.budget')}</span>
           <select
             className="stat-card-input"
             value={draft.budget_id ?? ''}
             aria-label={t('editor.budgetAria')}
+            aria-labelledby="bill-editor-budget"
             disabled={isBusy}
             onChange={(e) =>
               updateHeader({ budget_id: e.target.value ? Number(e.target.value) : null })
@@ -870,11 +885,12 @@ export function BillDraftEditor({
           </select>
         </div>
         <div className="stat-card stat-bag">
-          <span className="stat-card-label">{t('labels.bag')}</span>
+          <span className="stat-card-label" id="bill-editor-bag">{t('labels.bag')}</span>
           <select
             className="stat-card-input"
             value={draft.bag_id ?? ''}
             aria-label={t('editor.bagAria')}
+            aria-labelledby="bill-editor-bag"
             disabled={isBusy}
             onChange={(e) =>
               updateHeader({ bag_id: e.target.value ? Number(e.target.value) : null })
@@ -899,14 +915,16 @@ export function BillDraftEditor({
         </div>
       )}
 
-      <input
-        className="search-input"
-        type="search"
-        placeholder={t('search.placeholder')}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        aria-label={t('search.aria')}
-      />
+      <Field label={t('search.label')} className="bill-search-field">
+        <input
+          className="search-input"
+          type="search"
+          placeholder={t('search.placeholder')}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label={t('search.aria')}
+        />
+      </Field>
 
       <div className="bill-actions">
         <Button variant="secondary" onClick={addItem} disabled={isBusy}>
@@ -975,7 +993,7 @@ export function BillDraftEditor({
               </summary>
               <div className="item-detail">
                 <div className="item-field">
-                  <span>{t('fields.article')}</span>
+                  <span id={`bill-item-${it.id}-article`}>{t('fields.article')}</span>
                   <ProductAutocomplete
                     value={it.name}
                     onValueChange={(v) => updateItem(it.id, { name: v })}
@@ -988,7 +1006,7 @@ export function BillDraftEditor({
                 </div>
                 {!it.is_return && (
                   <div className="item-field">
-                    <span>
+                    <span id={`bill-item-${it.id}-standard`}>
                       {t('fields.standardized')}{' '}
                       <span className="item-field-note">{t('items.onReceipt', { name: it.name || '—' })}</span>
                     </span>
@@ -997,6 +1015,7 @@ export function BillDraftEditor({
                       defaultValue={it.standard_name || it.name}
                       placeholder={t('editor.standardPlaceholder')}
                       aria-label={t('items.standardAria', { name: it.name })}
+                      aria-labelledby={`bill-item-${it.id}-standard`}
                       onBlur={(e) => {
                         const value = e.target.value.trim();
                         if (value !== (it.standard_name || it.name)) {
@@ -1008,12 +1027,13 @@ export function BillDraftEditor({
                 )}
                 {!it.is_return && (
                   <div className="item-field">
-                    <span>{t('fields.generic')}</span>
+                    <span id={`bill-item-${it.id}-generic`}>{t('fields.generic')}</span>
                     <input
                       key={`${it.id}:${it.generic_name ?? ''}`}
                       defaultValue={it.generic_name || ''}
                       placeholder={t('editor.genericPlaceholder')}
                       aria-label={t('items.genericAria', { name: it.name })}
+                      aria-labelledby={`bill-item-${it.id}-generic`}
                       onBlur={(e) => {
                         const value = e.target.value.trim();
                         if (value !== (it.generic_name || '')) {
@@ -1024,7 +1044,7 @@ export function BillDraftEditor({
                   </div>
                 )}
                 <div className="item-field">
-                  <span>{t('fields.category')}</span>
+                  <span id={`bill-item-${it.id}-category`}>{t('fields.category')}</span>
                   <CategorySelect
                     categories={categories}
                     kind="product"
@@ -1036,13 +1056,14 @@ export function BillDraftEditor({
                 </div>
                 <div className="item-field-grid">
                   <div className="item-field">
-                    <span>{t('fields.brand')}</span>
+                    <span id={`bill-item-${it.id}-brand`}>{t('fields.brand')}</span>
                     {customBrandItem === it.id ? (
                       <input
                         autoFocus
                         defaultValue={it.brand ?? ''}
                         placeholder={t('editor.newBrand')}
                         aria-label={t('items.newBrandAria', { name: it.name })}
+                        aria-labelledby={`bill-item-${it.id}-brand`}
                         onBlur={(e) => {
                           const value = e.target.value.trim();
                           updateItem(it.id, { brand: value || undefined });
@@ -1053,6 +1074,7 @@ export function BillDraftEditor({
                       <select
                         value={it.brand ?? ''}
                         aria-label={t('items.brandAria', { name: it.name })}
+                        aria-labelledby={`bill-item-${it.id}-brand`}
                         onChange={(e) => {
                           if (e.target.value === '__custom__') {
                             setCustomBrandItem(it.id);
@@ -1075,7 +1097,7 @@ export function BillDraftEditor({
                     )}
                   </div>
                   <div className="item-field">
-                    <span>{t('fields.measure')}</span>
+                    <span id={`bill-item-${it.id}-measure`}>{t('fields.measure')}</span>
                     <div className="unit-value-row">
                       <UnitSelect
                         value={it.unit}
@@ -1088,6 +1110,7 @@ export function BillDraftEditor({
                         defaultValue={it.unit_value ?? ''}
                         placeholder="500"
                         aria-label={t('items.sizeAria', { name: it.name })}
+                        aria-labelledby={`bill-item-${it.id}-measure`}
                         onBlur={(e) => {
                           // Decimal comma tolerated (mobile keypads type it);
                           // blank or non-positive clears the magnitude.
@@ -1104,12 +1127,13 @@ export function BillDraftEditor({
                     </div>
                   </div>
                   <div className="item-field">
-                    <span>{t('fields.qty')}</span>
+                    <span id={`bill-item-${it.id}-qty`}>{t('fields.qty')}</span>
                     <input
                       type="text"
                       inputMode="decimal"
                       defaultValue={it.quantity}
                       aria-label={t('items.qtyAria', { name: it.name })}
+                      aria-labelledby={`bill-item-${it.id}-qty`}
                       onBlur={(e) => {
                         // Decimal comma tolerated (mobile keypads type it);
                         // unparseable text reverts instead of sticking stale.
@@ -1125,22 +1149,24 @@ export function BillDraftEditor({
                 </div>
                 <div className="item-field-grid">
                   <div className="item-field">
-                    <span>{t('fields.unitPrice')}</span>
+                    <span id={`bill-item-${it.id}-unitPrice`}>{t('fields.unitPrice')}</span>
                     <SignedMoneyInput
                       valueCents={it.unit_price_cents}
                       negative={negativeAllowed(it)}
                       ariaLabel={t('items.unitPriceAria', { name: it.name })}
+                      labelledby={`bill-item-${it.id}-unitPrice`}
                       onCommit={(cents) => updateItem(it.id, { unit_price_cents: cents })}
                     />
                   </div>
                   <div className="item-field">
-                    <span>{t('fields.discount')}</span>
+                    <span id={`bill-item-${it.id}-discount`}>{t('fields.discount')}</span>
                     {/* Positive by nature — a discount is a subtraction of the
                         main price, so no ± (even on deposit lines). */}
                     <SignedMoneyInput
                       valueCents={it.discount_cents}
                       negative={false}
                       ariaLabel={t('items.discountAria', { name: it.name })}
+                      labelledby={`bill-item-${it.id}-discount`}
                       onCommit={(cents) => updateItem(it.id, { discount_cents: cents })}
                     />
                   </div>
@@ -1152,10 +1178,11 @@ export function BillDraftEditor({
                   </div>
                 </div>
                 <div className="item-field">
-                  <span>{t('fields.budget')}</span>
+                  <span id={`bill-item-${it.id}-budget`}>{t('fields.budget')}</span>
                   <select
                     value={it.budget_id ?? ''}
                     aria-label={t('items.budgetAria', { name: it.name })}
+                    aria-labelledby={`bill-item-${it.id}-budget`}
                     onChange={(e) =>
                       updateItem(it.id, {
                         budget_id: e.target.value ? Number(e.target.value) : null,
@@ -1173,10 +1200,11 @@ export function BillDraftEditor({
                   </select>
                 </div>
                 <div className="item-field">
-                  <span>{t('fields.bag')}</span>
+                  <span id={`bill-item-${it.id}-bag`}>{t('fields.bag')}</span>
                   <select
                     value={it.bag_id ?? ''}
                     aria-label={t('items.bagAria', { name: it.name })}
+                    aria-labelledby={`bill-item-${it.id}-bag`}
                     disabled={isBusy}
                     onChange={(e) =>
                       updateItem(it.id, {
@@ -1207,11 +1235,12 @@ export function BillDraftEditor({
         </div>
         <div className="item-field-grid">
           <div className="item-field">
-            <span>{t('fields.marketDiscount')}</span>
+            <span id="bill-editor-market-discount">{t('fields.marketDiscount')}</span>
             <input
               inputMode="decimal"
               defaultValue={(draft.discount_cents / 100).toFixed(2)}
               aria-label={t('editor.marketDiscountAria')}
+              aria-labelledby="bill-editor-market-discount"
               onBlur={(e) => {
                 const raw = e.target.value.trim();
                 const cents = raw === '' ? 0 : dollarsToCents(raw);
@@ -1227,11 +1256,12 @@ export function BillDraftEditor({
             />
           </div>
           <div className="item-field">
-            <span>{t('fields.vat')}</span>
+            <span id="bill-editor-vat">{t('fields.vat')}</span>
             <input
               inputMode="decimal"
               defaultValue={(draft.vat_cents / 100).toFixed(2)}
               aria-label={t('editor.vatAria')}
+              aria-labelledby="bill-editor-vat"
               onBlur={(e) => {
                 const raw = e.target.value.trim();
                 const cents = raw === '' ? 0 : dollarsToCents(raw);

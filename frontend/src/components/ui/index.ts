@@ -1,7 +1,10 @@
 export { Button } from './Button';
+export { ThemeToggle } from './ThemeToggle';
+export { Field } from './Field';
 export {
   IconButton,
   IconEdit,
+  IconInfo,
   IconTrash,
   IconArchive,
   IconFund,

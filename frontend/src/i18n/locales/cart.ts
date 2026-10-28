@@ -35,6 +35,7 @@ export const cart: LocaleBundle = {
       aria: 'Remove {{name}} from the cart',
     },
     add: {
+      label: 'Product',
       aria: 'Add a product to the cart',
       placeholder: 'Add a product by name…',
     },
@@ -150,6 +151,7 @@ export const cart: LocaleBundle = {
       aria: '{{name}} aus dem Warenkorb entfernen',
     },
     add: {
+      label: 'Produkt',
       aria: 'Produkt in den Warenkorb legen',
       placeholder: 'Produkt nach Namen hinzufügen…',
     },
@@ -266,6 +268,7 @@ export const cart: LocaleBundle = {
       aria: 'Quitar {{name}} del carrito',
     },
     add: {
+      label: 'Producto',
       aria: 'Añadir un producto al carrito',
       placeholder: 'Añadir un producto por nombre…',
     },
