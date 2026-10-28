@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { AccountType, BillConfirmInput, BillDraft, BillDraftItem, Budget, Category, FxSnapshot, Product, Store } from '../../types/domain';
 import { formatCents, dollarsToCents, parseDecimalInput } from '../../lib/money';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
+import { isDepositArtifact, isDepositReturn } from '../../lib/deposit';
 import { crossRate, convertCents, fxApi } from '../../api/fx';
 import { useAsync } from '../../hooks/useAsync';
 import { settingsApi } from '../../api/settings';
@@ -41,6 +42,17 @@ export interface BillDraftEditorProps {
   onDiscard?: () => void;
   mode?: BillEditorMode;
   busy?: BillBusyAction;
+  /**
+   * Saved mode only: re-read the bill's receipt the way a fresh scan works —
+   * the backend removes the bill and re-extracts its receipt in the
+   * background; the page closes the editor and refreshes its lists.
+   */
+  onRescan?: () => void;
+  /** True while the rescan request is in flight (its own button label). */
+  rescanBusy?: boolean;
+  /** Saved mode only: leave the editor without saving. Required once
+   *  onRescan is offered — a re-read the user dislikes must be reversible. */
+  onCancel?: () => void;
   error?: string | null;
   /** Account options for the confirm flow (omit to hide the picker). */
   accounts?: { id: number; name: string; type: AccountType; currency: string; card_last_digits?: string }[];
@@ -58,11 +70,6 @@ export interface BillDraftEditorProps {
   budgets?: Budget[];
   /** Known stores for the market picker (omit to fall back to a plain input). */
   stores?: Store[];
-}
-
-/** Deposit/bottle return (e.g. "Leergut") — money back, negative amounts allowed. */
-function isDepositReturn(name: string): boolean {
-  return name.toLowerCase().includes('leergut');
 }
 
 /**
@@ -117,6 +124,13 @@ export function buildConfirmInput(
       quantity: it.quantity,
       unit_price_cents: it.unit_price_cents,
       discount_cents: it.discount_cents,
+      // The reviewed line total is the confirmed truth and must survive the
+      // round trip: the backend used to recompute qty×unit−discount, which
+      // silently rewrote lines where the receipt's printed amount differs
+      // (e.g. a coupon line filed with unit price 0 but −0,60 in its line
+      // total) — the registered bill then showed a different total than the
+      // one confirmed here.
+      line_total_cents: it.line_total_cents,
       budget_id: it.budget_id ?? undefined,
       bag_id: it.bag_id ?? undefined,
     })),
@@ -219,6 +233,9 @@ export function BillDraftEditor({
   onDiscard,
   mode = 'draft',
   busy = null,
+  onRescan,
+  rescanBusy = false,
+  onCancel,
   error = null,
   accounts,
   initialAccountId = null,
@@ -228,7 +245,7 @@ export function BillDraftEditor({
   stores = [],
 }: BillDraftEditorProps) {
   const { t } = useTranslation('bills');
-  const isBusy = busy !== null;
+  const isBusy = busy !== null || rescanBusy;
   const isSaved = mode === 'saved';
   const currency = draft.currency || 'USD';
   // Budget amounts are denominated in the base display currency, unlike the
@@ -441,9 +458,13 @@ export function BillDraftEditor({
   // Deposit returns ("Leergut") and lines filed under a negative-allowed
   // category (the "Deposit & Returns" / Pfand family) are money back or
   // refund-like: their amounts may go negative and reduce the total.
+  // Deposit/coupon artifact lines generally ("Pfand", "Rabatt", "Gutschein")
+  // may carry money-back amounts regardless of the filed category — mirrored
+  // from the backend's buildBill rule.
   function negativeAllowed(it: BillDraftItem): boolean {
     return (
       it.is_return ||
+      isDepositArtifact(it.name) ||
       Boolean(it.category_id && categories.find((c) => c.id === it.category_id)?.allows_negative)
     );
   }
@@ -505,7 +526,7 @@ export function BillDraftEditor({
    */
   async function lookupNormalization(it: BillDraftItem) {
     const name = it.name.trim();
-    if (!name || it.is_return || name.toLowerCase().includes('leergut')) return;
+    if (!name || it.is_return || isDepositReturn(name) || isDepositArtifact(name)) return;
     if (normalizedForRef.current.get(it.id) === name) return;
     normalizedForRef.current.set(it.id, name);
     try {
@@ -592,6 +613,25 @@ export function BillDraftEditor({
       <Button onClick={confirm} disabled={isBusy}>
         {isSaved ? (busy === 'confirm' ? t('editor.saving') : t('editor.saveChanges')) : t('editor.confirmBill')}
       </Button>
+      {isSaved && (
+        <>
+          {onRescan && (
+            <Button
+              variant="secondary"
+              onClick={() => onRescan()}
+              disabled={isBusy}
+              title={t('editor.rescanTitle')}
+            >
+              {rescanBusy ? t('editor.rereading') : t('editor.rescan')}
+            </Button>
+          )}
+          {onCancel && (
+            <Button variant="secondary" onClick={() => onCancel()} disabled={isBusy}>
+              {t('editor.cancelEdit')}
+            </Button>
+          )}
+        </>
+      )}
       {!isSaved && (
         <>
           <Button variant="secondary" onClick={() => onRetry?.()} disabled={isBusy}>

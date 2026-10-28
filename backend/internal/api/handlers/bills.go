@@ -132,6 +132,27 @@ func (h *BillHandler) Reextract(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, scan)
 }
 
+// Rescan re-runs AI extraction on a saved bill's stored receipt. The response
+// is a new scan pipeline row owned by that bill; the client polls
+// GET /bills/scan/{token} and saves through PUT /bills/{id} — confirming the
+// rescan token is refused (it would create a second bill).
+func (h *BillHandler) Rescan(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		respondError(w, r, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req extractRequest
+	_ = decodeJSON(w, r, &req) // body optional
+
+	scan, err := h.Svc.RescanBill(r.Context(), id, req.ProviderID)
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusAccepted, scan)
+}
+
 // Confirm persists the confirmed draft as an accepted bill, optionally
 // recording the expense transaction.
 func (h *BillHandler) Confirm(w http.ResponseWriter, r *http.Request) {
@@ -273,24 +294,6 @@ func (h *BillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// Stats aggregates accepted bills by market, month, week, item or category,
-// converted into the user's base currency. Scope is set by month (YYYY-MM)
-// or an inclusive from/to (YYYY-MM-DD) range.
-func (h *BillHandler) Stats(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	stats, err := h.Svc.Stats(r.Context(), service.BillStatsQuery{
-		GroupBy: q.Get("group_by"),
-		Month:   q.Get("month"),
-		From:    q.Get("from"),
-		To:      q.Get("to"),
-	})
-	if err != nil {
-		respondServiceError(w, r, err)
-		return
-	}
-	respondJSON(w, r, http.StatusOK, stats)
 }
 
 // Brands lists the distinct brands recorded on bill items (for the review

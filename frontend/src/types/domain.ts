@@ -596,21 +596,6 @@ export interface AIPromptCreateInput extends AIPromptInput {
   key: string;
 }
 
-export interface BillStatsRow {
-  label: string;
-  bill_count: number;
-  quantity?: number;
-  total_cents: number;
-}
-
-// Envelope for GET /bills/stats: rows merged across currencies and
-// converted into the user's base currency.
-export interface BillStatsResponse {
-  currency: string;
-  conversion_warnings: string[];
-  rows: BillStatsRow[];
-}
-
 // --- Scan draft (in memory until confirmed) ---------------------------------
 
 export interface BillDraftItem {
@@ -659,6 +644,8 @@ export interface BillScan {
   provider_id?: string;
   draft?: BillDraft; // absent while analyzing, failed or cancelled
   error?: string; // set when failed
+  /** Rescan of a saved bill: the owning bill's id (absent on upload scans). */
+  source_bill_id?: number;
   file_count?: number; // receipt parts in this upload (omitted for single-file scans)
   created_at?: string;
 }
@@ -746,6 +733,9 @@ export interface BillConfirmInput {
     quantity: number;
     unit_price_cents: number;
     discount_cents: number;
+    // the reviewed line total — confirmed as-is (backend recomputes only for
+    // payloads that omit it, so old clients keep working)
+    line_total_cents?: number;
     budget_id?: number | null; // per-line override (omitted = bill's budget)
     bag_id?: number | null; // per-line override (omitted = bill's bag)
   }[];

@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +44,6 @@ type BillStore interface {
 	GetByID(ctx context.Context, id int64) (domain.Bill, error)
 	GetByFileHash(ctx context.Context, hash string) (domain.Bill, error)
 	List(ctx context.Context, f domain.BillFilters) ([]domain.Bill, error)
-	Stats(ctx context.Context, groupBy, month, from, to string) ([]domain.BillStatsRow, error)
 	ListBrands(ctx context.Context) ([]string, error)
 }
 
@@ -407,6 +405,95 @@ func (s *BillService) Reextract(ctx context.Context, token, providerID string) (
 		ScanToken:  token,
 		Status:     domain.BillScanAnalyzing,
 		ProviderID: provider.ID,
+	}, nil
+}
+
+// RescanBill re-reads a saved bill's receipt the way a fresh scan works: the
+// bill (and the expense transaction recorded with it) is removed, and its
+// stored receipt parts are handed to a new scan pipeline row — background
+// extraction, standard review queue, confirmation as an entirely new bill.
+// The receipt files move with the scan row: the bill no longer exists, so the
+// scan owns them (confirm keeps them as the new bill's record; discarding
+// deletes them, like any scan).
+func (s *BillService) RescanBill(ctx context.Context, billID int64, providerID string) (domain.BillScan, error) {
+	bill, err := s.bills.GetByID(ctx, billID)
+	if err != nil {
+		return domain.BillScan{}, fmt.Errorf("load bill %d: %w", billID, err)
+	}
+	files := billFilesFromBill(bill)
+	if len(files) == 0 {
+		return domain.BillScan{}, validationError("bill #%d has no stored receipt to re-read", bill.ID)
+	}
+	provider, err := s.resolveProvider(ctx, providerID)
+	if err != nil {
+		return domain.BillScan{}, err
+	}
+
+	token, err := newScanToken()
+	if err != nil {
+		return domain.BillScan{}, err
+	}
+	scanFiles := make([]domain.BillScanFile, len(files))
+	for i, f := range files {
+		scanFiles[i] = domain.BillScanFile{
+			Position: f.Position,
+			Path:     f.Path,
+			MimeType: f.MimeType,
+			FileHash: f.FileHash,
+		}
+	}
+	// A previous rescan of this receipt may still be sitting in the pipeline
+	// (analyzing/done) — its hashes would make the new row trip the duplicate
+	// upload check. Drop the stale rows; the files stay on disk, this scan
+	// now owns them. A worker still generating for a dropped row writes its
+	// result guarded on status='analyzing' (0 rows) — it can never resurrect.
+	for _, f := range files {
+		if old, err := s.scans.GetByFileHash(ctx, f.FileHash); err == nil {
+			if _, derr := s.scans.Delete(ctx, old.ScanToken); derr != nil {
+				s.log.Warn("drop superseded rescan row", "token", old.ScanToken, "error", derr)
+			}
+		}
+	}
+	if _, err := s.scans.Create(ctx, domain.BillScan{
+		ScanToken:  token,
+		ImagePath:  files[0].Path,
+		MimeType:   files[0].MimeType,
+		ProviderID: provider.ID,
+		FileHash:   files[0].FileHash,
+		Files:      scanFiles,
+	}); err != nil {
+		return domain.BillScan{}, fmt.Errorf("create rescan row: %w", err)
+	}
+	// The bill rows go now — the review draft replacing them is already saved.
+	// The receipt files deliberately stay on disk: with the bill gone the scan
+	// row owns them.
+	if err := s.bills.Delete(ctx, bill.ID); err != nil {
+		// Roll the pipeline row back so no orphan review draft lingers.
+		if _, derr := s.scans.Delete(context.Background(), token); derr != nil {
+			s.log.Warn("drop rescan row after failed bill delete", "token", token, "error", derr)
+		}
+		return domain.BillScan{}, fmt.Errorf("delete bill %d for rescan: %w", bill.ID, err)
+	}
+	if bill.TransactionID != nil {
+		// Best-effort like Delete: a lingering transaction only distorts the
+		// account balance until re-confirmation — warn, don't block the read.
+		if err := s.txStore.Delete(ctx, *bill.TransactionID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+			s.log.Warn("rescan deleted bill but its transaction remains",
+				"bill_id", bill.ID, "transaction_id", *bill.TransactionID, "error", err)
+		}
+	}
+	if !s.enqueue(token) {
+		// Queue-full after the delete is still safe: the row stays analyzing
+		// and the sweeper re-enqueues it within minutes.
+		s.log.Warn("rescan dropped by full queue", "token", token)
+	}
+	s.sweepStaleScans()
+	return domain.BillScan{
+		ScanToken:  token,
+		Status:     domain.BillScanAnalyzing,
+		ProviderID: provider.ID,
+		FileCount:  len(files),
+		CreatedAt:  time.Now().UTC(),
 	}, nil
 }
 
@@ -906,97 +993,6 @@ func (s *BillService) List(ctx context.Context, f domain.BillFilters) ([]domain.
 	return s.bills.List(ctx, f)
 }
 
-// BillStats is the bill-analysis envelope: per-label totals merged across
-// currencies and converted into the user's base Currency.
-type BillStats struct {
-	Currency           string                `json:"currency"`
-	ConversionWarnings []string              `json:"conversion_warnings"`
-	Rows               []domain.BillStatsRow `json:"rows"`
-}
-
-// BillStatsQuery narrows a stats request: either a whole Month ("YYYY-MM")
-// or an inclusive From/To date range ("YYYY-MM-DD"), never both.
-type BillStatsQuery struct {
-	GroupBy string
-	Month   string
-	From    string
-	To      string
-}
-
-// Stats aggregates accepted bills by market, month, week, item, or category,
-// merging per-currency rows into the base currency.
-func (s *BillService) Stats(ctx context.Context, q BillStatsQuery) (BillStats, error) {
-	switch q.GroupBy {
-	case "market", "month", "week", "item", "category":
-	default:
-		return BillStats{}, validationError("group_by must be market, month, week, item or category")
-	}
-	if q.Month != "" {
-		if q.From != "" || q.To != "" {
-			return BillStats{}, validationError("month and from/to are mutually exclusive")
-		}
-		if err := validateMonth(q.Month, "month"); err != nil {
-			return BillStats{}, err
-		}
-	} else if q.From != "" || q.To != "" {
-		if q.From == "" || q.To == "" {
-			return BillStats{}, validationError("from and to must be given together (format YYYY-MM-DD)")
-		}
-		if err := validateDate(q.From, "from"); err != nil {
-			return BillStats{}, err
-		}
-		if err := validateDate(q.To, "to"); err != nil {
-			return BillStats{}, err
-		}
-		if q.To < q.From {
-			return BillStats{}, validationError("to %q must not be before from %q", q.To, q.From)
-		}
-	}
-	base, err := s.providers.BaseCurrency(ctx)
-	if err != nil {
-		return BillStats{}, err
-	}
-	snap, err := s.rates.Snapshot(ctx)
-	if err != nil {
-		return BillStats{}, err
-	}
-	rows, err := s.bills.Stats(ctx, q.GroupBy, q.Month, q.From, q.To)
-	if err != nil {
-		return BillStats{}, err
-	}
-
-	conv := newConverter(base, snap)
-	merged := map[string]*domain.BillStatsRow{}
-	for _, row := range rows {
-		m, ok := merged[row.Label]
-		if !ok {
-			m = &domain.BillStatsRow{Label: row.Label}
-			merged[row.Label] = m
-		}
-		m.BillCount += row.BillCount
-		m.Quantity += row.Quantity
-		m.TotalCents += conv.add(row.Currency, row.TotalCents)
-	}
-	out := make([]domain.BillStatsRow, 0, len(merged))
-	for _, m := range merged {
-		out = append(out, *m)
-	}
-	// Time groupings stay chronological (recent first); the rest rank by spend.
-	if q.GroupBy == "month" || q.GroupBy == "week" {
-		sort.Slice(out, func(i, j int) bool { return out[i].Label > out[j].Label })
-	} else {
-		sort.Slice(out, func(i, j int) bool { return out[i].TotalCents > out[j].TotalCents })
-		if len(out) > 50 {
-			out = out[:50]
-		}
-	}
-	return BillStats{
-		Currency:           base,
-		ConversionWarnings: conv.warnings(),
-		Rows:               out,
-	}, nil
-}
-
 // Brands lists the distinct brands already recorded on bill items, for the
 // review dropdown.
 func (s *BillService) Brands(ctx context.Context) ([]string, error) {
@@ -1050,6 +1046,13 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		if _, err := time.Parse("2006-01-02", date); err != nil {
 			return domain.Bill{}, validationError("date must be YYYY-MM-DD")
 		}
+	} else {
+		// An absent/unreadable receipt date must not save as an empty string —
+		// an empty date matches no month, so the bill silently disappears from
+		// the month-filtered bills list (substr('', 1, 7) never equals 'YYYY-MM').
+		// The receipt was scanned today, so today is the honest fallback — the
+		// same rule the linked transaction already applies to its own date.
+		date = time.Now().Format("2006-01-02")
 	}
 	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
 	if currency == "" {
@@ -1104,8 +1107,13 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 		// line total may be negative, and they reduce the bill total. The
 		// same applies to any line filed under a category that allows
 		// negatives (the seeded "Deposit & Returns" / Pfand family).
-		isReturn := isDepositReturn(name)
-		allowsNegative := isReturn
+		// Deposit/coupon artifact lines generally ("Pfand", "Rabatt",
+		// "Gutschein", …) carry money-back amounts too — however their AI or
+		// user filed the category, a negative line total must survive (the
+		// reviewed total is honored as-is; a clamp here would silently drift
+		// the registered bill away from the confirmed one).
+		isReturn := domain.IsDepositReturn(name)
+		allowsNegative := isReturn || domain.IsDepositArtifact(name)
 		if it.CategoryID != nil {
 			cat, err := s.categories.GetByID(ctx, *it.CategoryID)
 			if err != nil {
@@ -1141,8 +1149,20 @@ func (s *BillService) buildBill(ctx context.Context, in domain.BillConfirmInput,
 				return domain.Bill{}, validationError("bag %q is closed and no longer accepts spend", bag.Name)
 			}
 		}
-		line := it.Quantity*float64(it.UnitPriceCents) - float64(it.DiscountCents)
-		lineCents := int64(math.Round(line))
+		// The reviewed line total is the confirmed truth. The AI's line total
+		// may legitimately differ from qty×unit−discount — e.g. a coupon the
+		// model filed with unit price 0.00 but the printed −0,60 in its line
+		// total — and recomputing silently rewrote exactly what the user had
+		// reviewed in the editor (a 93.80 receipt registered as 94.40). The
+		// recompute is only the fallback for payloads that omit the line total
+		// (legacy callers; all-zero line totals with a non-0 recompute read as
+		// "absent" so omitting the field never erases real lines).
+		lineCents := it.LineTotalCents
+		if recomputed := it.Quantity*float64(it.UnitPriceCents) - float64(it.DiscountCents); lineCents == 0 && int64(
+			math.Round(recomputed),
+		) != 0 {
+			lineCents = int64(math.Round(recomputed))
+		}
 		if lineCents < 0 && !allowsNegative {
 			lineCents = 0
 		}
@@ -1913,13 +1933,6 @@ func normalizeDigits(raw string) string {
 		digits = digits[len(digits)-4:]
 	}
 	return digits
-}
-
-// isDepositReturn reports whether an article line is a bottle/crate deposit
-// return (e.g. German "Leergut"). Returns are money back: negative prices are
-// allowed and they reduce the bill total. Mirrored in the frontend editor.
-func isDepositReturn(name string) bool {
-	return strings.Contains(strings.ToLower(name), "leergut")
 }
 
 func nonEmptyOr(value, fallback string) string {

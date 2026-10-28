@@ -204,7 +204,6 @@ func (f *fakeBillScanStore) DeleteStale(_ context.Context, olderThan time.Time) 
 type fakeBillStore struct {
 	mu    sync.Mutex
 	items []domain.Bill
-	stats []domain.BillStatsRow
 }
 
 func (f *fakeBillStore) Create(_ context.Context, b domain.Bill) (domain.Bill, error) {
@@ -286,9 +285,6 @@ func (f *fakeBillStore) GetByFileHash(_ context.Context, hash string) (domain.Bi
 }
 func (f *fakeBillStore) List(context.Context, BillFilters) ([]domain.Bill, error) {
 	return nil, nil
-}
-func (f *fakeBillStore) Stats(context.Context, string, string, string, string) ([]domain.BillStatsRow, error) {
-	return f.stats, nil
 }
 func (f *fakeBillStore) ListBrands(context.Context) ([]string, error) { return nil, nil }
 
@@ -1174,6 +1170,89 @@ func scanUntilDone(t *testing.T, svc *BillService, scanStore *fakeBillScanStore)
 	return res
 }
 
+// Rescan works like a fresh scan: the bill (and its linked expense
+// transaction) is removed, its stored receipt parts move to a NORMAL scan
+// pipeline row, and the user confirms the fresh draft as an entirely new
+// bill. The receipt files stay on disk throughout — the scan row owns them
+// once the bill is gone (confirm keeps them; discarding deletes them).
+func TestRescanBillReplacesBillWithScan(t *testing.T) {
+	accounts := newFakeAccountStore()
+	txs := newFakeTxStore()
+	svc, scanStore, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "REWE"}, nil
+		})
+	ctx := context.Background()
+
+	// A saved bill with a stored receipt and its expense transaction.
+	res := scanUntilDone(t, svc, scanStore)
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{
+		MarketName: "REWE",
+		Currency:   "EUR",
+		Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	// The Confirm response does not carry the transaction link (SetTransaction
+	// runs after Create) — read it from the store.
+	if len(billStore.items) != 1 || billStore.items[0].TransactionID == nil {
+		t.Fatal("expected the confirm to record an expense transaction")
+	}
+	txID := *billStore.items[0].TransactionID
+	billImgPath := bill.ImagePath
+
+	// Rescan: a plain pipeline row, no source tracking.
+	rs, err := svc.RescanBill(ctx, bill.ID, "")
+	if err != nil {
+		t.Fatalf("RescanBill: %v", err)
+	}
+	if rs.ScanToken == res.ScanToken {
+		t.Fatal("rescan must get its own token")
+	}
+
+	// The bill and its linked expense transaction are gone.
+	if _, err := svc.Get(ctx, bill.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("bill survived the rescan: %v", err)
+	}
+	if _, ok := txs.items[txID]; ok {
+		t.Error("linked expense transaction survived the rescan")
+	}
+
+	// The read lands like any scan and confirms into a NEW bill.
+	waitFor(t, 2*time.Second, func() bool {
+		row, err := scanStore.GetByToken(ctx, rs.ScanToken)
+		return err == nil && row.Status == domain.BillScanDone
+	})
+	fresh, err := svc.Confirm(ctx, rs.ScanToken, domain.BillConfirmInput{
+		MarketName: "REWE",
+		Currency:   "EUR",
+		Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Confirm of the rescan draft: %v", err)
+	}
+	// Exactly one bill again — the fresh one (the fake store reuses row ids
+	// after a delete, so identity is checked by the receipt's content hash).
+	if len(billStore.items) != 1 {
+		t.Fatalf("bill store holds %d rows, want only the fresh bill", len(billStore.items))
+	}
+	if fresh.FileHash != bill.FileHash {
+		t.Errorf("new bill file hash = %q, want the moved receipt's %q", fresh.FileHash, bill.FileHash)
+	}
+	// The fresh bill carries its own newly recorded expense transaction.
+	if len(txs.items) != 1 || billStore.items[0].TransactionID == nil {
+		t.Error("the confirmed rescan draft must record its own expense transaction")
+	}
+	if _, err := scanStore.GetByToken(ctx, rs.ScanToken); !errors.Is(err, domain.ErrNotFound) {
+		t.Error("rescan row survived confirmation")
+	}
+	if _, statErr := os.Stat(billImgPath); statErr != nil {
+		t.Errorf("receipt file lost across the rescan round trip: %v", statErr)
+	}
+}
+
 func TestScanRejectsDuplicateUpload(t *testing.T) {
 	svc, scanStore, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
@@ -1668,6 +1747,58 @@ func TestBuildBillNegativeDepositCategory(t *testing.T) {
 	}
 }
 
+// The reviewed line total is the confirmed truth: the receipt prints a coupon
+// ("Lidl Plus Rabatt -0,60") whose line carries the −0,60 without a unit
+// price, and recomputing qty×unit−discount used to erase it — the registered
+// bill then totaled 0.60 more than the value the user confirmed in the editor.
+func TestBuildBillHonorsReviewedLineTotals(t *testing.T) {
+	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+		return domain.BillDraft{MarketName: "M"}, nil
+	})
+	catStore.cats[7] = domain.Category{ID: 7, Name: "Deposit & Returns", AllowsNegative: true}
+	ctx := context.Background()
+
+	bill, err := svc.buildBill(ctx, domain.BillConfirmInput{
+		MarketName: "LIDL",
+		Currency:   "EUR",
+		Items: []domain.BillItemDraft{
+			{Name: "Cola", Quantity: 1, UnitPriceCents: 500, LineTotalCents: 500},
+			// Coupon: no unit price, the money sits in the line total.
+			{Name: "Lidl Plus Rabatt", CategoryID: ptrInt64(7), Quantity: 1, UnitPriceCents: 0, LineTotalCents: -60},
+			// Return lines with their reviewed negative totals.
+			{Name: "Pfandrückgabe -16 x 0,25", CategoryID: ptrInt64(7), Quantity: 16, UnitPriceCents: -25, LineTotalCents: -400},
+		},
+	}, &billScanSource{})
+	if err != nil {
+		t.Fatalf("buildBill: %v", err)
+	}
+	if bill.TotalCents != 500-60-400 {
+		t.Errorf("total = %d, want 40 (reviewed line totals survive the confirm)", bill.TotalCents)
+	}
+	if bill.Items[1].LineTotalCents != -60 {
+		t.Errorf("coupon line total = %d, want -60 (not recomputed to 0)", bill.Items[1].LineTotalCents)
+	}
+	if pid := bill.Items[1].ProductID; pid != nil {
+		// Artifact lines are never products — a coupon must not find-or-create
+		// itself into the catalogue.
+		t.Errorf("coupon line linked to product %d", *pid)
+	}
+
+	// Recompute is still the fallback when a payload omits the line total
+	// (legacy callers: an all-zero line total with a non-0 recompute).
+	fallback, err := svc.buildBill(ctx, domain.BillConfirmInput{
+		MarketName: "REWE",
+		Currency:   "EUR",
+		Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 2, UnitPriceCents: 150, LineTotalCents: 0}},
+	}, &billScanSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback.TotalCents != 300 || fallback.Items[0].LineTotalCents != 300 {
+		t.Errorf("omitted line total: got %d, want recomputed 300", fallback.Items[0].LineTotalCents)
+	}
+}
+
 func TestBuildBillRejectsNegativeForNormalCategory(t *testing.T) {
 	svc, _, _, _, catStore := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
 		return domain.BillDraft{MarketName: "M"}, nil
@@ -2141,6 +2272,82 @@ func TestConfirmWithoutAccountRecordsOnWallet(t *testing.T) {
 	}
 }
 
+// A receipt whose date the AI could not read must not save an empty bill
+// date: substr(”, 1, 7) matches no month in the List month filter, so the
+// bill would silently vanish from the month-filtered bills page while the
+// activity still links straight to it. Today is the fallback.
+func TestConfirmEmptyDateFallsBackToToday(t *testing.T) {
+	accounts := newFakeAccountStore()
+	txs := newFakeTxStore()
+	svc, scanStore, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "REWE"}, nil
+		})
+	ctx := context.Background()
+
+	res := scanUntilDone(t, svc, scanStore)
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{
+		MarketName: "REWE",
+		Currency:   "EUR",
+		Items:      []domain.BillItemDraft{{Name: "Milk", Quantity: 1, UnitPriceCents: 250, LineTotalCents: 250}},
+	})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	today := time.Now().Format("2006-01-02")
+	if bill.Date != today {
+		t.Errorf("bill date = %q, want today %q", bill.Date, today)
+	}
+	if billStore.items[0].Date != today {
+		t.Errorf("stored bill date = %q, want today %q", billStore.items[0].Date, today)
+	}
+	if tx, ok := txs.items[1]; !ok {
+		t.Error("no bill transaction recorded")
+	} else if tx.Date != today {
+		t.Errorf("transaction date = %q, want today %q", tx.Date, today)
+	}
+}
+
+// A Pfandrückgabe return line arrives at confirm as money back: the parser
+// normalizes the model's positive read upstream, and confirm accepts the
+// negative amount (and only then) for it — the bill total reduces, the
+// deposit lines never link to products.
+func TestConfirmPfandrueckgabeReducesTotal(t *testing.T) {
+	accounts := newFakeAccountStore()
+	txs := newFakeTxStore()
+	svc, scanStore, billStore, _ := newTestBillServiceCustom(t,
+		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, accounts, txs,
+		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
+			return domain.BillDraft{MarketName: "REWE"}, nil
+		})
+	ctx := context.Background()
+
+	res := scanUntilDone(t, svc, scanStore)
+	bill, err := svc.Confirm(ctx, res.ScanToken, domain.BillConfirmInput{
+		MarketName: "REWE",
+		Currency:   "EUR",
+		Items: []domain.BillItemDraft{
+			{Name: "Groceries", Quantity: 1, UnitPriceCents: 12030, LineTotalCents: 12030},
+			{Name: "Pfandrückgabe -16 x 0,25", Quantity: 16, UnitPriceCents: -25, LineTotalCents: -400},
+			{Name: "Pfandrückgabe -90 x 0,25", Quantity: 90, UnitPriceCents: -25, LineTotalCents: -2250},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if bill.TotalCents != 12030-400-2250 {
+		t.Errorf("total = %d, want 9380 (returns reduce the total)", bill.TotalCents)
+	}
+	for _, it := range bill.Items {
+		if it.IsReturn && it.ProductID != nil {
+			t.Errorf("return line %q linked to product %d", it.Name, *it.ProductID)
+		}
+	}
+	_ = billStore
+	_ = txs
+}
+
 func TestConfirmTransactionCarriesBillCurrency(t *testing.T) {
 	accounts := newFakeAccountStore()
 	acc, err := accounts.Create(context.Background(), domain.Account{Name: "Giro", Currency: "EUR"})
@@ -2458,68 +2665,6 @@ func TestUpdateNilAccountKeepsTransactionAccount(t *testing.T) {
 	}
 	if tx.AmountCents != 300 {
 		t.Errorf("transaction amount = %d, want synced 300", tx.AmountCents)
-	}
-}
-
-func TestStatsMergesCurrenciesIntoBase(t *testing.T) {
-	svc, _, billStore, _ := newTestBillServiceCustom(t,
-		map[string]string{settingsKeyBaseCurrency: "EUR"},
-		stubRateSource{snap: eurSnapshot()}, nil, nil,
-		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
-			return domain.BillDraft{}, errors.New("not called")
-		})
-	billStore.stats = []domain.BillStatsRow{
-		{Label: "REWE", Currency: "EUR", BillCount: 1, TotalCents: 1_000},
-		{Label: "REWE", Currency: "USD", BillCount: 2, Quantity: 3, TotalCents: 1_100}, // → 1_000 EUR
-		{Label: "ALDI", Currency: "JPY", BillCount: 1, TotalCents: 500},                // no rate → 1:1
-	}
-
-	stats, err := svc.Stats(context.Background(), BillStatsQuery{GroupBy: "market"})
-	if err != nil {
-		t.Fatalf("Stats: %v", err)
-	}
-	if stats.Currency != "EUR" {
-		t.Errorf("Currency = %q, want EUR", stats.Currency)
-	}
-	if len(stats.Rows) != 2 || stats.Rows[0].Label != "REWE" {
-		t.Fatalf("rows = %+v, want REWE first of two", stats.Rows)
-	}
-	rewe := stats.Rows[0]
-	if rewe.TotalCents != 2_000 || rewe.BillCount != 3 || rewe.Quantity != 3 {
-		t.Errorf("REWE row = %+v, want total 2000 count 3 qty 3", rewe)
-	}
-	if stats.Rows[0].Currency != "" || stats.Rows[1].Currency != "" {
-		t.Errorf("per-row currency must be zeroed before responding, got %q/%q",
-			stats.Rows[0].Currency, stats.Rows[1].Currency)
-	}
-	if len(stats.ConversionWarnings) != 1 || stats.ConversionWarnings[0] != "JPY" {
-		t.Errorf("ConversionWarnings = %v, want [JPY]", stats.ConversionWarnings)
-	}
-}
-
-func TestStatsQueryValidation(t *testing.T) {
-	svc, _, _, _ := newTestBillServiceCustom(t,
-		map[string]string{settingsKeyBaseCurrency: "EUR"}, nil, nil, nil,
-		func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
-			return domain.BillDraft{}, nil
-		})
-	ctx := context.Background()
-
-	cases := []struct {
-		name string
-		q    BillStatsQuery
-	}{
-		{"month and range are exclusive", BillStatsQuery{GroupBy: "market", Month: "2026-09", From: "2026-09-01"}},
-		{"from without to", BillStatsQuery{GroupBy: "market", From: "2026-09-01"}},
-		{"to without from", BillStatsQuery{GroupBy: "market", To: "2026-09-30"}},
-		{"to before from", BillStatsQuery{GroupBy: "market", From: "2026-09-30", To: "2026-09-01"}},
-		{"bad range date", BillStatsQuery{GroupBy: "market", From: "2026-02-31", To: "2026-03-01"}},
-		{"bad group_by", BillStatsQuery{GroupBy: "quarter", From: "2026-09-01", To: "2026-09-30"}},
-	}
-	for _, tc := range cases {
-		if _, err := svc.Stats(ctx, tc.q); err == nil {
-			t.Errorf("%s: expected validation error, got nil", tc.name)
-		}
 	}
 }
 

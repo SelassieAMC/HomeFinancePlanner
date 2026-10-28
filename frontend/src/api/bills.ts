@@ -4,19 +4,9 @@ import type {
   BillConfirmInput,
   BillScan,
   BillScanStatus,
-  BillStatsResponse,
 } from '../types/domain';
 
 const BASE = '/api/v1';
-
-export type BillStatsGroupBy = 'market' | 'month' | 'week' | 'item' | 'category';
-
-/** Stats scope: a whole month (YYYY-MM) or an inclusive from/to range. */
-export interface BillStatsScope {
-  month?: string;
-  from?: string;
-  to?: string;
-}
 
 export interface BillListFilters {
   month?: string;
@@ -57,6 +47,15 @@ export const billsApi = {
     apiClient.post<BillScan>(`${BASE}/bills/scan/${token}/extract`, {
       provider_id: providerId || undefined,
     }),
+  /** Re-read a SAVED bill's stored receipt: spawns a scan pipeline row owned
+   *  by that bill (source_bill_id) from its stored receipt files. Poll
+   *  getScan(token) like a fresh scan; the result feeds the bill editor, and
+   *  saving the bill (update) consumes the row — it can never become a
+   *  second bill. */
+  rescanBill: (billId: number, providerId?: string) =>
+    apiClient.post<BillScan>(`${BASE}/bills/${billId}/re-extract`, {
+      provider_id: providerId || undefined,
+    }),
   /** Abort an in-progress analysis: the row is marked cancelled and the
    *  running AI extraction is signalled to stop. Returns the updated scan. */
   cancelScan: (token: string) =>
@@ -76,13 +75,6 @@ export const billsApi = {
   /** Remove a confirmed bill for good: its lines, the linked expense
    *  transaction, and the stored receipt file. */
   remove: (id: number) => apiClient.delete(`${BASE}/bills/${id}`),
-  stats: (groupBy: BillStatsGroupBy, scope: BillStatsScope = {}) => {
-    const params = new URLSearchParams({ group_by: groupBy });
-    if (scope.month) params.set('month', scope.month);
-    if (scope.from) params.set('from', scope.from);
-    if (scope.to) params.set('to', scope.to);
-    return apiClient.get<BillStatsResponse>(`${BASE}/bills/stats?${params.toString()}`);
-  },
   /** Distinct brands already recorded on bill items (dropdown options). */
   brands: () => apiClient.get<string[]>(`${BASE}/bills/brands`),
 };

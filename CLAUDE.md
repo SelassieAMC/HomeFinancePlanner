@@ -246,11 +246,39 @@ registers a per-scan `context.CancelFunc` the cancel signals, so the model
 call stops; the kept photos are re-uploadable (dedup ignores failed AND
 cancelled), the request stays deletable (`DELETE /bills/scan/{token}`)
 or re-readable (`POST /extract` claims `cancelled` too), and cancelled rows
-sweep with the session TTL. Negative item prices are allowed
-only for "Leergut" lines or items under a category with `allows_negative` (the
-seeded "Deposit & Returns" product category covers Pfand/Leergut) — the same
-rule applies to manual transaction item lines, whose money-back lines also stay
-unlinked from products. **Deposit-artifact lines are never products**: the
+sweep with the session TTL. A **saved bill can be re-read** (rescan):
+`POST /bills/{id}/re-extract` works exactly like a fresh scan — the bill (and
+the expense transaction recorded with it) is removed, its stored receipt
+parts are handed to a plain scan pipeline row (the files move with it: the
+scan owns them once the bill is gone — confirm keeps them as the new bill's
+record, discarding deletes them), the default bill connector re-reads them in
+the background, and the fresh draft lands in the standard review queue for
+confirmation as an entirely new bill (edit view button + dialog; bill list
+reloads without it; a superseded rescan of the same receipt drops the stale
+pipeline row first so the dedup never blocks the new one). Migration 0042's
+`bill_scans.source_bill_id` column is RESERVED and unused — it is kept only
+because an earlier rescan design applied it to the dev database and migration
+versions are filename-ordered (never re-number). Negative
+item prices are allowed for deposit-return lines (`domain.IsDepositReturn`:
+`leergut|rückgabe|pfand-?bon|bottle return|deposit return|deposit refund` —
+`"Leergut"` alone missed German `"Pfandrückgabe"`), deposit/coupon artifact
+lines (`domain.IsDepositArtifact` — `pfand|leergut|pfandbon|rabatt|gutschein`
++ word-bounded `mehrweg/einweg/deposit/bottle deposit/gratis/coupon/voucher/
+discount`), and items under a category with `allows_negative` (the seeded
+"Deposit & Returns" product family) — the same rule applies to manual
+transaction item lines, whose money-back lines also stay unlinked from
+products. The extraction normalizes money-back signs: a return line the AI
+read as a positive charge is flipped negative at parse time (the prompt-only
+"returns are negative" rule failed in the field — a +26.50 Pfandrückgabe once
+inflated a 93.80 receipt to 146.80); the review editor then shows the
+corrected numbers. **The reviewed line totals are the confirmed truth**: the
+confirm payload carries `line_total_cents` and `buildBill` stores what the
+user saw (the old recompute-from-`qty×unit−discount` silently rewrote lines
+where the printed amount differs — a "Lidl Plus Rabatt −0,60" coupon filed
+with unit price 0.00 erased 0.60 between editor and registered bill); the
+recompute is only the fallback for payloads omitting the field. Coupon
+artifact lines never find-or-create products (one did — "Lidl Plus Rabatt"
+— before the artifact predicate covered rabatt/coupon markers). **Deposit-artifact lines are never products**: the
 shared `domain.IsDepositArtifact` predicate (regex over `pfand`/`leergut`
 unanchored and `mehrweg`/`einweg`/`deposit`/`gratis` word-bounded — glued
 compounds like "Einwegpfand" match, "Einwegkamera"/"Gratissauce" don't) guards
@@ -262,12 +290,15 @@ enter the `product_name_mappings` memory on future confirms — existing data
 is deliberately left untouched (no cleanup job; user decision), and migration
 0030 refreshed the `bill_extraction` and `product_normalization` prompt seeds
 (byte-guarded, custom prompts survive) to ask the AI for the same behavior.
-The bill total is always recomputed as the sum of the
-line totals **minus the bill-level global discount** (`discount_cents`, the
+The bill total is the sum of the line
+totals **minus the bill-level global discount** (`discount_cents`, the
 receipt-wide rebate printed after the article lines, e.g. "10% Rabatt" —
 per-line discounts are already inside the lines), so discounted receipts
 reconcile with their printed amount; VAT stays informational (already included
-in the prices). In the review editor, only the deposit/refund **unit
+in the prices). At extraction the line total comes from what the AI read for
+the line (its printed amount, with `qty×unit−discount` only as the fallback
+when the receipt prints none); at confirm the reviewed line totals are honored
+as-is (see the rescan/negative-prices paragraph). In the review editor, only the deposit/refund **unit
 price** carries a ± sign-flip button (phone decimal keypads have no minus
 key) — discounts are positive by nature and never get one. The per-item
 Category sits with the product name fields (it is what marks a line "Deposit

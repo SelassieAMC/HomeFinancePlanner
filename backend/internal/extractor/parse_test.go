@@ -179,6 +179,52 @@ func TestParseBillJSON_DepositReturnIsNegative(t *testing.T) {
 	}
 }
 
+// A deposit return the model read as a POSITIVE charge is normalized to
+// negative at parse time: the printed total already carries the refund, so a
+// positive return both fails to reduce the total and adds its amount on top
+// (a +0.25 "Pfandrückgabe" once inflated a 93.80 receipt to 146.80). "Leergut"
+// was the only return name the old predicate matched — "Pfandrückgabe", the
+// label most German receipts print, slipped through every guard.
+func TestParseBillJSON_PositiveDepositReturnIsNormalized(t *testing.T) {
+	// Receipt of the reported prod bug: charges 120.30, two Pfandrückgabe
+	// return lines (16 × 0.25, 90 × 0.25) printed MINUS 26.50 in the total —
+	// but the model read the returns as positive charges, so the raw line sum
+	// would be 146.80 against a printed 93.80.
+	raw := `{"market_name":"REWE","date":"2026-10-24","payment_method":"card",
+		"items":[
+			{"name":"Ski purchase","quantity":1,"unit_price":120.30,"line_total":120.30},
+			{"name":"Pfandrückgabe -16 x 0,25","quantity":16,"unit_price":0.25,"line_total":4.00},
+			{"name":"Pfandrückgabe -90 x 0,25","quantity":90,"unit_price":0.25,"line_total":22.50}
+		],
+		"total_paid":93.80}`
+	draft, err := ParseBillJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(draft.Items) != 3 {
+		t.Fatalf("items: %d", len(draft.Items))
+	}
+	if !draft.Items[1].IsReturn || !draft.Items[2].IsReturn {
+		t.Error("pfandrückgabe lines not marked as deposit returns")
+	}
+	wantLineTotals := []int64{-400, -2250}
+	for i, idx := range []int{1, 2} {
+		it := draft.Items[idx]
+		if it.UnitPriceCents != -25 || it.LineTotalCents != wantLineTotals[i] {
+			t.Errorf("return line %q after normalization: unit=%d total=%d (want -25, %d)",
+				it.Name, it.UnitPriceCents, it.LineTotalCents, wantLineTotals[i])
+		}
+	}
+	// 12030 - 400 - 2250 = 9380 — the printed total, so the computed value
+	// reconciles and the review editor shows no mismatch warning.
+	if draft.ItemsSubtotalCents != 9380 {
+		t.Errorf("items subtotal: %d (want 9380)", draft.ItemsSubtotalCents)
+	}
+	if draft.TotalCents != 9380 || draft.PrintedTotalCents != 9380 {
+		t.Errorf("computed=%d printed=%d (want 9380 both)", draft.TotalCents, draft.PrintedTotalCents)
+	}
+}
+
 func TestParseBillJSON_StandardNameFromModel(t *testing.T) {
 	// standard_name is part of the pinned schema: the raw printed text stays
 	// authoritative on the line, the readable form rides alongside it.

@@ -174,10 +174,28 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 		if it.Discount != nil {
 			disc = *it.Discount
 		}
+		isReturn := domain.IsDepositReturn(name)
+		if isReturn {
+			// Deposit returns are money BACK: the prompt asks the model to read
+			// their amounts as negative, but that is an instruction, not a
+			// guarantee. A return line left positive would both fail to reduce
+			// the total and add its amount on top (the printed total already
+			// carries the refund — a +26.50 instead of −26.50 Pfandrückgabe once
+			// inflated a 93.80 receipt to 146.80), so the sign is normalized
+			// here, before the numbers ever reach the review editor. A return
+			// line the user deliberately flips back to positive in the editor
+			// stays untouched — this pass only corrects what the model wrote.
+			if unit > 0 {
+				unit = -unit
+			}
+		}
 		if it.LineTotal != nil {
 			line = *it.LineTotal
 		} else {
 			line = qty*unit - disc // fallback when the receipt prints no line total
+		}
+		if isReturn && line > 0 {
+			line = -line
 		}
 		itemsSubtotal += line
 		draft.Items = append(draft.Items, domain.BillItemDraft{
@@ -192,7 +210,7 @@ func ParseBillJSON(raw string) (domain.BillDraft, error) {
 			UnitPriceCents: toCents(unit),
 			DiscountCents:  toCents(disc),
 			LineTotalCents: toCents(line),
-			IsReturn:       isDepositReturn(name),
+			IsReturn:       isReturn,
 		})
 	}
 
@@ -333,13 +351,6 @@ func unitValueFromWire(v *float64) *float64 {
 		return nil
 	}
 	return v
-}
-
-// isDepositReturn reports whether an article line is a bottle/crate deposit
-// return (e.g. German "Leergut") — money coming back, so its amount may be
-// negative and it reduces the bill total instead of adding to it.
-func isDepositReturn(name string) bool {
-	return strings.Contains(strings.ToLower(name), "leergut")
 }
 
 // normalizeCardDigits keeps only digits and caps the value at the last 4.

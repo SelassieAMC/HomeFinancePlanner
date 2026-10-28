@@ -6,6 +6,7 @@ import { bagsApi } from '../../api/bags';
 import { crossRate, convertCents, fxApi } from '../../api/fx';
 import { dollarsToCents, formatCents, parseDecimalInput } from '../../lib/money';
 import { incomeCategories } from '../../lib/categories';
+import { isDepositArtifact, isDepositReturn } from '../../lib/deposit';
 import { useAsync } from '../../hooks/useAsync';
 import {
   Button,
@@ -80,11 +81,13 @@ function lineFromItem(item: NonNullable<Transaction['items']>[number]): LineDraf
   };
 }
 
-// lineAllowsNegative mirrors the backend rule: "Leergut" lines and lines
-// filed under an allows_negative category (the "Deposit & Returns" / Pfand
-// family) are money back — their price may go negative.
+// lineAllowsNegative mirrors the backend rule: deposit return lines
+// ("Leergut", "Pfandrückgabe", …), deposit/coupon artifact lines ("Pfand",
+// "Rabatt", "Gutschein", …) and lines filed under an allows_negative
+// category (the "Deposit & Returns" / Pfand family) are money back — their
+// price may go negative.
 function lineAllowsNegative(line: LineDraft, categories: Category[]): boolean {
-  if (line.name.toLowerCase().includes('leergut')) return true;
+  if (isDepositReturn(line.name) || isDepositArtifact(line.name)) return true;
   return Boolean(line.category_id && categories.find((c) => c.id === line.category_id)?.allows_negative);
 }
 
@@ -276,7 +279,7 @@ export function TransactionForm({ accounts, categories, stores, mode, initial, o
     const name = line.name.trim();
     if (
       !name ||
-      name.toLowerCase().includes('leergut') ||
+      isDepositReturn(name) ||
       line.normalizedFor === name
     ) {
       return;

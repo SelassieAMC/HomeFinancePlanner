@@ -507,7 +507,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		// Deposit lines are never looked up (they are not products).
 		categoryID := it.CategoryID
 		recordable := it.CategoryID
-		isReturn := isDepositReturn(name)
+		isReturn := domain.IsDepositReturn(name)
 		if s.mappings != nil && !isReturn && !domain.IsDepositArtifact(name) {
 			if m, err := s.mappings.FindByRawName(ctx, name); err == nil {
 				if categoryID == nil && m.CategoryID != nil {
@@ -525,8 +525,10 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 		}
 		recordableCats = append(recordableCats, recordable)
 		// The negative rule needs the line's category, so it is resolved
-		// before the price checks — like buildBill.
-		allowsNegative := isReturn
+		// before the price checks — like buildBill. Deposit/coupon artifact
+		// lines ("Pfand", "Rabatt", "Gutschein", …) may carry money-back
+		// amounts regardless of the filed category.
+		allowsNegative := isReturn || domain.IsDepositArtifact(name)
 		if categoryID != nil {
 			cat, err := s.categories.GetByID(ctx, *categoryID)
 			if err != nil {
@@ -568,7 +570,7 @@ func (s *TransactionService) build(ctx context.Context, in TransactionInput) (do
 	// free-item markers (domain.IsDepositArtifact) stay unlinked, like bill
 	// returns, so purchase stats and store prices stay about real purchases.
 	for i := range items {
-		if items[i].UnitPriceCents < 0 || isDepositReturn(items[i].Name) ||
+		if items[i].UnitPriceCents < 0 || domain.IsDepositReturn(items[i].Name) ||
 			domain.IsDepositArtifact(items[i].Name) {
 			continue
 		}

@@ -1,0 +1,11 @@
+-- 0042: bill_scans.source_bill_id — RESERVED, currently unused.
+--
+-- An initial rescan design marked re-read rows of a saved bill with the
+-- owning bill's id and gave them special handling (hidden from the list,
+-- confirm-refused, file-delete guards). The feature shipped the simpler way:
+-- a rescan deletes the bill and hands its receipt files to a PLAIN scan row
+-- confirmed into a new bill (see BillService.RescanBill). Nothing writes or
+-- reads this column today; it stays because the dev database already applied
+-- this migration and migration versions are filename-ordered, so re-numbering
+-- is never allowed.
+ALTER TABLE bill_scans ADD COLUMN source_bill_id INTEGER REFERENCES bills(id) ON DELETE CASCADE;

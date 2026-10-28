@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
-import { billsApi, type BillStatsGroupBy } from '../../api/bills';
+import { billsApi } from '../../api/bills';
 import { accountsApi } from '../../api/accounts';
 import { budgetsApi } from '../../api/budgets';
 import { categoriesApi } from '../../api/categories';
@@ -17,8 +17,6 @@ export function BillsPage() {
   const { t } = useTranslation('bills');
   const [month, setMonth] = useState(currentMonth());
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [groupBy, setGroupBy] = useState<BillStatsGroupBy>('market');
-  const [statsMonth, setStatsMonth] = useState(currentMonth());
   const categories = useAsync(() => categoriesApi.list(), []);
   const brands = useAsync(() => billsApi.brands(), []);
   const stores = useAsync(() => storesApi.list(), []);
@@ -87,10 +85,6 @@ export function BillsPage() {
   if (month) filters.month = month;
 
   const bills = useAsync(() => billsApi.list(filters), [month]);
-  const stats = useAsync(
-    () => billsApi.stats(groupBy, { month: statsMonth || undefined }),
-    [groupBy, statsMonth],
-  );
 
   // The list endpoint omits items; the full bill (with lines) is fetched
   // when a panel is expanded.
@@ -102,6 +96,13 @@ export function BillsPage() {
   const [editDraft, setEditDraft] = useState<BillDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Rescan (bill editor): re-run the AI read of the expanded bill's stored
+  // receipt. Works like a fresh scan — the backend removes the bill and the
+  // fresh draft appears in the receipt analyses for confirmation.
+  const [rescanBusy, setRescanBusy] = useState(false);
+  // Dialog: a bill rescan was started (the bill is gone; the fresh draft will
+  // arrive in the receipt analyses).
+  const [rescanSent, setRescanSent] = useState(false);
   // Delete flow: the dialog asks for confirmation before the destructive call.
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -191,6 +192,43 @@ export function BillsPage() {
     }
   }
 
+  /**
+   * Re-reads the expanded bill's receipt the way a fresh scan works: the
+   * backend removes the bill (its recorded expense goes with it) and hands
+   * its stored receipt to a normal scan pipeline row — background extraction,
+   * and the fresh draft appears in the receipt analyses for confirmation like
+   * any scanned bill. The edit view closes; the bill list re-loads without
+   * it.
+   */
+  async function startRescan() {
+    if (!detail || rescanBusy) return;
+    setEditError(null);
+    setRescanBusy(true);
+    try {
+      await billsApi.rescanBill(detail.id);
+      // The bill is gone — leave the edit view and refresh the lists. The new
+      // scan shows up in the receipt analyses (scans.reload()).
+      setEditing(false);
+      setEditDraft(null);
+      setDetail(null);
+      setExpandedId(null);
+      bills.reload();
+      scans.reload();
+      setRescanSent(true);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : t('errors.reread'));
+    } finally {
+      setRescanBusy(false);
+    }
+  }
+
+  /** Leaves the edit view without saving. */
+  function cancelEdit() {
+    setEditDraft(null);
+    setEditError(null);
+    setEditing(false);
+  }
+
   async function confirmDeleteBill() {
     if (confirmDeleteId === null) return;
     setDeleting(true);
@@ -201,7 +239,6 @@ export function BillsPage() {
       setExpandedId(null);
       setDetail(null);
       bills.reload();
-      stats.reload();
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
@@ -215,59 +252,10 @@ export function BillsPage() {
     <div className="page">
       <h2 className="page-title">{t('title')}</h2>
 
-      <Card title={t('stats.title')}>
-        <div className="filter-row">
-          <select
-            value={groupBy}
-            onChange={(e) => setGroupBy(e.target.value as BillStatsGroupBy)}
-            aria-label={t('stats.groupAria')}
-          >
-            <option value="market">{t('stats.byMarket')}</option>
-            <option value="month">{t('stats.byMonth')}</option>
-            <option value="week">{t('stats.byWeek')}</option>
-            <option value="item">{t('stats.byItem')}</option>
-            <option value="category">{t('stats.byCategory')}</option>
-          </select>
-          <input
-            type="month"
-            value={statsMonth}
-            onChange={(e) => setStatsMonth(e.target.value)}
-            aria-label={t('stats.monthAria')}
-          />
-        </div>
-        {stats.loading ? (
-          <Spinner />
-        ) : stats.error ? (
-          <ErrorMessage message={stats.error.message} />
-        ) : (stats.data?.rows ?? []).length === 0 ? (
-          <EmptyState message={t('stats.empty')} />
-        ) : (
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>{t(`stats.label_${groupBy}`)}</th>
-                  {groupBy === 'item' && <th className="num">{t('stats.qty')}</th>}
-                  <th className="num">{t('stats.bills')}</th>
-                  <th className="num">{t('stats.total', { currency: stats.data?.currency })}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(stats.data?.rows ?? []).map((row) => (
-                  <tr key={row.label}>
-                    <td>{row.label}</td>
-                    {groupBy === 'item' && (
-                      <td className="num">{row.quantity ?? '—'}</td>
-                    )}
-                    <td className="num">{row.bill_count}</td>
-                    <td className="num">{formatCents(row.total_cents, stats.data?.currency ?? 'USD')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      {/* The spending analysis lives in the dashboard's Products/Trends tabs
+          (per-store, per-item, charts) under the dashboard's one period
+          picker — a second month-scoped section here duplicated that with a
+          second picker and was removed. */}
 
       {(scans.data ?? []).length > 0 && (
         <Card title={t('scanCard.title')}>
@@ -426,6 +414,9 @@ export function BillsPage() {
                         onChange={setEditDraft}
                         onConfirm={saveEdit}
                         busy={saving ? 'confirm' : null}
+                        onRescan={startRescan}
+                        rescanBusy={rescanBusy}
+                        onCancel={cancelEdit}
                         error={editError}
                         accounts={(accounts.data ?? []).map((a) => ({
                           id: a.id,
@@ -484,6 +475,17 @@ export function BillsPage() {
           </p>
           <div className="dialog-actions">
             <Button onClick={() => setRereadSent(false)}>{t('common.ok')}</Button>
+          </div>
+        </Dialog>
+      )}
+
+      {rescanSent && (
+        <Dialog title={t('rescanDialog.title')}>
+          <p className="hint-text">
+            {t('rescanDialog.body')}
+          </p>
+          <div className="dialog-actions">
+            <Button onClick={() => setRescanSent(false)}>{t('common.ok')}</Button>
           </div>
         </Dialog>
       )}
