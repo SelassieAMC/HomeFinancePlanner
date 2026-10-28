@@ -156,6 +156,20 @@ func (h *ScheduleHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, r, http.StatusOK, runs)
 }
 
+// Payables renders ONE month of the occurrences register
+// (`?month=YYYY-MM`, default the server's current month): occurrence rows
+// derived from the recurrence rules with materialized run statuses merged
+// in, plus owed/paid totals for the month. The viewed month materializes on
+// demand, so every listed pending occurrence is actionable.
+func (h *ScheduleHandler) Payables(w http.ResponseWriter, r *http.Request) {
+	report, err := h.Svc.Payables(r.Context(), serverToday(), r.URL.Query().Get("month"))
+	if err != nil {
+		respondServiceError(w, r, err)
+		return
+	}
+	respondJSON(w, r, http.StatusOK, report)
+}
+
 // runID parses the {run_id} path value of the /runs/... routes.
 func runID(r *http.Request) (int64, error) {
 	return strconv.ParseInt(r.PathValue("run_id"), 10, 64)

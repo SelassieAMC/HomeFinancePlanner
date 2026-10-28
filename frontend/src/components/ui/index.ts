@@ -12,6 +12,8 @@ export {
   IconCloseCircle,
   IconReopen,
   IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
 } from './IconButton';
 export { Card } from './Card';
 export { Spinner, ErrorMessage, EmptyState, Dialog } from './Feedback';
@@ -22,4 +24,5 @@ export { ItemPanel, ItemPanels } from './ItemPanel';
 export { Pagination } from './Pagination';
 export { CategorySelect } from './CategorySelect';
 export { UnitSelect } from './UnitSelect';
+export { MoneyInput } from './MoneyInput';
 export { ProductAutocomplete } from './ProductAutocomplete';

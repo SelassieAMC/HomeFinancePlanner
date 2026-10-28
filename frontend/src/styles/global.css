@@ -764,6 +764,16 @@ textarea:focus,
   background: var(--text-muted);
 }
 
+/* Due within the next 2 days (or overdue): the red highlight of the
+ * occurrences register — dot + badge + a tinted card edge. */
+.budget-dot.danger {
+  background: var(--negative);
+}
+
+.budget-card.due-soon {
+  border-color: color-mix(in srgb, var(--negative) 45%, transparent);
+}
+
 /* Achieved goal: green dot / green fill (goals reuse the budget card layout). */
 .budget-dot.ok {
   background: var(--positive);
@@ -796,6 +806,30 @@ textarea:focus,
 .budget-card .progress-track {
   height: 10px;
   border-radius: 5px;
+}
+
+/* Occurrences register (schedules tab): month paging header — nav arrows +
+ * month name left, owed/paid totals per currency right. */
+.payables-month-head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 8px 0 4px;
+  flex-wrap: wrap;
+}
+
+.payables-month-head strong {
+  font-size: 0.95rem;
+}
+
+.payables-month-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.payables-month-head + .budget-list {
+  margin-top: 4px;
 }
 
 .budget-status {
@@ -2065,6 +2099,20 @@ textarea:focus,
   min-width: 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* Currency code chip at the field's right edge (MoneyInput). */
+.money-currency {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.55em;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
 }
 
 .sign-toggle {

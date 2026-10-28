@@ -83,7 +83,7 @@ func (r *UserRepository) FindByUsername(ctx context.Context, username string) (d
 // Create inserts a user and returns it with its id and timestamps filled in.
 // The username's UNIQUE NOCASE index turns a collision into domain.ErrConflict
 // via mapWriteError. An empty Locale stores the column default (NULLIF/COALESCE
-// keeps the zero value from overriding it — an explicit '' would).
+// keeps the zero value from overriding it — an explicit ” would).
 func (r *UserRepository) Create(ctx context.Context, u domain.User) (domain.User, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `

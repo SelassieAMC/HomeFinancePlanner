@@ -684,16 +684,38 @@ unified scheduler for planned money movements — `ScheduledPage` is the fourth
 `/planning` tab (`?tab=schedules`, label "Scheduled") and the dashboard has a
 standalone "Coming up" card (`frontend ComingUpCard`: pending runs due ≤7
 days plus overdue, one-click apply/dismiss, hidden when empty). Five kinds ×
-three recurrences (`once`, `monthly` day 1..28 so short months never skip,
-`yearly` adds `month_of_year`); the split is the **auto-apply boundary**:
-`bag_funding`/`bag_rebalance` are virtual (`ScheduleKind.Virtual()`) — the
-system applies them itself because they write only bag allocation ledger rows
-(dated at the due date, note `"Scheduled: <name>"`), never a stored account
-balance; `account_transfer`/`transaction`/`purchase` are confirm-first — a
-pending reminder until one click applies, dismisses or skips
+three recurrences (`once`, `monthly`, `yearly` adds `month_of_year`); the
+repeating day **derives from the start date** (2026-10-28 user decision,
+replacing the old 1..28 day selector: the start date IS the pattern — it
+repeats on that day-of-month, **clamped to the month's last day** when a
+month is shorter, so day-31 plans land Feb 28 instead of skipping; the
+client never sends `day_of_month`, an explicit one is refused — and the
+derived day stores NULL when it exceeds 28, migration 0037's CHECK bound:
+the stored field is a cache, `dueDatesRange` derives from the start date
+when NULL). The **execution mode is the schedule's own `auto_apply` flag**
+(migration 0046, 2026-10-28 user decision — no longer kind-inherent):
+unchecked (every legacy row defaults here) = manual — the pending
+occurrence stays the red alert (overdue or due ≤2 days) until one click
+confirms, dismisses or skips it; checked = the movement executes itself on
+each due date — the catch-up auto-applies `Kind.Virtual() || a.AutoApply`
+in due order, dated AT the due date (a failed apply leaves the run pending
+and logged). A nil `auto_apply` on PUT keeps the stored mode (the
+carry_over pattern); the virtual bag kinds always run themselves
+regardless of the flag (their checkbox doesn't even render); the payables
+rows carry `auto_apply` and the register marks those "runs itself each
+period", while `bag_funding`/`bag_rebalance` remain
+(`ScheduleKind.Virtual()`) system-applied — they write only bag allocation
+ledger rows, never a stored account balance. A scheduled expense carries
+the manual form's optional **"From bag" tag** (payload `bag_id`:
+expense-only, the account's own open bag — each applied occurrence drains
+that reserve like any tagged spend)
 (`POST /runs/{run_id}/apply|dismiss|skip`; apply writes via `TransactionService`
 — transfers get `CounterAccountID` — or pure status change for purchases;
-`ApplyRun` refuses runs due in the future, and transactions stay
+**early payment** — MoneyWiz rule, the due date is a deadline not a gate:
+`ApplyRun` accepts a future-due confirm-first run and `executeRun` dates the
+movement at `min(due, today)`, so money that left now is never written dated
+ahead while the run keeps its plan due date; virtual kinds refuse early
+apply — they auto-apply exactly on their due date, and transactions stay
 not-future-dated). Runs **materialize lazily** on reads
 (`ScheduledActionService.EnsureUpcoming`, wired into `SummaryService.RangeSummary`
 and the schedule endpoints; no cron): due dates in a 31-day-lookback /
@@ -702,15 +724,43 @@ in due order — a virtual run refused (closed bag) or a real movement's failure
 leaves the run pending with a logged warning, so the reminder nags instead of
 silently losing the occurrence. Edits affect future occurrences only: pending
 runs are deleted and regenerated (the UNIQUE index keeps applied /
-dismissed / skipped rows from being re-created); an ever-applied action
-refuses `DELETE` → `POST {id}/archive` instead (archived=1, pending runs
-dropped, history kept, and archived schedules' runs are hidden from every
-list read via the `a.archived = 0` join filter); a never-applied action
-deletes with its runs cascading. `BagService.Delete` refuses while a
+dismissed / skipped rows from being re-created); `DELETE` is unconditional
+(user decision 2026-10-28 — a deleted schedule keeps no history: run rows
+cascade, the movements already written stay as ordinary transactions, and
+`POST {id}/archive` remains the soft alternative that keeps the plan's
+history viewable — archived schedules' runs are hidden from every list
+read via the `a.archived = 0` join filter). `BagService.Delete` refuses while a
 non-archived virtual-kind schedule targets the bag
 (`ActiveActionsTargetingBag`). The service takes `today` from the handler
 (server-clock, like `Glance`) and tests live in
-`internal/service/scheduled_action_service_test.go`. **Multi-user login**
+`internal/service/scheduled_action_service_test.go`. The **occurrences
+register** (Phase 6, `scheduled_action_payables.go` — no migration) pages
+ONE month at a time (final 2026-10-28 user decision, replacing the rolling
+window): `GET /scheduled-actions/payables?month=YYYY-MM` (default the
+server's current month) — occurrences derive from the same `dueDatesRange`
+rules the materializer uses over that month, statuses merge from
+materialized runs by (action_id, due_date) — pending=owed (badge shows the
+due countdown), applied=paid, dismissed/skipped=neither totals column, no
+run=projected (PayableProjected). **The viewed month materializes on
+demand** (`widenWindow`, FORWARD side only — the backward side never
+widens past the 31-day lookback so the lapse rule stays exact and old
+unfollowed occurrences are never fabricated as history): navigating to any
+future month creates its runs, so every pending row there is actionable.
+Every active kind lists (`is_payable` marks the rows that fold totals —
+income transactions and virtual bag movements ride their own rows but
+enter neither column); a purchase lists even estimate-less (amount 0,
+never summed) and prices in the base currency; tx/transfer amounts price
+in the source account's currency (deleted account falls back to base);
+virtual bag movements price in their bag's account currency. Totals are
+per month AND currency, never cross-currency summed. The Schedules tab
+renders this register (MoneyWiz-style card with prev/next month arrows —
+the separate to-do feed AND the plans table were both collapsed into it,
+the final 2026-10-28 user decision: ONE surface): per-row Apply/Dismiss/
+Skip incl. **early payment** (confirm dialog names the record-at-today
+case), row-level edit/archive/delete of the generating plan (the report
+carries the plan fields; a created schedule flips the register to its
+start month), the history collapsible lives at the card's bottom, and
+auto-applies virtual kinds keep no Apply button. **Multi-user login**
 (migration 0038, `users` + `sessions`) is a thin identity layer over the still
 shared household dataset — one planner, not one per person. Boot seeds an
 initial **admin** (`admin`/`admin`, `UserService.EnsureSeedAdmin` only on an

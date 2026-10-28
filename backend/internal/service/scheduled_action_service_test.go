@@ -118,17 +118,6 @@ func (f *fakeScheduleStore) ActiveActionsTargetingBag(_ context.Context, bagID i
 	return out, nil
 }
 
-func (f *fakeScheduleStore) HasAppliedRuns(_ context.Context, actionID int64) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, run := range f.runs {
-		if run.ActionID == actionID && run.Status == domain.ScheduleApplied {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (f *fakeScheduleStore) MaterializeRuns(_ context.Context, actionID int64, dueDates []string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -305,6 +294,7 @@ func newScheduleHarness(t *testing.T) *scheduleHarness {
 		transactions: newFakeTxStore(),
 		accounts:     accounts,
 		categories:   cats,
+		bags:         bagStore,
 		log:          discardLogger(),
 	}
 	store := newFakeScheduleStore()
@@ -386,18 +376,13 @@ func TestScheduleCreateValidation(t *testing.T) {
 			return in
 		}, "day_of_month/month_of_year belong"},
 		{"once too old", func() ScheduledActionInput { return scheduleFundingOnce(1, 10000, "2025-01-01") }, "never materialize"},
-		{"monthly without day", func() ScheduledActionInput {
-			in := scheduleFundingOnce(1, 10000, "2026-10-05")
-			in.Recurrence = domain.ScheduleMonthly
-			return in
-		}, "monthly and yearly recurrences need day_of_month"},
-		{"monthly day 31", func() ScheduledActionInput {
+		{"monthly with explicit day_of_month", func() ScheduledActionInput {
 			in := scheduleFundingOnce(1, 10000, "2026-10-05")
 			in.Recurrence = domain.ScheduleMonthly
 			day := 31
 			in.DayOfMonth = &day
 			return in
-		}, "day_of_month must be 1..28"},
+		}, "day_of_month is derived from start_date"},
 		{"yearly without month", func() ScheduledActionInput {
 			in := scheduleFundingOnce(1, 10000, "2026-10-05")
 			in.Recurrence = domain.ScheduleYearly
@@ -425,7 +410,6 @@ func TestScheduleCreateValidation(t *testing.T) {
 				Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(1), AmountCents: 10000},
 				Recurrence: domain.ScheduleMonthly,
 				StartDate:  "2026-10-05",
-				DayOfMonth: intPtr(5),
 			}
 		}, "source and destination accounts must differ"},
 		{"transfer unknown account", func() ScheduledActionInput {
@@ -498,7 +482,6 @@ func TestScheduleRebalanceValidation(t *testing.T) {
 		Payload:    domain.SchedulePayload{FromBagID: &a.ID, ToBagID: &b.ID, AmountCents: 5000},
 		Recurrence: domain.ScheduleMonthly,
 		StartDate:  "2026-10-05",
-		DayOfMonth: intPtr(5),
 	}
 	if _, err := h.svc.Create(h.ctx, h.today, valid); err != nil {
 		t.Fatalf("create valid rebalance: %v", err)
@@ -529,14 +512,12 @@ func contains(hay, needle string) bool {
 func TestEnsureUpcomingMaterializesMonthly(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
-	day := 25
 	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Warm expenses",
 		Kind:       domain.ScheduleBagFunding,
 		Payload:    domain.SchedulePayload{BagID: &bag.ID, AmountCents: 15000},
 		Recurrence: domain.ScheduleMonthly,
 		StartDate:  "2026-10-25",
-		DayOfMonth: &day,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -570,14 +551,13 @@ func TestEnsureUpcomingMaterializesMonthly(t *testing.T) {
 
 func TestEnsureUpcomingYearly(t *testing.T) {
 	h := newScheduleHarness(t)
-	day, month := 1, 11
+	month := 11
 	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:        "Nebenkosten",
 		Kind:        domain.ScheduleTransaction,
 		Payload:     domain.SchedulePayload{AccountID: int64Ptr(1), TransactionKind: domain.TransactionExpense, AmountCents: 90000},
 		Recurrence:  domain.ScheduleYearly,
 		StartDate:   "2026-11-01",
-		DayOfMonth:  &day,
 		MonthOfYear: &month,
 	})
 	if err != nil {
@@ -662,14 +642,12 @@ func TestEnsureUpcomingClosedBagStaysPending(t *testing.T) {
 func TestUpdateRegeneratesPendingOnly(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
-	day := 25
 	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Warm expenses",
 		Kind:       domain.ScheduleBagFunding,
 		Payload:    domain.SchedulePayload{BagID: &bag.ID, AmountCents: 15000},
 		Recurrence: domain.ScheduleMonthly,
 		StartDate:  "2026-10-25",
-		DayOfMonth: &day,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -691,7 +669,6 @@ func TestUpdateRegeneratesPendingOnly(t *testing.T) {
 		Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(2), AmountCents: 100000},
 		Recurrence: domain.ScheduleMonthly,
 		StartDate:  "2026-10-25",
-		DayOfMonth: &day,
 	}
 	rent, err := h.svc.Create(h.ctx, h.today, txBag)
 	if err != nil {
@@ -708,15 +685,13 @@ func TestUpdateRegeneratesPendingOnly(t *testing.T) {
 		t.Fatalf("dismiss: %v", err)
 	}
 
-	// Edit: new day (25 → 20) and a bigger amount.
-	day20 := 20
+	// Edit: new day (25 → 20 via the start date) and a bigger amount.
 	updated, err := h.svc.Update(h.ctx, rent.ID, h.today, ScheduledActionInput{
 		Name:       "Rent",
 		Kind:       domain.ScheduleAccountTransfer,
 		Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(2), AmountCents: 120000},
 		Recurrence: domain.ScheduleMonthly,
 		StartDate:  "2026-10-20",
-		DayOfMonth: &day20,
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -762,7 +737,7 @@ func dumpRuns(runs []domain.ScheduleRunView) string {
 	return fmt.Sprint(parts)
 }
 
-func TestDeleteRefusesHistoryAndArchiveKeepsIt(t *testing.T) {
+func TestDeleteRemovesHistoryAndArchiveKeepsIt(t *testing.T) {
 	h := newScheduleHarness(t)
 	bag := h.bag(t, "Warm expenses")
 	created, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 15000, "2026-10-10"))
@@ -772,15 +747,25 @@ func TestDeleteRefusesHistoryAndArchiveKeepsIt(t *testing.T) {
 	if err := h.svc.EnsureUpcoming(h.ctx, h.today); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
-
-	// Applied history exists → plain delete refuses.
-	if err := h.svc.Delete(h.ctx, created.ID); err == nil || !contains(err.Error(), "archive") {
-		t.Errorf("delete with applied runs: expected archive refusal, got %v", err)
+	// The virtual funding auto-applied on the catch-up — applied history
+	// exists.
+	if err := h.svc.Delete(h.ctx, created.ID); err != nil {
+		t.Errorf("delete with applied runs must succeed (history dies with the plan), got %v", err)
+	}
+	if len(h.schedules.runs) != 0 {
+		t.Errorf("delete must cascade the run rows, got %d left", len(h.schedules.runs))
 	}
 
 	// Archive is the soft path: keeps the action + its applied run, drops
 	// pending reminders, hides both from the reads.
-	archived, err := h.svc.Archive(h.ctx, created.ID)
+	keep, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 3000, "2026-10-10"))
+	if err != nil {
+		t.Fatalf("create keep: %v", err)
+	}
+	if err := h.svc.EnsureUpcoming(h.ctx, h.today); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	archived, err := h.svc.Archive(h.ctx, keep.ID)
 	if err != nil {
 		t.Fatalf("archive: %v", err)
 	}
@@ -802,17 +787,8 @@ func TestDeleteRefusesHistoryAndArchiveKeepsIt(t *testing.T) {
 		t.Errorf("archived schedule's runs must be hidden, got %+v", runs)
 	}
 	// History stays in the store (the ledger row was the whole point).
-	if len(h.schedules.runs) != 1 {
-		t.Errorf("archive must keep the run history, got %d rows", len(h.schedules.runs))
-	}
-
-	// A never-applied schedule deletes cleanly.
-	fresh, err := h.svc.Create(h.ctx, h.today, scheduleFundingOnce(bag.ID, 2000, "2026-10-20"))
-	if err != nil {
-		t.Fatalf("create fresh: %v", err)
-	}
-	if err := h.svc.Delete(h.ctx, fresh.ID); err != nil {
-		t.Errorf("delete never-applied: %v", err)
+	if len(h.schedules.runs) == 0 {
+		t.Errorf("archive must keep the run history")
 	}
 }
 
@@ -866,7 +842,7 @@ func TestApplyRunTransfer(t *testing.T) {
 	}
 }
 
-func TestApplyRunRefusesFuturePending(t *testing.T) {
+func TestApplyRunFuturePendingAppliesEarly(t *testing.T) {
 	h := newScheduleHarness(t)
 	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Rent to cash",
@@ -886,14 +862,19 @@ func TestApplyRunRefusesFuturePending(t *testing.T) {
 	if len(runs) != 1 || runs[0].Status != domain.SchedulePending {
 		t.Fatalf("expected 1 pending future run, got %+v", runs)
 	}
-	if _, err := h.svc.ApplyRun(h.ctx, runs[0].ID, h.today); err == nil || !contains(err.Error(), "future") {
-		t.Errorf("future apply: expected refusal, got %v", err)
+	// MoneyWiz semantics: the due date is a deadline, not a gate. Paying
+	// early is allowed and the movement records at TODAY's date — the run
+	// keeps its plan due date.
+	view, err := h.svc.ApplyRun(h.ctx, runs[0].ID, h.today)
+	if err != nil {
+		t.Errorf("early apply of a future occurrence: %v", err)
 	}
-	// Skip is the legitimate answer to a not-yet-real occurrence — but only
-	// once it is due; before it is due it stays nagging by design? No: skip
-	// needs no date gate (the reminder list owns it). It just transitions.
-	if _, err := h.svc.SkipRun(h.ctx, runs[0].ID); err != nil {
-		t.Errorf("skip pending future run: %v", err)
+	if view.Status != domain.ScheduleApplied {
+		t.Errorf("early-applied run must be applied: %+v", view)
+	}
+	// Double-apply conflicts.
+	if _, err := h.svc.ApplyRun(h.ctx, runs[0].ID, h.today); err == nil || !contains(err.Error(), "pending") {
+		t.Errorf("re-apply: expected conflict, got %v", err)
 	}
 }
 
@@ -1007,14 +988,12 @@ func TestRunsFiltersAndOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	day := 25
 	if _, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
 		Name:       "Rent",
 		Kind:       domain.ScheduleAccountTransfer,
 		Payload:    domain.SchedulePayload{AccountID: int64Ptr(1), CounterID: int64Ptr(2), AmountCents: 100000},
 		Recurrence: domain.ScheduleMonthly,
 		StartDate:  "2026-10-25",
-		DayOfMonth: &day,
 	}); err != nil {
 		t.Fatalf("create rent: %v", err)
 	}

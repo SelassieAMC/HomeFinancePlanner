@@ -8,12 +8,14 @@ import { accountsApi } from '../../api/accounts';
 import { bagsApi } from '../../api/bags';
 import { categoriesApi } from '../../api/categories';
 import { settingsApi } from '../../api/settings';
-import { dollarsToCents, formatCents } from '../../lib/money';
+import { formatCents } from '../../lib/money';
 import { todayISO } from '../../lib/date';
 import type {
   Account,
   BagStatus,
   Category,
+  Payable,
+  PayablesTotal,
   ScheduleKind,
   SchedulePayload,
   ScheduleRecurrence,
@@ -30,7 +32,10 @@ import {
   EmptyState,
   Spinner,
   IconButton,
+  MoneyInput,
   IconArchive,
+  IconChevronLeft,
+  IconChevronRight,
   IconEdit,
   IconTrash,
 } from '../../components/ui';
@@ -119,6 +124,10 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
       schedulesApi.runs({ status: ['pending', 'applied', 'dismissed', 'skipped'], limit: 200 }),
     [],
   );
+  // The occurrences register: one month at a time (MoneyWiz-style paging).
+  // An empty string means the server's current month; the arrows shift it.
+  const [registerMonth, setRegisterMonth] = useState('');
+  const payables = useAsync(() => schedulesApi.payables(registerMonth || undefined), [registerMonth]);
   const accounts = useAsync(() => accountsApi.list(), []);
   const bags = useAsync(() => bagsApi.overview(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
@@ -164,9 +173,6 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
 
   const today = todayISO();
   const allRuns = runs.data ?? [];
-  const todo = allRuns
-    .filter((r) => r.status === 'pending')
-    .sort((a, b) => a.due_date.localeCompare(b.due_date) || a.id - b.id);
   const historyRows = allRuns.filter((r) => r.status !== 'pending');
   const active = schedules.data ?? [];
 
@@ -222,6 +228,11 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
     return t('apply.record', { kind: kindWord, summary: payloadSummary(run.schedule, lookup) });
   }
 
+  /** Any state change that touches runs also repaints the payables card. */
+  async function reloadRuns() {
+    await Promise.all([runs.reload(), payables.reload()]);
+  }
+
   async function handleApplyConfirm(run: ScheduleRunView | null) {
     if (!run) return;
     setBusy(true);
@@ -229,7 +240,7 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
     try {
       await schedulesApi.applyRun(run.id);
       setConfirmApply(null);
-      await runs.reload();
+      await reloadRuns();
     } catch (err) {
       setPageError(err instanceof Error ? err.message : t('errors.apply'));
     } finally {
@@ -242,7 +253,7 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
     setPageError(null);
     try {
       await (action === 'dismiss' ? schedulesApi.dismissRun(run.id) : schedulesApi.skipRun(run.id));
-      await runs.reload();
+      await reloadRuns();
     } catch (err) {
       setPageError(err instanceof Error ? err.message : t('errors.update'));
     } finally {
@@ -259,10 +270,10 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
       setConfirmDelete(null);
       setFormError(null);
       await schedules.reload();
-      await runs.reload();
+      await reloadRuns();
     } catch (err) {
-      // A refused delete means history exists — keep the dialog open and put
-      // the "archive instead" advice where the delete button sits.
+      // Delete always succeeds with real access errors only — keep the
+      // dialog open and put the message where the button sits.
       setFormError(err instanceof Error ? err.message : t('errors.delete'));
     } finally {
       setBusy(false);
@@ -275,7 +286,7 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
     try {
       await schedulesApi.archive(action.id);
       await schedules.reload();
-      await runs.reload();
+      await reloadRuns();
     } catch (err) {
       setPageError(err instanceof Error ? err.message : t('errors.archive'));
     } finally {
@@ -294,152 +305,65 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
 
   const openBags = (bags.data?.accounts ?? []).map((v) => v.bags).flat().filter((b) => b.status === 'open');
 
+  /** Bridges from a payables-report occurrence to the shapes the existing
+   *  handlers work with (apply/dismiss/skip target runs — the item carries
+   *  the run id when its occurrence is materialized). */
+  function runOf(it: Payable): ScheduleRunView {
+    return {
+      id: it.run_id ?? 0,
+      action_id: it.action_id,
+      due_date: it.due_date,
+      status: it.status === 'projected' ? 'pending' : it.status,
+      action_name: it.name,
+      kind: it.kind,
+      schedule: it.schedule,
+      created_at: '',
+      updated_at: '',
+    };
+  }
+
+  /** Bridges to the plan row (edit/delete from the occurrence line). */
+  function planOf(it: Payable): ScheduledAction {
+    return {
+      id: it.action_id,
+      name: it.name,
+      kind: it.kind,
+      payload: it.schedule,
+      recurrence: it.recurrence,
+      start_date: it.start_date,
+      day_of_month: it.day_of_month,
+      month_of_year: it.month_of_year,
+      auto_apply: it.auto_apply,
+      archived: false,
+      created_at: '',
+      updated_at: '',
+    };
+  }
+
   const body = (
     <>
       {pageError && <ErrorMessage message={pageError} />}
 
-      <Card title={t('todo.card')}>
-        <div className="form-row">
-          <Button variant="primary" onClick={() => { setFormError(null); setShowForm(true); }}>
-            {t('todo.add')}
-          </Button>
-        </div>
-        {todo.length === 0 ? (
-          <p className="hint-text">{t('todo.empty')}</p>
-        ) : (
-          <div className="budget-list">
-            {todo.map((run) => {
-              const due: DueLabel = dueLabel(run.due_date, today);
-              return (
-                <div key={run.id} className="budget-card">
-                  <div className="budget-head">
-                    <span className="budget-dot" aria-hidden="true" />
-                    <span className="budget-name">{run.action_name}</span>
-                    <span className={run.due_date < today ? 'badge danger' : 'badge'}>
-                      {t(due.key, { count: due.count })}
-                    </span>
-                    <span className="budget-amounts">{formatDate(run.due_date)}</span>
-                  </div>
-                  <div className="budget-status">
-                    {t(KIND_KEYS[run.kind])} · {payloadSummary(run.schedule, lookup)}
-                  </div>
-                  <div className="budget-actions">
-                    {VIRTUAL_KINDS.includes(run.kind) ? (
-                      <span className="stat-label">{t('todo.applies_itself')}</span>
-                    ) : (
-                      <Button variant="primary" className="btn-sm" disabled={busy} onClick={() => setConfirmApply(run)}>
-                        {run.kind === 'purchase' ? t('todo.done') : t('todo.apply')}
-                      </Button>
-                    )}
-                    <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => handleRunAction(run, 'dismiss')}>
-                      {t('todo.dismiss')}
-                    </Button>
-                    <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => handleRunAction(run, 'skip')}>
-                      {t('todo.skip')}
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      <Card title={t('list.card')}>
-        {active.length === 0 ? (
-          <EmptyState message={t('list.empty')} />
-        ) : (
-          <div className="table-scroll">
-            <table className="plan-table">
-              <thead>
-                <tr>
-                  <th>{t('table.schedule')}</th>
-                  <th>{t('table.kind')}</th>
-                  <th>{t('table.recurrence')}</th>
-                  <th>{t('table.starts')}</th>
-                  <th aria-hidden="true" />
-                </tr>
-              </thead>
-              <tbody>
-                {active.map((s) => (
-                  <tr key={s.id}>
-                    <td>
-                      <span className="cell-entity">
-                        <span className="budget-dot" aria-hidden="true" />
-                        <span className="entity-name">{s.name}</span>
-                      </span>
-                    </td>
-                    <td className="cell-muted">
-                      {t(KIND_KEYS[s.kind])} · {payloadSummary(s.payload, lookup)}
-                    </td>
-                    <td className="cell-muted">
-                      {t(RECURRENCE_KEYS[s.recurrence])}
-                      {s.recurrence !== 'once' && s.day_of_month
-                        ? ` · ${t('list.day', { count: s.day_of_month })}${s.recurrence === 'yearly' && s.month_of_year ? ` ${t('list.month_of', { count: s.month_of_year })}` : ''}`
-                        : ''}
-                    </td>
-                    <td className="cell-muted">{formatDate(s.start_date)}</td>
-                    <td className="cell-actions">
-                      <IconButton
-                        icon={<IconEdit />}
-                        label={t('list.edit')}
-                        onClick={() => {
-                          setFormError(null);
-                          setEditing(s);
-                        }}
-                      />
-                      <IconButton
-                        icon={<IconArchive />}
-                        label={t('list.archive')}
-                        disabled={busy}
-                        onClick={() => handleArchive(s)}
-                      />
-                      <IconButton
-                        icon={<IconTrash />}
-                        label={t('list.delete')}
-                        variant="danger"
-                        onClick={() => {
-                          setFormError(null);
-                          setConfirmDelete(s);
-                        }}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="hint-text">{t('list.hint')}</p>
-        {historyRows.length > 0 && (
-          <div>
-            <Button variant="ghost" onClick={() => setShowHistory(!showHistory)}>
-              {showHistory ? t('list.hide_history') : t('list.show_history', { count: historyRows.length })}
-            </Button>
-            {showHistory && (
-              <div className="budget-list">
-                {[...historyRows]
-                  .sort((a, b) => b.due_date.localeCompare(a.due_date))
-                  .map((run) => (
-                    <div key={run.id} className="budget-card">
-                      <div className="budget-head">
-                        <span className="budget-dot closed" aria-hidden="true" />
-                        <span className="budget-name">{run.action_name}</span>
-                        <span className="badge">{t(STATUS_KEYS[run.status])}</span>
-                        <span className="budget-amounts">{formatDate(run.due_date)}</span>
-                      </div>
-                      <div className="budget-status">
-                        {t(KIND_KEYS[run.kind])} · {payloadSummary(run.schedule, lookup)}
-                        {run.result_type === 'transaction' && t('list.result_transaction')}
-                        {run.result_type === 'allocation' && t('list.result_allocation')}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        )}
-      </Card>
+      {(active.length > 0 || (payables.data?.items ?? []).length > 0 || historyRows.length > 0) && (
+        <PayablesCard
+          month={payables.data?.month ?? (registerMonth || today.slice(0, 7))}
+          items={payables.data?.items ?? []}
+          totals={payables.data?.totals ?? []}
+          today={today}
+          busy={payables.loading || busy}
+          describe={(p) => payloadSummary(p, lookup)}
+          historyRows={historyRows}
+          showHistory={showHistory}
+          onToggleHistory={() => setShowHistory(!showHistory)}
+          onAdd={() => { setFormError(null); setShowForm(true); }}
+          onApply={(it) => setConfirmApply(runOf(it))}
+          onRunAction={(it, action) => handleRunAction(runOf(it), action)}
+          onEdit={(it) => { setFormError(null); setEditing(planOf(it)); }}
+          onArchive={(it) => handleArchive(planOf(it))}
+          onDelete={(it) => setConfirmDelete(planOf(it))}
+          onShift={(delta) => setRegisterMonth(shiftMonth(payables.data?.month ?? today.slice(0, 7), delta))}
+        />
+      )}
 
       {(showForm || editing) && (
         <ScheduleFormDialog
@@ -447,6 +371,7 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
           accounts={accounts.data ?? []}
           openBags={openBags}
           categories={categories.data ?? []}
+          baseCurrency={baseCurrency.data?.currency ?? 'EUR'}
           busy={busy}
           error={formError}
           onCancel={closeForm}
@@ -460,8 +385,11 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
                 await schedulesApi.create(input);
               }
               closeForm();
+              // A fresh schedule lands in ITS start month — flip the
+              // register there so the user sees the row they just created.
+              setRegisterMonth(input.start_date.slice(0, 7));
               await schedules.reload();
-              await runs.reload();
+              await reloadRuns();
             } catch (err) {
               setFormError(err instanceof Error ? err.message : t('errors.save'));
             } finally {
@@ -474,8 +402,12 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
       {confirmApply && (
         <Dialog title={confirmApply.kind === 'purchase' ? t('apply.title_bought') : t('apply.title_apply')}>
           <p className="hint-text">{applyCopy(confirmApply, lookup)}</p>
+          {/* Early payment records at today's real date (MoneyWiz rule: the
+              due date is a deadline, not the record date). */}
           <p className="hint-text">
-            {t('apply.dated', { date: formatDate(confirmApply.due_date) })}
+            {confirmApply.due_date > today
+              ? t('apply.dated_early', { date: formatDate(today), due: formatDate(confirmApply.due_date) })
+              : t('apply.dated', { date: formatDate(confirmApply.due_date) })}
           </p>
           <div className="dialog-actions">
             <Button variant="ghost" onClick={() => setConfirmApply(null)} disabled={busy}>
@@ -521,6 +453,7 @@ interface ScheduleFormDialogProps {
   accounts: Account[];
   openBags: BagStatus[];
   categories: Category[];
+  baseCurrency: string;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -532,6 +465,7 @@ function ScheduleFormDialog({
   accounts,
   openBags,
   categories,
+  baseCurrency,
   busy,
   error,
   onCancel,
@@ -542,27 +476,63 @@ function ScheduleFormDialog({
   const [kind, setKind] = useState<ScheduleKind>(initial?.kind ?? 'bag_funding');
   const [recurrence, setRecurrence] = useState<ScheduleRecurrence>(initial?.recurrence ?? 'once');
   const [startDate, setStartDate] = useState(initial?.start_date ?? todayISO());
-  const [dayOfMonth, setDayOfMonth] = useState(initial?.day_of_month ? String(initial.day_of_month) : '1');
   const [monthOfYear, setMonthOfYear] = useState(initial?.month_of_year ? String(initial.month_of_year) : '1');
 
-  // Kind-payload state, read back into the payload on submit. Empty money
-  // strings mean "unset" only where the field is optional (purchase estimate).
+  // Kind-payload state, read back into the payload on submit. Money rides as
+  // committed cents (MoneyInput formats and parses; null = untouched).
   const p0: SchedulePayload = initial?.payload ?? {};
-  const [bagId, setBagId] = useState(p0.bag_id ? String(p0.bag_id) : '');
+  const [bagId, setBagId] = useState(p0.bag_id && initial?.kind === 'bag_funding' ? String(p0.bag_id) : '');
+  const [fundAccountId, setFundAccountId] = useState<string>(
+    p0.bag_id && initial?.kind === 'bag_funding'
+      ? String(openBags.find((b) => String(b.id) === String(p0.bag_id))?.account_id ?? '')
+      : '',
+  );
   const [fromBagId, setFromBagId] = useState(p0.from_bag_id ? String(p0.from_bag_id) : '');
   const [toBagId, setToBagId] = useState(p0.to_bag_id ? String(p0.to_bag_id) : '');
   const [accountId, setAccountId] = useState(p0.account_id ? String(p0.account_id) : '');
   const [counterId, setCounterId] = useState(p0.counter_account_id ? String(p0.counter_account_id) : '');
   const [txKind, setTxKind] = useState<'expense' | 'income'>(p0.transaction_kind ?? 'expense');
+  // The optional "From bag" tag of a scheduled expense (only when its
+  // account has open bags — otherwise no selector renders).
+  const [txBagId, setTxBagId] = useState(p0.bag_id && initial?.kind === 'transaction' ? String(p0.bag_id) : '');
   const [categoryId, setCategoryId] = useState(p0.category_id ? String(p0.category_id) : '');
-  const [amount, setAmount] = useState(p0.amount_cents ? centsToInput(p0.amount_cents) : '');
-  const [estimated, setEstimated] = useState(p0.estimated_cents ? centsToInput(p0.estimated_cents) : '');
+  const [amountCents, setAmountCents] = useState<number | null>(p0.amount_cents ?? null);
+  const [estimateCents, setEstimateCents] = useState<number | null>(p0.estimated_cents ?? null);
   const [description, setDescription] = useState(p0.description ?? '');
   const [note, setNote] = useState(p0.note ?? '');
+  // The execution mode (0046): virtual kinds ALWAYS run themselves (no
+  // checkbox); real kinds default manual — the red alert until confirmed.
+  const [autoApply, setAutoApply] = useState(initial?.auto_apply ?? false);
   const [validation, setValidation] = useState<string | null>(null);
 
   const fromBag = openBags.find((b) => String(b.id) === fromBagId);
   const sameAccountBags = openBags.filter((b) => !fromBag || (b.account_id === fromBag.account_id && b.id !== fromBag.id));
+  // Account-first funding: the money is reserved on ONE account's bags;
+  // only accounts that actually have open bags are selectable.
+  const fundAccountBags = openBags.filter((b) => String(b.account_id) === fundAccountId);
+  const fundingAccounts = accounts.filter((a) => openBags.some((b) => String(b.account_id) === String(a.id)));
+  // The scheduled expense's account owns its optional bag.
+  const accountBags = openBags.filter((b) => String(b.account_id) === accountId);
+
+  /** Currency the amount field speaks: the bag's account for bag kinds, the
+   *  account for transfer/transaction kinds, the base for purchase. */
+  function amountCurrency(): string {
+    if (kind === 'purchase') return baseCurrency;
+    if (kind === 'bag_funding') {
+      const b = openBags.find((bg) => String(bg.id) === bagId);
+      if (b) return tCurrency(b.account_id);
+    }
+    if (kind === 'bag_rebalance' && fromBagId) {
+      const b = openBags.find((bg) => String(bg.id) === fromBagId);
+      if (b) return tCurrency(b.account_id);
+    }
+    return tCurrency(Number(accountId) || undefined);
+  }
+
+  function tCurrency(accountIdLocal?: number): string {
+    if (accountIdLocal === undefined) return baseCurrency;
+    return accounts.find((a) => a.id === accountIdLocal)?.currency ?? baseCurrency;
+  }
 
   /** "the bag lives on <account>" label for the form hints. */
   function bagAccountLabel(bagIdLocal: string, openBagsLocal: BagStatus[]): string {
@@ -573,15 +543,13 @@ function ScheduleFormDialog({
   function validate(): ScheduledActionInput | null {
     if (!name.trim()) { setValidation(t('validation.need_name')); return null; }
     if (!startDate) { setValidation(t('validation.need_start_date')); return null; }
-    const cents = dollarsToCents(amount);
-    const purchaseCents = dollarsToCents(estimated);
 
     let payload: SchedulePayload = {};
 
     if (kind === 'bag_funding') {
       if (!bagId) { setValidation(t('validation.need_bag')); return null; }
-      if (!Number.isFinite(cents) || cents <= 0) { setValidation(t('validation.positive_amount')); return null; }
-      payload = { bag_id: Number(bagId), amount_cents: cents };
+      if (amountCents === null || amountCents <= 0) { setValidation(t('validation.positive_amount')); return null; }
+      payload = { bag_id: Number(bagId), amount_cents: amountCents };
     } else if (kind === 'bag_rebalance') {
       if (!fromBagId || !toBagId) { setValidation(t('validation.need_bags')); return null; }
       if (fromBagId === toBagId) { setValidation(t('validation.bags_differ')); return null; }
@@ -590,56 +558,53 @@ function ScheduleFormDialog({
         setValidation(t('validation.same_account'));
         return null;
       }
-      if (!Number.isFinite(cents) || cents <= 0) { setValidation(t('validation.positive_amount')); return null; }
-      payload = { from_bag_id: Number(fromBagId), to_bag_id: Number(toBagId), amount_cents: cents };
+      if (amountCents === null || amountCents <= 0) { setValidation(t('validation.positive_amount')); return null; }
+      payload = { from_bag_id: Number(fromBagId), to_bag_id: Number(toBagId), amount_cents: amountCents };
     } else if (kind === 'account_transfer') {
       if (!accountId || !counterId) { setValidation(t('validation.need_accounts')); return null; }
       if (accountId === counterId) { setValidation(t('validation.accounts_differ')); return null; }
-      if (!Number.isFinite(cents) || cents <= 0) { setValidation(t('validation.positive_amount')); return null; }
-      payload = { account_id: Number(accountId), counter_account_id: Number(counterId), amount_cents: cents };
+      if (amountCents === null || amountCents <= 0) { setValidation(t('validation.positive_amount')); return null; }
+      payload = { account_id: Number(accountId), counter_account_id: Number(counterId), amount_cents: amountCents };
     } else if (kind === 'transaction') {
       if (!accountId) { setValidation(t('validation.need_account')); return null; }
-      if (!Number.isFinite(cents) || cents <= 0) { setValidation(t('validation.positive_amount')); return null; }
+      if (amountCents === null || amountCents <= 0) { setValidation(t('validation.positive_amount')); return null; }
       payload = {
         account_id: Number(accountId),
         transaction_kind: txKind,
-        amount_cents: cents,
+        amount_cents: amountCents,
         category_id: categoryId ? Number(categoryId) : undefined,
+        // The optional bag tag rides only on expenses (backend mirrors).
+        bag_id: txKind === 'expense' && txBagId ? Number(txBagId) : undefined,
         description: description.trim(),
       };
     } else {
       // purchase: the checklist item — estimate optional, note optional.
-      if (estimated && (!Number.isFinite(purchaseCents) || purchaseCents <= 0)) {
+      if (estimateCents !== null && estimateCents <= 0) {
         setValidation(t('validation.estimate_positive'));
         return null;
       }
       payload = {
-        estimated_cents: estimated && purchaseCents > 0 ? purchaseCents : undefined,
+        estimated_cents: estimateCents !== null && estimateCents > 0 ? estimateCents : undefined,
         note: note.trim(),
       };
     }
 
-    const day = Number(dayOfMonth);
     const month = Number(monthOfYear);
-    if (recurrence === 'monthly' || recurrence === 'yearly') {
-      if (!Number.isInteger(day) || day < 1 || day > 28) {
-        setValidation(t('validation.day_range'));
-        return null;
-      }
-    }
     if (recurrence === 'yearly' && (!Number.isInteger(month) || month < 1 || month > 12)) {
       setValidation(t('validation.month_range'));
       return null;
     }
 
+    // No day_of_month here: the start date IS the repeating pattern — the
+    // backend derives the day (clamped to the month's last day when shorter).
     return {
       name: name.trim(),
       kind,
       payload,
       recurrence,
       start_date: startDate,
-      day_of_month: recurrence === 'monthly' || recurrence === 'yearly' ? day : undefined,
       month_of_year: recurrence === 'yearly' ? month : undefined,
+      auto_apply: autoApply,
     };
   }
 
@@ -685,12 +650,24 @@ function ScheduleFormDialog({
           aria-label={t('form.start_aria')}
           required
         />
-        {(recurrence === 'monthly' || recurrence === 'yearly') && (
-          <select value={dayOfMonth} onChange={(e) => setDayOfMonth(e.target.value)} aria-label={t('form.day_aria')}>
-            {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-              <option key={d} value={d}>{t('form.day_option', { count: d })}</option>
-            ))}
-          </select>
+        {(recurrence === 'monthly' || recurrence === 'yearly') && startDate.length === 10 && (
+          <p className="hint-text">
+            {t('form.day_derived_hint', { day: Number(startDate.slice(8, 10)) })}
+          </p>
+        )}
+
+        {kind !== 'bag_funding' && kind !== 'bag_rebalance' && (
+          <label className="default-radio">
+            {t('form.auto_apply_label')}
+            <input
+              type="checkbox"
+              checked={autoApply}
+              onChange={(e) => setAutoApply(e.target.checked)}
+            />
+          </label>
+        )}
+        {kind !== 'bag_funding' && kind !== 'bag_rebalance' && autoApply && (
+          <p className="hint-text">{t('form.auto_apply_hint')}</p>
         )}
         {recurrence === 'yearly' && (
           <select value={monthOfYear} onChange={(e) => setMonthOfYear(e.target.value)} aria-label={t('form.month_aria')}>
@@ -704,12 +681,34 @@ function ScheduleFormDialog({
 
         {kind === 'bag_funding' && (
           <>
-            <select value={bagId} onChange={(e) => setBagId(e.target.value)} aria-label={t('form.bag_fund_aria')} required>
-              <option value="">{t('form.bag_fund_empty')}</option>
-              {openBags.map((b) => (
-                <option key={b.id} value={b.id}>{b.name} · {b.account_name}</option>
-              ))}
-            </select>
+            {fundingAccounts.length === 0 ? (
+              <p className="hint-text">{t('form.funding_no_options')}</p>
+            ) : (
+              <>
+                <select
+                  value={fundAccountId}
+                  onChange={(e) => { setFundAccountId(e.target.value); setBagId(''); }}
+                  aria-label={t('form.funding_account_aria')}
+                  required
+                >
+                  {/* Only accounts that can legally receive a funding: an
+                      account without open bags has no bag to target — the
+                      option would be a no-op schedule. */}
+                  <option value="">{t('form.funding_account_empty')}</option>
+                  {fundingAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+                {fundAccountId && (
+                  <select value={bagId} onChange={(e) => setBagId(e.target.value)} aria-label={t('form.bag_fund_aria')} required>
+                    <option value="">{t('form.bag_fund_empty')}</option>
+                    {fundAccountBags.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                )}
+              </>
+            )}
             {bagId && (
               <p className="hint-text">
                 {t('form.bag_fund_hint', { label: bagAccountLabel(bagId, openBags) })}
@@ -741,7 +740,7 @@ function ScheduleFormDialog({
         {(kind === 'account_transfer' || kind === 'transaction') && (
           <select
             value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
+            onChange={(e) => { setAccountId(e.target.value); setTxBagId(''); }}
             aria-label={t('form.account_aria')}
             required
           >
@@ -760,9 +759,17 @@ function ScheduleFormDialog({
           </select>
         )}
         {kind === 'transaction' && (
-          <select value={txKind} onChange={(e) => setTxKind(e.target.value as 'expense' | 'income')} aria-label={t('form.tx_kind_aria')}>
+          <select value={txKind} onChange={(e) => { setTxKind(e.target.value as 'expense' | 'income'); setTxBagId(''); }} aria-label={t('form.tx_kind_aria')}>
             <option value="expense">{t('form.tx_expense')}</option>
             <option value="income">{t('form.tx_income')}</option>
+          </select>
+        )}
+        {kind === 'transaction' && txKind === 'expense' && accountBags.length > 0 && (
+          <select value={txBagId} onChange={(e) => setTxBagId(e.target.value)} aria-label={t('form.tx_bag_aria')}>
+            <option value="">{t('form.tx_bag_optional')}</option>
+            {accountBags.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
           </select>
         )}
         {kind === 'transaction' && (
@@ -774,12 +781,12 @@ function ScheduleFormDialog({
           </select>
         )}
         {kind !== 'purchase' && (
-          <input
+          <MoneyInput
+            valueCents={amountCents}
+            currency={amountCurrency()}
+            ariaLabel={t('form.amount_placeholder')}
             placeholder={t('form.amount_placeholder')}
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            required
+            onCommit={setAmountCents}
           />
         )}
         {kind === 'transaction' && (
@@ -792,11 +799,12 @@ function ScheduleFormDialog({
         )}
         {kind === 'purchase' && (
           <>
-            <input
+            <MoneyInput
+              valueCents={estimateCents}
+              currency={baseCurrency}
+              ariaLabel={t('form.estimate_placeholder')}
               placeholder={t('form.estimate_placeholder')}
-              inputMode="decimal"
-              value={estimated}
-              onChange={(e) => setEstimated(e.target.value)}
+              onCommit={setEstimateCents}
             />
             <input
               placeholder={t('form.note_placeholder')}
@@ -830,7 +838,193 @@ function ScheduleFormDialog({
   );
 }
 
-/** Input-safe cents rendering for form prefill ("12.50"). */
-function centsToInput(cents: number): string {
-  return (cents / 100).toFixed(2);
+// --- occurrences card (payables register) --------------------------------------
+
+/** The unified occurrences register (MoneyWiz-style, paged ONE month at a
+ *  time): the viewed month's occurrences with the owed/paid totals and the
+ *  actions on the same row — apply (early payment allowed: the movement
+ *  records at today's date, the occurrence keeps its due date), dismiss,
+ *  skip, and edit/delete of the generating plan. Pending badges show the due
+ *  countdown; applied/dismissed/skipped rows show their state. Virtual kinds
+ *  apply themselves on the due date and carry no Apply button. The arrows
+ *  page through months — a far month materializes on demand, so its pending
+ *  occurrences are actionable the moment they are visible. */
+function PayablesCard({
+  month,
+  items,
+  totals,
+  today,
+  busy,
+  describe,
+  historyRows,
+  showHistory,
+  onToggleHistory,
+  onAdd,
+  onApply,
+  onRunAction,
+  onEdit,
+  onArchive,
+  onDelete,
+  onShift,
+}: {
+  month: string; // YYYY-MM, the rendered month
+  items: Payable[];
+  totals: PayablesTotal[];
+  today: string;
+  busy: boolean;
+  describe: (p: SchedulePayload) => string;
+  historyRows: ScheduleRunView[];
+  showHistory: boolean;
+  onToggleHistory: () => void;
+  onAdd: () => void;
+  onApply: (it: Payable) => void;
+  onRunAction: (it: Payable, action: 'dismiss' | 'skip') => void;
+  onEdit: (it: Payable) => void;
+  onArchive: (it: Payable) => void;
+  onDelete: (it: Payable) => void;
+  onShift: (delta: number) => void;
+}) {
+  const { t } = useTranslation('schedules');
+
+  function monthLabel(m: string): string {
+    return new Date(`${m}-01T00:00:00`).toLocaleDateString(intlLocale(i18n.language), {
+      year: 'numeric',
+      month: 'long',
+    });
+  }
+
+  /** Pending rows get the due countdown ("overdue X" / "today" / "in N"),
+   *  everything else its state badge. Red: overdue OR due within the next
+   *  2 days (user rule 2026-10-28) — the row's dot reddens with the badge. */
+  function badge(it: Payable): { label: string; danger: boolean } {
+    if (it.status === 'pending') {
+      const due: DueLabel = dueLabel(it.due_date, today);
+      return {
+        label: t(due.key, { count: due.count }),
+        danger: it.due_date < today || daysBetween(today, it.due_date) <= 2,
+      };
+    }
+    switch (it.status) {
+      case 'applied':
+        return { label: t('payables.status_paid'), danger: false };
+      case 'dismissed':
+        return { label: t(STATUS_KEYS.dismissed), danger: false };
+      case 'skipped':
+        return { label: t(STATUS_KEYS.skipped), danger: false };
+      default:
+        return { label: t('payables.status_projected'), danger: false };
+    }
+  }
+
+  return (
+    <Card title={t('payables.card')}>
+      <div className="form-row">
+        <Button variant="primary" onClick={onAdd}>
+          {t('todo.add')}
+        </Button>
+      </div>
+      <p className="hint-text">{t('payables.hint')}</p>
+      <div className="payables-month-head">
+        <span className="payables-month-nav">
+          <IconButton icon={<IconChevronLeft />} label={t('payables.prev_month')} onClick={() => onShift(-1)} />
+          <strong>{monthLabel(month)}</strong>
+          <IconButton icon={<IconChevronRight />} label={t('payables.next_month')} onClick={() => onShift(1)} />
+        </span>
+        {totals.map((tt) => (
+          <span key={tt.currency} className="cell-muted">
+            {tt.currency}{' '}
+            {t('payables.month_totals', {
+              owed: formatCents(tt.owed_cents, tt.currency),
+              paid: formatCents(tt.paid_cents, tt.currency),
+            })}
+          </span>
+        ))}
+      </div>
+      <div className="budget-list">
+        {items.map((it) => (
+          <div key={`${it.action_id}-${it.due_date}`} className={badge(it).danger ? 'budget-card due-soon' : 'budget-card'}>
+            <div className="budget-head">
+              <span className={badge(it).danger ? 'budget-dot danger' : 'budget-dot'} aria-hidden="true" />
+              <span className="budget-name">{it.name}</span>
+              <span className={badge(it).danger ? 'badge danger' : 'badge'}>
+                {badge(it).label}
+              </span>
+              <span className="budget-amounts">
+                {it.amount_cents > 0 ? formatCents(it.amount_cents, it.currency) : '—'}
+              </span>
+            </div>
+            <div className="budget-status">
+              {t(KIND_KEYS[it.kind])} · {t(RECURRENCE_KEYS[it.recurrence])}
+              {it.recurrence !== 'once' && it.day_of_month
+                ? ` · ${t('list.day', { count: it.day_of_month })}${it.recurrence === 'yearly' && it.month_of_year ? ` ${t('list.month_of', { count: it.month_of_year })}` : ''}`
+                : ''} · {formatDate(it.due_date)} · {describe(it.schedule)}
+              {it.auto_apply && ` · ${t('payables.auto_marker')}`}
+            </div>
+            <div className="budget-actions">
+              {it.status === 'pending' && it.run_id !== undefined && (
+                VIRTUAL_KINDS.includes(it.kind) ? (
+                  <span className="stat-label">{t('todo.applies_itself')}</span>
+                ) : (
+                  <>
+                    <Button variant="primary" className="btn-sm" disabled={busy} onClick={() => onApply(it)}>
+                      {it.kind === 'purchase' ? t('todo.done') : t('todo.apply')}
+                    </Button>
+                    <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => onRunAction(it, 'dismiss')}>
+                      {t('todo.dismiss')}
+                    </Button>
+                    <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => onRunAction(it, 'skip')}>
+                      {t('todo.skip')}
+                    </Button>
+                  </>
+                )
+              )}
+              <span className="cell-actions">
+                <IconButton icon={<IconEdit />} label={t('list.edit')} onClick={() => onEdit(it)} disabled={busy} />
+                <IconButton icon={<IconArchive />} label={t('list.archive')} onClick={() => onArchive(it)} disabled={busy} />
+                <IconButton icon={<IconTrash />} label={t('list.delete')} variant="danger" onClick={() => onDelete(it)} disabled={busy} />
+              </span>
+            </div>
+          </div>
+        ))}
+        {items.length === 0 && <EmptyState message={t('payables.empty_month')} />}
+      </div>
+      {historyRows.length > 0 && (
+        <div>
+          <Button variant="ghost" onClick={onToggleHistory}>
+            {showHistory ? t('list.hide_history') : t('list.show_history', { count: historyRows.length })}
+          </Button>
+          {showHistory && (
+            <div className="budget-list">
+              {[...historyRows]
+                .sort((a, b) => b.due_date.localeCompare(a.due_date) || a.id - b.id)
+                .map((run) => (
+                <div key={run.id} className="budget-card">
+                  <div className="budget-head">
+                    <span className="budget-dot closed" aria-hidden="true" />
+                    <span className="budget-name">{run.action_name}</span>
+                    <span className="badge">{t(STATUS_KEYS[run.status])}</span>
+                    <span className="budget-amounts">{formatDate(run.due_date)}</span>
+                  </div>
+                  <div className="budget-status">
+                    {t(KIND_KEYS[run.kind])} · {describe(run.schedule)}
+                    {run.result_type === 'transaction' && t('list.result_transaction')}
+                    {run.result_type === 'allocation' && t('list.result_allocation')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Calendar-safe YYYY-MM shift (no timezone Date pitfalls). */
+function shiftMonth(m: string, delta: number): string {
+  const y = Number(m.slice(0, 4));
+  const mo = Number(m.slice(5, 7)) + delta;
+  const ny = y + Math.floor((mo - 1) / 12);
+  const nm = ((mo - 1 + 12) % 12) + 1;
+  return `${ny}-${String(nm).padStart(2, '0')}`;
 }

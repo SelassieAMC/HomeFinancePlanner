@@ -11,9 +11,9 @@ import (
 type BagHandler struct{ Svc *service.BagService }
 
 type bagRequest struct {
-	Name        string  `json:"name"`
-	AccountID   int64   `json:"account_id"`
-	TargetCents *int64  `json:"target_cents"` // optional; positive when set
+	Name        string `json:"name"`
+	AccountID   int64  `json:"account_id"`
+	TargetCents *int64 `json:"target_cents"` // optional; positive when set
 }
 
 func (h *BagHandler) input(r bagRequest) service.BagInput {

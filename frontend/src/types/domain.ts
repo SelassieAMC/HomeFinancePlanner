@@ -888,10 +888,58 @@ export type ScheduleRecurrence = 'once' | 'monthly' | 'yearly';
 
 export type ScheduleRunStatus = 'pending' | 'applied' | 'dismissed' | 'skipped';
 
+/** A payables-view occurrence's status: a materialized run's status, or
+ *  `projected` — derived from the recurrence rules beyond the catch-up's
+ *  materialization window (no run row exists yet). */
+export type PayableStatus = ScheduleRunStatus | 'projected';
+
+/** One projected occurrence (GET /scheduled-actions/payables) — the unified
+ *  occurrences register: income transactions and virtual bag kinds list with
+ *  is_payable false but never enter the totals. amount_cents 0 = a purchase
+ *  with no estimate — the row lists, never sums. auto_apply marks rows that
+ *  run themselves on the due date (virtual kinds always). The plan fields
+ *  let the UI edit/delete the schedule straight from the occurrence row. */
+export interface Payable {
+  action_id: number;
+  name: string;
+  kind: ScheduleKind;
+  due_date: string; // YYYY-MM-DD
+  amount_cents: number;
+  currency: string;
+  status: PayableStatus;
+  run_id?: number;
+  schedule: SchedulePayload;
+  is_payable: boolean;
+  auto_apply: boolean;
+  recurrence: ScheduleRecurrence;
+  start_date: string; // YYYY-MM-DD
+  day_of_month?: number; // 1..28, monthly/yearly only
+  month_of_year?: number; // 1..12, yearly only
+}
+
+/** One month-currency totals cell: owed = pending + projected,
+ *  paid = applied; dismissed/skipped enter neither column. */
+export interface PayablesTotal {
+  month: string; // YYYY-MM
+  currency: string;
+  owed_cents: number;
+  paid_cents: number;
+}
+
+/** One month of the occurrences register (month paging — `month` is the
+ *  YYYY-MM key the arrows navigate; the viewed month materializes on
+ *  demand). */
+export interface PayablesReport {
+  today: string;
+  month: string; // YYYY-MM
+  items: Payable[];
+  totals: PayablesTotal[];
+}
+
 /** Kind-switched action details; which fields are meaningful is decided by
  *  the action's kind (validated backend-side). */
 export interface SchedulePayload {
-  bag_id?: number; // bag_funding: the bag to fund
+  bag_id?: number; // bag_funding: the bag to fund; transaction: optional expense bag tag
   from_bag_id?: number; // bag_rebalance: source bag
   to_bag_id?: number; // bag_rebalance: destination bag
   account_id?: number; // account_transfer: source account; transaction: its account
@@ -904,7 +952,10 @@ export interface SchedulePayload {
   note?: string; // purchase kind
 }
 
-/** One plan row: what should move, how often, from when. */
+/** One plan row: what should move, how often, from when. auto_apply is the
+ *  execution mode (0046): false = manual (the red alert until confirmed,
+ *  dismissed or skipped); true = the movement executes itself on each due
+ *  date (the virtual bag kinds always run themselves, flag or not). */
 export interface ScheduledAction {
   id: number;
   name: string;
@@ -912,8 +963,9 @@ export interface ScheduledAction {
   payload: SchedulePayload;
   recurrence: ScheduleRecurrence;
   start_date: string; // YYYY-MM-DD
-  day_of_month?: number; // 1..28, monthly/yearly only
+  day_of_month?: number; // derived from start_date (NULL/cleared beyond 28)
   month_of_year?: number; // 1..12, yearly only
+  auto_apply: boolean;
   archived: boolean;
   created_at: string;
   updated_at: string;
@@ -928,6 +980,7 @@ export interface ScheduledActionInput {
   start_date: string;
   day_of_month?: number;
   month_of_year?: number;
+  auto_apply?: boolean; // nil on edit = keep the stored mode
 }
 
 /** One materialized occurrence with its action attached (a run alone is

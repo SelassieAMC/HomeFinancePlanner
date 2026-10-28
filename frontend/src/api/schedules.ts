@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { ScheduledAction, ScheduledActionInput, ScheduleRunView, ScheduleRunStatus } from '../types/domain';
+import type { PayablesReport, ScheduledAction, ScheduledActionInput, ScheduleRunView, ScheduleRunStatus } from '../types/domain';
 
 const BASE = '/api/v1';
 
@@ -24,6 +24,11 @@ function runsQuery(p: ScheduleRunFiltersParams): string {
 
 export const schedulesApi = {
   list: () => apiClient.get<ScheduledAction[]>(`${BASE}/scheduled-actions`),
+  // One month of the occurrences register (MoneyWiz-style month paging;
+  // YYYY-MM, default = the server's current month). The viewed month
+  // materializes on demand, so pending rows are always actionable.
+  payables: (month?: string) =>
+    apiClient.get<PayablesReport>(`${BASE}/scheduled-actions/payables${month ? `?month=${month}` : ''}`),
   create: (input: ScheduledActionInput) =>
     apiClient.post<ScheduledAction>(`${BASE}/scheduled-actions`, input),
   update: (id: number, input: ScheduledActionInput) =>

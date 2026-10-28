@@ -42,9 +42,9 @@ type Bag struct {
 // negative for withdraw (released back to unbagged) and either sign inside a
 // rebalance pair (each bag records its own leg).
 type BagAllocation struct {
-	ID        int64  `json:"id"`
-	BagID     int64  `json:"bag_id"`
-	Kind      string `json:"kind"` // fund | rebalance | withdraw | adjust
+	ID    int64  `json:"id"`
+	BagID int64  `json:"bag_id"`
+	Kind  string `json:"kind"` // fund | rebalance | withdraw | adjust
 	// AmountCents is signed by nature: fund > 0, withdraw < 0, rebalance and
 	// adjust carry their balance effect directly.
 	AmountCents int64  `json:"amount_cents"`
@@ -142,9 +142,9 @@ type YearCloseBagRow struct {
 
 // YearClosePreview answers GET /bags/year-close?year=YYYY.
 type YearClosePreview struct {
-	Year                string                `json:"year"`
-	ConversionWarnings  []string              `json:"conversion_warnings"`
-	Bags                []YearCloseBagRow     `json:"bags"`
+	Year               string            `json:"year"`
+	ConversionWarnings []string          `json:"conversion_warnings"`
+	Bags               []YearCloseBagRow `json:"bags"`
 }
 
 // BagFilters narrows bag-list reads. Zero values mean "no filter".

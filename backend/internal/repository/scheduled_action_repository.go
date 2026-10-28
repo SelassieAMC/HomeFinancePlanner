@@ -12,7 +12,7 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-const scheduledActionColumns = `id, name, kind, payload_json, recurrence, start_date, day_of_month, month_of_year, archived, created_at, updated_at`
+const scheduledActionColumns = `id, name, kind, payload_json, recurrence, start_date, day_of_month, month_of_year, auto_apply, archived, created_at, updated_at`
 
 const scheduledRunColumns = `id, action_id, due_date, status, result_type, result_id, created_at, updated_at`
 
@@ -100,10 +100,10 @@ func (r *ScheduledActionRepository) CreateAction(ctx context.Context, a domain.S
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO scheduled_actions
-			(name, kind, payload_json, recurrence, start_date, day_of_month, month_of_year, archived, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(name, kind, payload_json, recurrence, start_date, day_of_month, month_of_year, auto_apply, archived, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.Name, string(a.Kind), string(payload), string(a.Recurrence), a.StartDate,
-		nullableDay(a.DayOfMonth), nullableDay(a.MonthOfYear), boolInt(a.Archived), now, now)
+		nullableDay(a.DayOfMonth), nullableDay(a.MonthOfYear), boolInt(a.AutoApply), boolInt(a.Archived), now, now)
 	if err != nil {
 		return domain.ScheduledAction{}, mapWriteError("create scheduled action", err)
 	}
@@ -125,10 +125,10 @@ func (r *ScheduledActionRepository) UpdateAction(ctx context.Context, a domain.S
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE scheduled_actions
 		SET name = ?, kind = ?, payload_json = ?, recurrence = ?, start_date = ?,
-		    day_of_month = ?, month_of_year = ?, archived = ?, updated_at = ?
+		    day_of_month = ?, month_of_year = ?, auto_apply = ?, archived = ?, updated_at = ?
 		WHERE id = ?`,
 		a.Name, string(a.Kind), string(payload), string(a.Recurrence), a.StartDate,
-		nullableDay(a.DayOfMonth), nullableDay(a.MonthOfYear), boolInt(a.Archived),
+		nullableDay(a.DayOfMonth), nullableDay(a.MonthOfYear), boolInt(a.AutoApply), boolInt(a.Archived),
 		time.Now().Unix(), a.ID)
 	if err != nil {
 		return domain.ScheduledAction{}, mapWriteError("update scheduled action", err)
@@ -151,23 +151,6 @@ func (r *ScheduledActionRepository) DeleteAction(ctx context.Context, id int64) 
 		return domain.ErrNotFound
 	}
 	return nil
-}
-
-// HasAppliedRuns reports whether the action carries history that a plain
-// delete would destroy (an applied run and its materialized effect).
-func (r *ScheduledActionRepository) HasAppliedRuns(ctx context.Context, actionID int64) (bool, error) {
-	var one int64
-	err := r.db.QueryRowContext(ctx,
-		`SELECT 1 FROM scheduled_action_runs WHERE action_id = ? AND status = 'applied' LIMIT 1`,
-		actionID).Scan(&one)
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, sql.ErrNoRows):
-		return false, nil
-	default:
-		return false, fmt.Errorf("check applied runs of action %d: %w", actionID, err)
-	}
 }
 
 // MaterializeRuns inserts the given due dates for one action, ignoring dates
@@ -326,11 +309,12 @@ func scanScheduledAction(row interface{ Scan(dest ...any) error }) (domain.Sched
 		payload    string
 		recurrence string
 		day, month sql.NullInt64
+		autoApply  int64
 		archived   int64
 		created, u int64
 	)
 	if err := row.Scan(&a.ID, &a.Name, &kind, &payload, &recurrence, &a.StartDate,
-		&day, &month, &archived, &created, &u); err != nil {
+		&day, &month, &autoApply, &archived, &created, &u); err != nil {
 		return domain.ScheduledAction{}, err
 	}
 	a.Kind = domain.ScheduleKind(kind)
@@ -346,6 +330,7 @@ func scanScheduledAction(row interface{ Scan(dest ...any) error }) (domain.Sched
 		v := int(month.Int64)
 		a.MonthOfYear = &v
 	}
+	a.AutoApply = autoApply != 0
 	a.Archived = archived != 0
 	a.CreatedAt = time.Unix(created, 0).UTC()
 	a.UpdatedAt = time.Unix(u, 0).UTC()

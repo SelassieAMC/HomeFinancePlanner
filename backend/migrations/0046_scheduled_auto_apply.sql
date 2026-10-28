@@ -1,0 +1,12 @@
+-- auto_apply on scheduled actions (2026-10-28, user decision): execution is
+-- a per-schedule choice, not a kind-inherent property. 0 (default — every
+-- legacy row) keeps the confirm-first behavior: the pending occurrence is
+-- the red alert until the user confirms, dismisses or skips it. 1 makes a
+-- REAL movement (transfer / transaction / purchase) execute itself on each
+-- due date, like the virtual bag kinds always did — the run materializes,
+-- and when it is due the catch-up applies it without a click (its
+-- transaction records at the due date; a failed apply leaves the run
+-- pending and logged, so the red alert survives until the user intervenes).
+-- The virtual bag kinds (bag_funding / bag_rebalance) ignore the flag —
+-- they always applied themselves.
+ALTER TABLE scheduled_actions ADD COLUMN auto_apply INTEGER NOT NULL DEFAULT 0;

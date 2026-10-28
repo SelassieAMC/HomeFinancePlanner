@@ -719,10 +719,10 @@ func (s *AnalyticsService) TopProducts(ctx context.Context, from, to string, lim
 	}
 
 	type prodAgg struct {
-		name        string
-		productID   int64
-		quantity    float64
-		cents       int64
+		name      string
+		productID int64
+		quantity  float64
+		cents     int64
 	}
 	byFamily := map[string]*prodAgg{}
 	var grand int64

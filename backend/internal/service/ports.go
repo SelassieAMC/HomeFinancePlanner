@@ -119,10 +119,6 @@ type ScheduledActionStore interface {
 	CreateAction(ctx context.Context, a domain.ScheduledAction) (domain.ScheduledAction, error)
 	UpdateAction(ctx context.Context, a domain.ScheduledAction) (domain.ScheduledAction, error)
 	DeleteAction(ctx context.Context, id int64) error
-	// HasAppliedRuns reports whether the action carries applied history —
-	// a plain delete of the row (and with it, via cascade, the run history)
-	// is refused when this is true.
-	HasAppliedRuns(ctx context.Context, actionID int64) (bool, error)
 	// MaterializeRuns inserts the given due dates for one action, skipping
 	// dates that already have a run row; returns the newly created count.
 	MaterializeRuns(ctx context.Context, actionID int64, dueDates []string) (int64, error)
@@ -375,6 +371,7 @@ func New(
 			stores: storeStore, products: productStore, mappings: mappings, bags: bags, fx: fx, log: slog.Default()},
 		accounts:   accounts,
 		categories: categories,
+		base:       settings,
 		log:        slog.Default(),
 	}
 	return &Services{

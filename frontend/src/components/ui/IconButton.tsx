@@ -150,6 +150,24 @@ export function IconCheck() {
   );
 }
 
+/** Month navigation — previous. */
+export function IconChevronLeft() {
+  return (
+    <Svg>
+      <path d="M15 18l-6-6 6-6" />
+    </Svg>
+  );
+}
+
+/** Month navigation — next. */
+export function IconChevronRight() {
+  return (
+    <Svg>
+      <path d="M9 18l6-6-6-6" />
+    </Svg>
+  );
+}
+
 /**
  * Icon-only action button: the `label` is both the accessible name
  * (aria-label) and the visible tooltip (data-tooltip, styled by

@@ -35,7 +35,10 @@ type ScheduledActionService struct {
 	// a typo fails at create instead of silently at apply.
 	accounts   AccountStore
 	categories CategoryStore
-	log        *slog.Logger
+	// base is the base-currency source for the payables projection
+	// (purchase estimates price in the base currency).
+	base BaseCurrencySource
+	log  *slog.Logger
 }
 
 // lookbackDays bounds the lazy catch-up: runs are materialized for due dates
@@ -59,8 +62,11 @@ type ScheduledActionInput struct {
 	Payload     domain.SchedulePayload
 	Recurrence  domain.ScheduleRecurrence
 	StartDate   string // YYYY-MM-DD; the first occurrence for once…
-	DayOfMonth  *int   // 1..28; required for monthly/yearly
+	DayOfMonth  *int   // DERIVED from StartDate — a client-sent one is refused
 	MonthOfYear *int   // 1..12; required for yearly
+	// AutoApply is the execution mode (0046): nil on an update keeps the
+	// stored value; a create without it means manual (the alert behavior).
+	AutoApply *bool
 }
 
 // ScheduleFilters narrows run-list reads (re-exported from the domain).
@@ -188,29 +194,26 @@ func (s *ScheduledActionService) Archive(ctx context.Context, id int64) (domain.
 	return updated, nil
 }
 
-// Delete removes a never-applied schedule outright; its run rows cascade.
-// History is retained per the retention rule: one applied run (and the
-// allocation or transaction it wrote) refuses the delete — archive instead.
+// Delete removes a schedule outright, applied history or not (user decision
+// 2026-10-28: a deleted schedule keeps no history). The run rows cascade and
+// the movements already written stay as ordinary transactions — that is where
+// the money lives, and the ledger never loses facts. Archive remains the soft
+// alternative when the plan's history should stay viewable.
 func (s *ScheduledActionService) Delete(ctx context.Context, id int64) error {
-	// History is retained, never re-derived: one applied run (and the
-	// allocation or transaction it wrote) turns the delete into an archive.
-	has, err := s.actions.HasAppliedRuns(ctx, id)
-	if err != nil {
-		return err
-	}
-	if has {
-		return conflictError(
-			"this schedule has applied runs — its past movements are history, archive it instead of deleting")
-	}
 	return s.actions.DeleteAction(ctx, id)
 }
 
 // ApplyRun executes a confirm-first occurrence after one user click. Virtual
 // kinds don't route through here from the API (they auto-applied), but the
 // service uses the same path internally so the validation stays one code
-// path. The run must be pending and due today or earlier — a future
-// occurrence is a reminder, not a fact; applying it early would write money
-// that has not moved yet.
+// path. The run must be pending. A future occurrence (MoneyWiz semantics:
+// the due date is a deadline, not a gate) applies EARLY and the movement
+// records at TODAY's date — the paid-before-due money leaves now, and
+// budgets/analytics count the spend in the month it actually happened; the
+// run keeps its due date (occurrence identity and audit stay on the plan).
+// A virtual kind cannot apply early — it auto-applies itself exactly on its
+// due date, and bag-fund ledger rows dated ahead would read as reserved
+// money that is not there yet.
 func (s *ScheduledActionService) ApplyRun(ctx context.Context, runID int64, today string) (domain.ScheduleRunView, error) {
 	run, action, err := s.loadRun(ctx, runID)
 	if err != nil {
@@ -223,11 +226,11 @@ func (s *ScheduledActionService) ApplyRun(ctx context.Context, runID int64, toda
 		return domain.ScheduleRunView{}, conflictError(
 			"run %d of %q is %s — only a pending occurrence can be applied", run.ID, action.Name, run.Status)
 	}
-	if run.DueDate > today {
+	if run.DueDate > today && action.Kind.Virtual() {
 		return domain.ScheduleRunView{}, validationError(
-			"run %d is due %s — a future occurrence cannot be applied before its due date", run.ID, run.DueDate)
+			"run %d is due %s — a virtual occurrence applies itself on its due date and cannot be applied early", run.ID, run.DueDate)
 	}
-	view, err := s.executeRun(ctx, run, action)
+	view, err := s.executeRun(ctx, run, action, today)
 	if err != nil {
 		return domain.ScheduleRunView{}, err
 	}
@@ -279,10 +282,18 @@ func (s *ScheduledActionService) loadRun(ctx context.Context, runID int64) (doma
 // switch is where the auto-apply boundary lives in code: bag kinds write
 // allocations through BagService (its closed-bag and balance rules apply like
 // any manual movement), real kinds write transactions through
-// TransactionService, purchases only tick the checklist off.
-func (s *ScheduledActionService) executeRun(ctx context.Context, run domain.ScheduleRunView, action domain.ScheduledAction) (domain.ScheduleRunView, error) {
+// TransactionService, purchases only tick the checklist off. today bounds the
+// movement date: an occurrence applies at min(its due date, today) — on or
+// after the due date the movement dates at the due date (the plan's date,
+// which history honors), before it the movement dates at today (an early
+// payment left today, never ahead of it).
+func (s *ScheduledActionService) executeRun(ctx context.Context, run domain.ScheduleRunView, action domain.ScheduledAction, today string) (domain.ScheduleRunView, error) {
 	p := action.Payload
 	note := "Scheduled: " + action.Name
+	effectiveDate := run.DueDate
+	if run.DueDate > today {
+		effectiveDate = today
+	}
 
 	var (
 		resultType string
@@ -294,7 +305,7 @@ func (s *ScheduledActionService) executeRun(ctx context.Context, run domain.Sche
 			Kind:        domain.BagFund,
 			AmountCents: p.AmountCents,
 			Note:        note,
-			Date:        run.DueDate,
+			Date:        effectiveDate,
 		})
 		if err != nil {
 			return domain.ScheduleRunView{}, fmt.Errorf("apply scheduling funding for %q: %w", action.Name, err)
@@ -307,7 +318,7 @@ func (s *ScheduledActionService) executeRun(ctx context.Context, run domain.Sche
 			ToBagID:     *p.ToBagID,
 			AmountCents: p.AmountCents,
 			Note:        note,
-			Date:        run.DueDate,
+			Date:        effectiveDate,
 		})
 		if err != nil {
 			return domain.ScheduleRunView{}, fmt.Errorf("apply scheduled rebalance for %q: %w", action.Name, err)
@@ -320,7 +331,7 @@ func (s *ScheduledActionService) executeRun(ctx context.Context, run domain.Sche
 			Kind:             domain.TransactionTransfer,
 			AmountCents:      p.AmountCents,
 			Description:      descriptionOrDefault(p.Description, action.Name),
-			Date:             run.DueDate,
+			Date:             effectiveDate,
 			CounterAccountID: p.CounterID,
 		})
 		if err != nil {
@@ -338,7 +349,8 @@ func (s *ScheduledActionService) executeRun(ctx context.Context, run domain.Sche
 			CategoryID:  p.CategoryID,
 			AmountCents: p.AmountCents,
 			Description: descriptionOrDefault(p.Description, action.Name),
-			Date:        run.DueDate,
+			Date:        effectiveDate,
+			BagID:       p.BagID, // optional bag tag (expense), validated at apply
 		})
 		if err != nil {
 			return domain.ScheduleRunView{}, fmt.Errorf("apply scheduled transaction %q: %w", action.Name, err)
@@ -395,7 +407,15 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 		return domain.ScheduledAction{}, err
 	}
 
-	// Recurrence field discipline.
+	// Recurrence field discipline. The day-of-month is DERIVED from the
+	// start date (user decision 2026-10-28 — the start date IS the pattern:
+	// it repeats on that day, clamped to the month's last day when a month
+	// is shorter), never taken from the client — a silently-ignored field
+	// would hide mistakes, so an explicit one is refused.
+	startT, err := timeParseDate(in.StartDate)
+	if err != nil {
+		return domain.ScheduledAction{}, err
+	}
 	day, month := in.DayOfMonth, in.MonthOfYear
 	switch in.Recurrence {
 	case domain.ScheduleOnce:
@@ -411,18 +431,33 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 				"start_date %s is more than %d days in the past — a one-off that old would never materialize", in.StartDate, lookbackDays)
 		}
 	case domain.ScheduleMonthly:
-		if err := validateDayOfMonth(day); err != nil {
-			return domain.ScheduledAction{}, err
+		if day != nil {
+			return domain.ScheduledAction{}, validationError(
+				"day_of_month is derived from start_date (day %d) — send only the start_date", startT.Day())
 		}
 		if month != nil {
 			return domain.ScheduledAction{}, validationError("month_of_year belongs to yearly recurrences, not monthly")
 		}
 	case domain.ScheduleYearly:
-		if err := validateDayOfMonth(day); err != nil {
-			return domain.ScheduledAction{}, err
-		}
 		if month == nil || *month < 1 || *month > 12 {
 			return domain.ScheduledAction{}, validationError("yearly recurrence needs month_of_year 1..12")
+		}
+		if day != nil {
+			return domain.ScheduledAction{}, validationError(
+				"day_of_month is derived from start_date (day %d) — send only the start_date", startT.Day())
+		}
+	}
+	// The derivation: a repeating schedule rides the start date's day. Days
+	// beyond 28 store NULL — migration 0037's DB CHECK keeps the 1..28 bound
+	// (never edit an applied migration), and `dueDatesRange` derives the day
+	// from the start date whenever the column is NULL, so a day-31 plan
+	// clamps to each month's last day and still round-trips: the stored
+	// field is a cache, the start date is the pattern.
+	if in.Recurrence != domain.ScheduleOnce {
+		if d := startT.Day(); d <= 28 {
+			day = &d
+		} else {
+			day = nil
 		}
 	}
 
@@ -500,8 +535,8 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 		}
 
 	case domain.ScheduleTransaction:
-		if p.BagID != nil || p.FromBagID != nil || p.ToBagID != nil || p.CounterID != nil || p.EstimatedCents != nil || p.Note != "" {
-			return domain.ScheduledAction{}, validationError("transaction payload takes exactly account_id, transaction_kind, amount_cents, optional category_id and description")
+		if p.FromBagID != nil || p.ToBagID != nil || p.CounterID != nil || p.EstimatedCents != nil || p.Note != "" {
+			return domain.ScheduledAction{}, validationError("transaction payload takes exactly account_id, transaction_kind, amount_cents, optional category_id, optional bag_id and description")
 		}
 		if p.AccountID == nil {
 			return domain.ScheduledAction{}, validationError("transaction needs an account_id")
@@ -512,6 +547,23 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 		}
 		if err := s.validateTransactionAccount(ctx, *p.AccountID); err != nil {
 			return domain.ScheduledAction{}, err
+		}
+		if p.BagID != nil {
+			// Optional bag tag, the manual expense form's "From bag": expenses
+			// only, and the bag must be the account's own open bag — each
+			// applied occurrence then drains the reserve like any tagged
+			// spend.
+			if p.TransactionKind != domain.TransactionExpense {
+				return domain.ScheduledAction{}, validationError("bag_id belongs to an expense — an income never tags a bag")
+			}
+			bag, err := s.bags.Get(ctx, *p.BagID)
+			if err != nil {
+				return domain.ScheduledAction{}, fmt.Errorf("validate bag_id: %w", err)
+			}
+			if bag.AccountID != *p.AccountID {
+				return domain.ScheduledAction{}, validationError(
+					"bag %q lives on a different account — a scheduled expense tags a bag of its own account", bag.Name)
+			}
 		}
 		if p.CategoryID != nil {
 			if _, err := s.categories.GetByID(ctx, *p.CategoryID); err != nil {
@@ -540,6 +592,14 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 		}
 	}
 
+	// The execution mode: nil on an edit keeps the stored flag untouched
+	// (the carry_over pattern); a create without it means manual — the red
+	// alert until confirmed, the legacy behavior of every 0037 row.
+	autoApply := existing.AutoApply
+	if in.AutoApply != nil {
+		autoApply = *in.AutoApply
+	}
+
 	return domain.ScheduledAction{
 		Name:        strings.TrimSpace(in.Name),
 		Kind:        in.Kind,
@@ -548,18 +608,9 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 		StartDate:   in.StartDate,
 		DayOfMonth:  day,
 		MonthOfYear: month,
+		AutoApply:   autoApply,
 		Archived:    false,
 	}, nil
-}
-
-func validateDayOfMonth(day *int) error {
-	if day == nil {
-		return validationError("monthly and yearly recurrences need day_of_month (1..28, so a missing date never skips the month)")
-	}
-	if *day < 1 || *day > 28 {
-		return validationError("day_of_month must be 1..28 — dates beyond 28 would skip shorter months")
-	}
-	return nil
 }
 
 // timeParseDateOr parses or returns today zero-time (input is validated).
@@ -610,7 +661,11 @@ func (s *ScheduledActionService) EnsureUpcoming(ctx context.Context, today strin
 				return err
 			}
 		}
-		if a.Kind.Virtual() {
+		// The auto-apply loop runs for the virtual kinds (they always apply
+		// themselves) AND for real kinds flagged manual=off (0046): the user
+		// opted the movement into execution on its due date — a failed apply
+		// (deleted account, closed bag) leaves the run pending and logged.
+		if a.Kind.Virtual() || a.AutoApply {
 			if err := s.autoApplyDue(ctx, a, today); err != nil {
 				return err
 			}
@@ -633,7 +688,7 @@ func (s *ScheduledActionService) autoApplyDue(ctx context.Context, a domain.Sche
 			continue
 		}
 		view := domain.ScheduleRunView{ScheduledActionRun: run}
-		if _, err := s.executeRun(ctx, view, a); err != nil {
+		if _, err := s.executeRun(ctx, view, a, today); err != nil {
 			if s.log != nil {
 				s.log.WarnContext(ctx, "auto-apply of scheduled movement left pending",
 					"action_id", a.ID, "name", a.Name, "run_id", run.ID, "due", run.DueDate, "error", err)
@@ -651,7 +706,12 @@ func dueDates(a domain.ScheduledAction, today, to string) []string {
 }
 
 // dueDatesRange enumerates the due dates of one schedule inside
-// [from, to], aligned to its recurrence, never before start_date.
+// [from, to], aligned to its recurrence, never before start_date. The
+// day-of-month is the stored (start-date-derived) day, CLAMPED to each
+// month's last day: a plan started on the 31st lands on Feb 28 in short
+// months instead of skipping or spilling into the next month (MoneyWiz
+// end-of-month rule, user decision 2026-10-28 — the old 1..28 cap skipped
+// nothing but forbade real month-end dates).
 func dueDatesRange(a domain.ScheduledAction, from, to string) []string {
 	start := a.StartDate
 	startT, err := timeParseDate(start)
@@ -662,6 +722,10 @@ func dueDatesRange(a domain.ScheduledAction, from, to string) []string {
 	if err != nil {
 		return nil
 	}
+	day := startT.Day()
+	if a.DayOfMonth != nil {
+		day = *a.DayOfMonth // stored derivation (all saved rows carry it)
+	}
 
 	var out []string
 	switch a.Recurrence {
@@ -670,12 +734,8 @@ func dueDatesRange(a domain.ScheduledAction, from, to string) []string {
 			out = append(out, start)
 		}
 	case domain.ScheduleMonthly:
-		day := 1
-		if a.DayOfMonth != nil {
-			day = *a.DayOfMonth
-		}
 		for t := firstOfMonth(startT); !t.After(toT); t = t.AddDate(0, 1, 0) {
-			due := time.Date(t.Year(), t.Month(), day, 0, 0, 0, 0, time.UTC)
+			due := clampedDate(t, day)
 			if due.Before(startT) {
 				continue
 			}
@@ -685,10 +745,6 @@ func dueDatesRange(a domain.ScheduledAction, from, to string) []string {
 			}
 		}
 	case domain.ScheduleYearly:
-		day := 1
-		if a.DayOfMonth != nil {
-			day = *a.DayOfMonth
-		}
 		month := 1
 		if a.MonthOfYear != nil {
 			month = *a.MonthOfYear
@@ -697,7 +753,7 @@ func dueDatesRange(a domain.ScheduledAction, from, to string) []string {
 			if int(t.Month()) != month {
 				continue
 			}
-			due := time.Date(t.Year(), t.Month(), day, 0, 0, 0, 0, time.UTC)
+			due := clampedDate(t, day)
 			if due.Before(startT) {
 				continue
 			}
@@ -713,6 +769,17 @@ func dueDatesRange(a domain.ScheduledAction, from, to string) []string {
 // inWindow reports whether a date lies inside [from, to] inclusive.
 func inWindow(date, from, to string) bool {
 	return date >= from && date <= to
+}
+
+// clampedDate builds the occurrence date of month(t) at `day`, clamped to
+// the month's last day (a day-31 plan lands on Feb 28, not on Mar 3 —
+// time.Date would normalize the overflow into the NEXT month).
+func clampedDate(t time.Time, day int) time.Time {
+	last := time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	if day > last {
+		day = last
+	}
+	return time.Date(t.Year(), t.Month(), day, 0, 0, 0, 0, time.UTC)
 }
 
 // firstOfMonth truncates a date to its month's first day.

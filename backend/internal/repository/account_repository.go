@@ -200,7 +200,9 @@ func mapWriteError(op string, err error) error {
 		return fmt.Errorf("%s: %w", op, domain.ErrConflict)
 	}
 	if err != nil && strings.Contains(err.Error(), "CHECK constraint failed") {
-		return fmt.Errorf("%s: %w", op, domain.ErrValidation)
+		// The detail names the violated column/constraint — without it the
+		// response is a bare "validation failed" nobody can debug.
+		return fmt.Errorf("%s: %w: %s", op, domain.ErrValidation, err)
 	}
 	return fmt.Errorf("%s: %w", op, err)
 }

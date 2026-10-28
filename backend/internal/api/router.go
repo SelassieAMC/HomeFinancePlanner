@@ -219,6 +219,7 @@ func NewRouter(cfg config.Config, log *slog.Logger, svc *service.Services, ui ht
 	// contained family — no wildcard interactions.
 	mux.HandleFunc("GET    /api/v1/scheduled-actions", scheduleH.List)
 	mux.HandleFunc("POST   /api/v1/scheduled-actions", scheduleH.Create)
+	mux.HandleFunc("GET    /api/v1/scheduled-actions/payables", scheduleH.Payables)
 	mux.HandleFunc("GET    /api/v1/scheduled-actions/runs", scheduleH.ListRuns)
 	mux.HandleFunc("PUT    /api/v1/scheduled-actions/{id}", scheduleH.Update)
 	mux.HandleFunc("DELETE /api/v1/scheduled-actions/{id}", scheduleH.Delete)
