@@ -63,7 +63,7 @@ export function ProductGroupEditModal({ group, onClose, onSaved }: ProductGroupE
   }
 
   return (
-    <Dialog title={t('group.title')}>
+    <Dialog title={t('group.title')} onClose={onClose}>
       <div className="form-grid">
         <label>
           {t('group.name')}

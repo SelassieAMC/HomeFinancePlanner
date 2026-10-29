@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { usersApi } from '../../api/users';
 import { avatarUrl } from '../../api/auth';
 import type { User, UserInput, UserUpdateInput } from '../../types/domain';
-import { Button, Card, EmptyState, ErrorMessage, ItemPanel, ItemPanels, Spinner } from '../../components/ui';
+import { Button, Card, EmptyState, ErrorMessage, HelpNote, ItemPanel, ItemPanels, Spinner } from '../../components/ui';
 import { useAsync } from '../../hooks/useAsync';
 import { useAuth } from '../auth/AuthContext';
 
@@ -77,7 +77,7 @@ export function UsersTab() {
 
   return (
     <>
-      <p className="hint-text">{t('users.hint')}</p>
+      <HelpNote note={t('users.hint')} />
 
       <Card title={t('users.addTitle')}>
         <form className="profile-pw-form" onSubmit={create}>

@@ -486,11 +486,43 @@ body {
   gap: 0.5rem;
 }
 
-.form-row input,
+/* The control-width rule scopes to text-like controls only: a checkbox that
+   inherits min-width 120px / flex: 1 here made the budget form's carry-over
+   label stretch across the whole leftover row width (text stranded at the
+   far edge, the submit button wrapping below). */
+.form-row input:not([type='checkbox']):not([type='radio']),
 .form-row select,
 .form-row .category-select {
   min-width: 120px;
   flex: 1;
+}
+
+/* Checkboxes / radios keep their native size and sit at their own spot in
+   the row (the wrapped text label stretches, the control doesn't). */
+.form-row input[type='checkbox'],
+.form-row input[type='radio'] {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+/* A submit button in a create-form row is a sibling of the fields, not a
+   field: don't stretch it to the row height (the tallest field - usually the
+   one carrying a hint - turned it into a big slab). Bottom-align it with the
+   controls instead. */
+.form-row > .btn {
+  align-self: flex-end;
+}
+
+/* Native checkbox/radio appearance: brand accent, one-line touch target.
+   Applied globally — no custom checkbox styling exists anywhere else. */
+input[type='checkbox'],
+input[type='radio'] {
+  width: 1rem;
+  height: 1rem;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* Edit-in-place forms (inside collapsible panels): always stack vertically —
@@ -1879,10 +1911,19 @@ textarea:focus,
   font-weight: 600;
 }
 
+/* Checkbox/radio row label: control and one-line label beside each other.
+   Self-contained (own display) — the label may sit bare inside a form row,
+   not only inside a .field/.form-grid context. */
 .default-radio {
+  display: flex;
   flex-direction: row;
   align-items: center;
   gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  font-weight: 400;
+  cursor: pointer;
+  padding-top: 0.15rem;
 }
 
 /* --- Bill draft view ------------------------------------------------------- */
@@ -3763,6 +3804,48 @@ textarea:focus,
   font-size: 0.75rem;
 }
 
+/* Theme switcher inside the user menu: a compact labeled segmented row
+   (System / Light / Dark) sharing the settings card's three-way choice. */
+.user-menu-theme {
+  padding: 0.3rem 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 0.25rem;
+}
+
+.user-menu-theme-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.user-menu-theme-options {
+  display: flex;
+  gap: 0.25rem;
+}
+
+/* Overrides .user-menu button's full-width row layout — these are a
+   segmented group of three side by side. */
+.user-menu .user-menu-theme-opt {
+  flex: 1;
+  width: auto;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.user-menu .user-menu-theme-opt.active {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
 .user-menu button {
   width: 100%;
   padding: 0.5rem 0.6rem;
@@ -3926,6 +4009,84 @@ textarea:focus,
   font-weight: 400;
 }
 
+/* The "?" help trigger: click opens a floating tooltip (help-pop); never
+   hover-driven and never an inline expansion — the note must not push
+   content around. Sits inline after the label/title text; the wrapper is
+   the popover's positioning anchor. */
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: 0.3rem;
+  /* Small-icon optical alignment: middle still rides high next to text —
+     a touch below the x-height midpoint reads as centered. */
+  vertical-align: -0.12em;
+}
+
+.field-help {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  cursor: help;
+  transition: color 0.15s ease;
+}
+
+.field-help:hover,
+.field-help:focus-visible,
+.help-wrap[data-open] .field-help {
+  color: var(--accent);
+}
+
+.field-help svg {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+
+/* The floating tooltip bubble, anchored below-left of the trigger. Wide
+   enough for the multi-sentence hints, clipped short of the viewport edge
+   by the max-width. */
+.help-pop {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: -0.5rem;
+  z-index: 60;
+  width: max-content;
+  max-width: min(20rem, 80vw);
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: left;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.help-pop code {
+  font-size: 0.92em;
+}
+
+/* Standalone head row (HelpNote with children): content + trigger. */
+.help-note-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
 .field-msg {
   color: var(--negative);
   font-size: 0.78rem;
@@ -3962,6 +4123,27 @@ textarea:focus,
 .form-row .field {
   flex: 1 1 200px;
   min-width: 0;
+}
+
+/* A stretched field (its row is as tall as the tallest sibling - usually the
+   one carrying a hint) must not inflate its internal label grid: grid
+   auto-rows stretch by default, which pushed the control down away from its
+   label (the hollow gap in the add-budget form). Rows stay packed to the
+   top; the leftover space collects below the control, where the hint of the
+   tallest field sits anyway. */
+.form-row .field > label {
+  align-content: start;
+}
+
+/* Footer strip of a create-form row: trailing bits (checkbox toggles, the
+   submit button) that want their own line under the fields instead of
+   dangling inside the flexible field row. */
+.form-footer {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-basis: 100%;
+  margin-top: 0.25rem;
 }
 
 

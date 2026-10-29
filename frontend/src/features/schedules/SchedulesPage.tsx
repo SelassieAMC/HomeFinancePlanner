@@ -31,6 +31,7 @@ import {
   ErrorMessage,
   EmptyState,
   Field,
+  HelpNote,
   Spinner,
   IconButton,
   MoneyInput,
@@ -402,7 +403,10 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {confirmApply && (
-        <Dialog title={confirmApply.kind === 'purchase' ? t('apply.title_bought') : t('apply.title_apply')}>
+        <Dialog
+  onClose={() => setConfirmApply(null)}
+  title={confirmApply.kind === 'purchase' ? t('apply.title_bought') : t('apply.title_apply')}
+>
           <p className="hint-text">{applyCopy(confirmApply, lookup)}</p>
           {/* Early payment records at today's real date (MoneyWiz rule: the
               due date is a deadline, not the record date). */}
@@ -423,7 +427,10 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {confirmDelete && (
-        <Dialog title={t('delete.title')}>
+        <Dialog
+  onClose={() => { setConfirmDelete(null); setFormError(null); }}
+  title={t('delete.title')}
+>
           <p className="hint-text">{t('delete.body', { name: confirmDelete.name })}</p>
           {formError && <ErrorMessage message={formError} />}
           <div className="dialog-actions">
@@ -619,7 +626,21 @@ function ScheduleFormDialog({
   }
 
   return (
-    <Dialog title={initial ? t('form.edit_title') : t('form.add_title')} wide>
+    <Dialog
+      title={initial ? t('form.edit_title') : t('form.add_title')}
+      wide
+      help={
+        <>
+          {kind === 'bag_funding' || kind === 'bag_rebalance'
+            ? t('form.hint_auto')
+            : kind === 'purchase'
+              ? t('form.hint_purchase')
+              : t('form.hint_confirm_first')}
+          {' '}{t('form.hint_editing_future')}
+        </>
+      }
+      onClose={onCancel}
+    >
       {/* Field-wrapped, visible labels everywhere (labels.* instead of the
           old bare placeholder/aria-only controls). Layout: one always-visible
           grid region, then ONE bounded section per kind — switching the kind
@@ -674,8 +695,10 @@ function ScheduleFormDialog({
               required
             />
           </Field>
+          {/* The 0046 always-visible explanation is on-demand help now:
+              explicit user action (hover/tap the "?") drives the reveal. */}
           {kind !== 'bag_funding' && kind !== 'bag_rebalance' && (
-            <div className="form-stack">
+            <HelpNote note={t('form.auto_apply_hint')}>
               <label className="default-radio">
                 {t('form.auto_apply_label')}
                 <input
@@ -684,10 +707,7 @@ function ScheduleFormDialog({
                   onChange={(e) => setAutoApply(e.target.checked)}
                 />
               </label>
-              {/* Always shown within its cell — a checkbox whose explanation
-                  pops in/out of existence stays confusing (0046). */}
-              <p className="hint-text">{t('form.auto_apply_hint')}</p>
-            </div>
+            </HelpNote>
           )}
           {recurrence === 'yearly' && (
             <Field label={t('form.labels.month')}>
@@ -885,14 +905,6 @@ function ScheduleFormDialog({
           </div>
         )}
 
-        <p className="hint-text">
-          {kind === 'bag_funding' || kind === 'bag_rebalance'
-            ? t('form.hint_auto')
-            : kind === 'purchase'
-              ? t('form.hint_purchase')
-              : t('form.hint_confirm_first')}
-          {' '}{t('form.hint_editing_future')}
-        </p>
         {validation && <ErrorMessage message={validation} />}
         {error && <ErrorMessage message={error} />}
         <div className="dialog-actions">
@@ -992,13 +1004,12 @@ function PayablesCard({
   }
 
   return (
-    <Card title={t('payables.card')}>
+    <Card title={t('payables.card')} help={t('payables.hint')}>
       <div className="form-row">
         <Button variant="primary" onClick={onAdd}>
           {t('todo.add')}
         </Button>
       </div>
-      <p className="hint-text">{t('payables.hint')}</p>
       <div className="payables-month-head">
         <span className="payables-month-nav">
           <IconButton icon={<IconChevronLeft />} label={t('payables.prev_month')} onClick={() => onShift(-1)} />
@@ -1036,7 +1047,7 @@ function PayablesCard({
                 first so the plan form / confirm dialog the parent opens is
                 the only dialog on screen. */}
             {detailsFor && it === detailsFor && (
-              <Dialog title={it.name}>
+              <Dialog title={it.name} onClose={() => setDetailsFor(null)}>
                 <div className="detail-list">
                   <div className="detail-row">
                     <span className="stat-label">{t('details.status')}</span>

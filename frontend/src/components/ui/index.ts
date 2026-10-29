@@ -5,6 +5,7 @@ export {
   IconButton,
   IconEdit,
   IconInfo,
+  IconHelp,
   IconTrash,
   IconArchive,
   IconFund,
@@ -19,7 +20,7 @@ export {
   IconChevronRight,
 } from './IconButton';
 export { Card } from './Card';
-export { Spinner, ErrorMessage, EmptyState, Dialog } from './Feedback';
+export { Spinner, ErrorMessage, EmptyState, Dialog, HelpNote, HelpHint } from './Feedback';
 export { ProgressBar } from './ProgressBar';
 export { Tabs } from './Tabs';
 export type { TabDef } from './Tabs';

@@ -18,7 +18,8 @@ interface ChartCardProps {
 }
 
 /** Card chrome shared by all analytics charts: the standard loading/error/
- * empty trio plus an optional explanatory subtitle. */
+ * empty trio plus an optional explanatory subtitle — revealed through the
+ * question-circle help trigger beside the card title, not printed. */
 export function ChartCard({
   title,
   subtitle,
@@ -31,9 +32,8 @@ export function ChartCard({
   className = 'chart-card',
 }: ChartCardProps) {
   return (
-    <Card title={title} className={className}>
+    <Card title={title} help={subtitle} className={className}>
       {window && <p className="chart-window">{window}</p>}
-      {subtitle && <p className="chart-subtitle">{subtitle}</p>}
       {loading ? (
         <Spinner />
       ) : error ? (

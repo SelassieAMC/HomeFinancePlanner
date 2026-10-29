@@ -471,7 +471,7 @@ export function BillsPage() {
       )}
 
       {rereadSent && (
-        <Dialog title={t('rereadDialog.title')}>
+        <Dialog title={t('rereadDialog.title')} onClose={() => setRereadSent(false)}>
           <p className="hint-text">
             {t('rereadDialog.billsBody')}
           </p>
@@ -482,7 +482,7 @@ export function BillsPage() {
       )}
 
       {rescanSent && (
-        <Dialog title={t('rescanDialog.title')}>
+        <Dialog title={t('rescanDialog.title')} onClose={() => setRescanSent(false)}>
           <p className="hint-text">
             {t('rescanDialog.body')}
           </p>
@@ -493,7 +493,7 @@ export function BillsPage() {
       )}
 
       {confirmDeleteId !== null && detail && detail.id === confirmDeleteId && (
-        <Dialog title={t('deleteDialog.title')}>
+        <Dialog title={t('deleteDialog.title')} onClose={() => setConfirmDeleteId(null)}>
           <p className="hint-text">
             {t('deleteDialog.body', {
               market: detail.market_name || t('common.unknownMarket'),

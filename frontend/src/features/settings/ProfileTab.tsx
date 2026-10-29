@@ -160,7 +160,7 @@ export function ProfileTab() {
         </Field>
       </Card>
 
-      <Card title={t('profile.photoTitle')}>
+      <Card title={t('profile.photoTitle')} help={t('profile.photoHint')}>
         <div className="profile-photo-row">
           {user.has_photo ? (
             <img
@@ -193,7 +193,6 @@ export function ProfileTab() {
             )}
           </div>
         </div>
-        <p className="hint-text">{t('profile.photoHint')}</p>
         {photoError && <ErrorMessage message={photoError} />}
       </Card>
 
@@ -226,7 +225,7 @@ export function ProfileTab() {
         {nameSaved && <div className="hint-banner">{t('profile.saved')}</div>}
       </Card>
 
-      <Card title={t('profile.pwTitle')}>
+      <Card title={t('profile.pwTitle')} help={t('profile.pwHint')}>
         <form className="profile-pw-form" onSubmit={savePassword}>
           <label>
             {t('profile.pwCurrent')}
@@ -268,7 +267,6 @@ export function ProfileTab() {
               {pwSaving ? t('profile.saving') : t('profile.pwSubmit')}
             </Button>
           </div>
-          <p className="hint-text">{t('profile.pwHint')}</p>
         </form>
       </Card>
     </>

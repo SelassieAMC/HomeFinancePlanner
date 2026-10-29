@@ -41,7 +41,7 @@ export function ProductDetailsModal({
   const perUnit = pricePerUnit(product);
 
   return (
-    <Dialog title={product.name}>
+    <Dialog title={product.name} onClose={onClose}>
       {product.has_image && (
         <img className="product-photo" src={productsApi.photoUrl(product)} alt="" />
       )}

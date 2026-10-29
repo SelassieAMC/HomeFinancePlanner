@@ -5,6 +5,7 @@ import type { LocaleBundle } from '../core';
 export const common: LocaleBundle = {
   en: {
     loading: 'Loading…',
+    help: 'Help',
       theme: { toggle_light: 'Switch to light mode', toggle_dark: 'Switch to dark mode' },
     nav: {
       home: 'Home',
@@ -51,6 +52,7 @@ export const common: LocaleBundle = {
   },
   de: {
     loading: 'Wird geladen…',
+    help: 'Hilfe',
       theme: { toggle_light: 'Zum hellen Design wechseln', toggle_dark: 'Zum dunklen Design wechseln' },
     nav: {
       home: 'Start',
@@ -97,6 +99,7 @@ export const common: LocaleBundle = {
   },
   es: {
     loading: 'Cargando…',
+    help: 'Ayuda',
       theme: { toggle_light: 'Cambiar a modo claro', toggle_dark: 'Cambiar a modo oscuro' },
     nav: {
       home: 'Inicio',

@@ -9,6 +9,7 @@ import {
   ErrorMessage,
   EmptyState,
   Dialog,
+  HelpNote,
   ItemPanel,
   ItemPanels,
 } from '../../components/ui';
@@ -161,11 +162,15 @@ export function PromptsPage() {
     <div className="page">
       <h2 className="page-title">{t('title')}</h2>
 
-      <p className="hint-text">
-        {t('hints.overviewBefore')}
-        <code>{'{{categories}}'}</code>
-        {t('hints.overviewAfter')}
-      </p>
+      <HelpNote
+        note={
+          <>
+            {t('hints.overviewBefore')}
+            <code>{'{{categories}}'}</code>
+            {t('hints.overviewAfter')}
+          </>
+        }
+      />
 
       {list.length === 0 ? (
         <EmptyState message={t('empty')} />
@@ -256,7 +261,7 @@ export function PromptsPage() {
       </div>
 
       {adding && (
-        <Dialog title={t('add.title')} wide>
+        <Dialog title={t('add.title')} wide onClose={() => !addSaving && setAdding(false)}>
           <div className="form-grid">
             <label>
               {t('add.key')}{' '}
@@ -308,7 +313,7 @@ export function PromptsPage() {
       )}
 
       {confirmDelete && (
-        <Dialog title={t('deleteDialog.title', { name: confirmDelete.name })}>
+        <Dialog title={t('deleteDialog.title', { name: confirmDelete.name })} onClose={() => setConfirmDelete(null)}>
           <p className="hint-text">
             {processUsage[confirmDelete.key]
               ? t('deleteDialog.used')

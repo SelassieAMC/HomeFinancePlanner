@@ -671,7 +671,7 @@ export function TransactionsPage() {
       )}
 
       {editOpen && (
-        <Dialog title={t('dialog.editTitle')} wide>
+        <Dialog title={t('dialog.editTitle')} wide onClose={() => { setEditOpen(false); setEditing(null); }}>
           {editLoading || !editing ? (
             <Spinner label={t('dialog.loading')} />
           ) : (
@@ -692,7 +692,7 @@ export function TransactionsPage() {
       )}
 
       {confirmDelete && (
-        <Dialog title={t('dialog.deleteTitle')}>
+        <Dialog title={t('dialog.deleteTitle')} onClose={() => setConfirmDelete(null)}>
           <p className="hint-text">
             {confirmDelete.bill_id != null
               ? t('dialog.deleteBillBody', {

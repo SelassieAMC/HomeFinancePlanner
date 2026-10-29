@@ -44,6 +44,17 @@ export function IconInfo() {
   );
 }
 
+/** Help: circle with a "?" — the field-hint reveal trigger (hover/tap). */
+export function IconHelp() {
+  return (
+    <Svg>
+      <circle cx="12" cy="12" r="9.5" />
+      <path d="M9.4 9.3a2.6 2.6 0 1 1 3.6 2.4c-.7.3-1 .8-1 1.6" />
+      <path d="M12 16.7v.4" />
+    </Svg>
+  );
+}
+
 export function IconTrash() {
   return (
     <Svg>

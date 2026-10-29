@@ -3,14 +3,23 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { authApi, avatarUrl } from '../../api/auth';
 import { useAuth } from '../../features/auth/AuthContext';
+import { useTheme } from '../../hooks/useTheme';
+import type { ThemeChoice } from '../../lib/theme';
 
 // Top-right profile chip: the member's tiny avatar photo (or initials when
 // none), opening a small menu with the settings entry and logout. Fixed
 // positioning on both desktop and mobile — it always lives at the top-right
 // corner above the page content.
+const THEME_OPTIONS: ThemeChoice[] = ['system', 'light', 'dark'];
+
 export function UserAvatar() {
   const { user, setUser } = useAuth();
   const { t } = useTranslation('common');
+  // The settings namespace carries the theme wording (the profile card's
+  // Appearance field uses it); reusing the keys keeps menu and settings
+  // in lockstep without duplicating translations.
+  const { t: tS } = useTranslation('settings');
+  const { choice: themeChoice, setChoice: setThemeChoice } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -83,6 +92,27 @@ export function UserAvatar() {
             <div>
               <div className="user-menu-name">{label}</div>
               <div className="user-menu-role">{user.is_admin ? t('user_menu.administrator') : t('user_menu.family_member')}</div>
+            </div>
+          </div>
+          {/* Theme color switcher: stays open on click so the change is
+              visible immediately; same per-browser choice as the profile
+              card — both stay in sync through the shared useTheme store. */}
+          <div className="user-menu-theme" role="group" aria-label={tS('theme.label')}>
+            <span className="user-menu-theme-label">{tS('theme.title')}</span>
+            <div className="user-menu-theme-options">
+              {THEME_OPTIONS.map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  className={
+                    themeChoice === opt ? 'user-menu-theme-opt active' : 'user-menu-theme-opt'
+                  }
+                  aria-pressed={themeChoice === opt}
+                  onClick={() => setThemeChoice(opt)}
+                >
+                  {tS(`theme.${opt}`)}
+                </button>
+              ))}
             </div>
           </div>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); navigate('/settings'); }}>

@@ -18,12 +18,11 @@ export const bags: LocaleBundle = {
       namePlaceholder: 'Bag name',
       nameAria: 'Bag name',
       accountAria: 'Account',
-      accountHint: 'The bag lives inside this account; its ledger entries stay here.',
+      accountHint: 'The bag lives inside this account; its ledger entries stay here. A bag reserves money without moving it — it claims part of the account’s balance. Tag expenses into the bag to spend the reserve.',
       accountPlaceholder: 'Account…',
       targetPlaceholder: 'Target (optional)',
       targetAria: 'Target amount (optional)',
       submit: 'Add',
-      hint: 'A bag reserves money inside one account — funding it does not move money, it claims part of the account’s balance. Tag expenses into the bag to spend the reserve.',
     },
     list: {
       empty: 'No bags yet — add your first reserve above.',
@@ -31,7 +30,8 @@ export const bags: LocaleBundle = {
     },
     account: {
       unbagged: 'Unbagged',
-      oversubscribed: 'bags claim more than the account holds',
+      oversubscribed: 'Overallocated',
+      oversubscribed_hint: 'Bags claim more than the account holds',
     },
     card: {
       targetAria: 'target',
@@ -167,12 +167,11 @@ export const bags: LocaleBundle = {
       namePlaceholder: 'Name des Umschlags',
       nameAria: 'Name des Umschlags',
       accountAria: 'Konto',
-      accountHint: 'Der Umschlag liegt in diesem Konto; seine Buchungen bleiben hier.',
+      accountHint: 'Der Umschlag liegt in diesem Konto; seine Buchungen bleiben hier. Ein Umschlag reserviert Geld, ohne es zu bewegen — er belegt einen Teil des Kontostands. Buche Ausgaben auf den Umschlag, um die Reserve zu verbrauchen.',
       accountPlaceholder: 'Konto…',
       targetPlaceholder: 'Zielbetrag (optional)',
       targetAria: 'Zielbetrag (optional)',
       submit: 'Anlegen',
-      hint: 'Ein Umschlag reserviert Geld in einem Konto — das Anlegen bewegt kein Geld, es belegt einen Teil des Kontostands. Buche Ausgaben auf den Umschlag, um die Reserve zu verbrauchen.',
     },
     list: {
       empty: 'Noch keine Umschläge — lege oben deine erste Reserve an.',
@@ -180,7 +179,8 @@ export const bags: LocaleBundle = {
     },
     account: {
       unbagged: 'Ohne Umschlag',
-      oversubscribed: 'Umschläge beanspruchen mehr, als das Konto enthält',
+      oversubscribed: 'Überzuteilt',
+      oversubscribed_hint: 'Umschläge beanspruchen mehr, als das Konto enthält',
     },
     card: {
       targetAria: 'Zielbetrag',
@@ -316,12 +316,11 @@ export const bags: LocaleBundle = {
       namePlaceholder: 'Nombre del bolsillo',
       nameAria: 'Nombre del bolsillo',
       accountAria: 'Cuenta',
-      accountHint: 'El bolsillo vive dentro de esta cuenta; sus apuntes se quedan aquí.',
+      accountHint: 'El bolsillo vive dentro de esta cuenta; sus apuntes se quedan aquí. Un bolsillo reserva dinero sin moverlo — reclama parte del saldo de la cuenta. Etiqueta gastos en el bolsillo para gastar la reserva.',
       accountPlaceholder: 'Cuenta…',
       targetPlaceholder: 'Objetivo (opcional)',
       targetAria: 'Importe objetivo (opcional)',
       submit: 'Crear',
-      hint: 'Un bolsillo reserva dinero dentro de una cuenta: al cargarlo no se mueve dinero, solo se reclama parte del saldo de la cuenta. Etiqueta gastos en el bolsillo para gastar la reserva.',
     },
     list: {
       empty: 'Aún no hay bolsillos: añade tu primera reserva arriba.',
@@ -329,7 +328,8 @@ export const bags: LocaleBundle = {
     },
     account: {
       unbagged: 'Sin bolsillo',
-      oversubscribed: 'los bolsillos reclaman más de lo que tiene la cuenta',
+      oversubscribed: 'Sobreasignado',
+      oversubscribed_hint: 'los bolsillos reclaman más de lo que tiene la cuenta',
     },
     card: {
       targetAria: 'objetivo',

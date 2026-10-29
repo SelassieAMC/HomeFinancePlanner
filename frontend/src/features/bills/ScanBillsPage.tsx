@@ -430,7 +430,16 @@ export function ScanBillsPage() {
       )}
 
       {phase === 'capture' && (
-        <Card title={t('scan.cardTitle')}>
+        <Card
+          title={t('scan.cardTitle')}
+          help={
+            <>
+              {t('scan.hint', { sizeLimit: MAX_BILL_IMAGE_BYTES >> 20, maxFiles: MAX_BILL_SCAN_FILES })}
+              <em>{t('scan.hintHorizontal')}</em>
+              {t('scan.hintTail')}
+            </>
+          }
+        >
           <input
             ref={cameraInputRef}
             type="file"
@@ -478,11 +487,6 @@ export function ScanBillsPage() {
               {t('scan.groupHint')}
             </p>
           )}
-          <p className="hint-text">
-            {t('scan.hint', { sizeLimit: MAX_BILL_IMAGE_BYTES >> 20, maxFiles: MAX_BILL_SCAN_FILES })}
-            <em>{t('scan.hintHorizontal')}</em>
-            {t('scan.hintTail')}
-          </p>
           {picked.length > 0 && (
             <ul className="upload-results">
               {picked.map((file, index) => (
@@ -690,7 +694,7 @@ export function ScanBillsPage() {
       )}
 
       {rereadSent && (
-        <Dialog title={t('rereadDialog.title')}>
+        <Dialog title={t('rereadDialog.title')} onClose={() => setRereadSent(false)}>
           <p className="hint-text">
             {t('rereadDialog.scanIntro')}{' '}
             {rereadReturnsToBills

@@ -11,7 +11,7 @@ import {
 import { productsApi } from '../../api/products';
 import type { AIProvider, AIProviderType, NormalizationJob } from '../../types/domain';
 import { COMMON_CURRENCIES } from '../../lib/currencies';
-import { Button, Card, Tabs, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels } from '../../components/ui';
+import { Button, Card, Tabs, Spinner, ErrorMessage, EmptyState, HelpNote, ItemPanel, ItemPanels } from '../../components/ui';
 import { useAuth } from '../auth/AuthContext';
 import { ProfileTab } from './ProfileTab';
 import { UsersTab } from './UsersTab';
@@ -287,7 +287,7 @@ export function SettingsPage() {
       {tab === 'users' && <UsersTab key="users" />}
 
       {tab === 'general' && (
-        <Card title={t('currency.title')}>
+        <Card title={t('currency.title')} help={t('currency.hint')}>
         <form
           className="form-row"
           onSubmit={(e) => {
@@ -314,7 +314,6 @@ export function SettingsPage() {
             {currencySaving ? t('currency.saving') : t('currency.save')}
           </Button>
         </form>
-        <p className="hint-text">{t('currency.hint')}</p>
         {currencyError && <ErrorMessage message={currencyError} />}
         {currencySaved && <div className="hint-banner">{t('currency.saved')}</div>}
         </Card>
@@ -323,11 +322,15 @@ export function SettingsPage() {
       {tab === 'connectors' && (
         <>
 
-      <p className="hint-text">
-        {t('connectors.hint')}{' '}
-        <Link to="/settings/prompts">{t('connectors.managePrompts')}</Link>{' '}
-        {t('connectors.promptLinkSuffix')}
-      </p>
+      <HelpNote
+        note={
+          <>
+            {t('connectors.hint')}{' '}
+            <Link to="/settings/prompts">{t('connectors.managePrompts')}</Link>{' '}
+            {t('connectors.promptLinkSuffix')}
+          </>
+        }
+      />
 
       {current.length === 0 ? (
         <EmptyState message={t('connectors.empty')} />
@@ -481,8 +484,7 @@ export function SettingsPage() {
       {tab === 'normalization' && (
         <>
 
-      <Card title={t('normalization.title')}>
-        <p className="hint-text">{t('normalization.hint')}</p>
+      <Card title={t('normalization.title')} help={t('normalization.hint')}>
         {job?.status === 'running' ? (
           <p className="hint-text">
             {t('normalization.running', {

@@ -44,7 +44,7 @@ export function ProductMergeDialog({
   };
 
   return (
-    <Dialog title={t('merge.title')} wide>
+    <Dialog title={t('merge.title')} wide onClose={onClose}>
       {check.reason === 'same_store' ? (
         <>
           <p>

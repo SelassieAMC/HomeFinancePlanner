@@ -59,8 +59,7 @@ export function PriceCreepCard() {
   if (rows.length === 0) return null;
 
   return (
-    <Card title={t('priceCreep.title')} className="insights-card">
-      <p className="chart-subtitle">{t('priceCreep.subtitle')}</p>
+    <Card title={t('priceCreep.title')} help={t('priceCreep.subtitle')} className="insights-card">
       <div className="insight-list">
         {rows.map((insight) => (
           <div key={insight.id} className="insight-row">

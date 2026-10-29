@@ -262,17 +262,19 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
               <option value="open">{t('add.cadence_open')}</option>
             </select>
           </Field>
-          {cadence === 'monthly' && (
-            <label className="hint-text" aria-label={t('add.carry_over_aria')}>
-              <input
-                type="checkbox"
-                checked={carry}
-                onChange={(e) => setCarry(e.target.checked)}
-              />{' '}
-              {t('add.carry_over')}
-            </label>
-          )}
-          <Button type="submit">{t('add.submit')}</Button>
+          <div className="form-footer">
+            {cadence === 'monthly' && (
+              <label className="default-radio" aria-label={t('add.carry_over_aria')}>
+                <input
+                  type="checkbox"
+                  checked={carry}
+                  onChange={(e) => setCarry(e.target.checked)}
+                />
+                {t('add.carry_over')}
+              </label>
+            )}
+            <Button type="submit">{t('add.submit')}</Button>
+          </div>
         </form>
         {formError && <ErrorMessage message={formError} />}
       </Card>
@@ -400,6 +402,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
 
       {editing && (
         <Dialog
+          onClose={() => setEditing(null)}
           title={
             editing.cadence === 'monthly'
               ? t('edit.title_monthly', { month: monthTag(editing.month ?? '') })
@@ -427,12 +430,12 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
               />
             </Field>
             {editing.cadence === 'monthly' && (
-              <label className="hint-text" aria-label={t('edit.carry_over_aria')}>
+              <label className="default-radio" aria-label={t('edit.carry_over_aria')}>
                 <input
                   type="checkbox"
                   checked={editCarry}
                   onChange={(e) => setEditCarry(e.target.checked)}
-                />{' '}
+                />
                 {t('add.carry_over')}
               </label>
             )}
@@ -450,24 +453,21 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {transferring && (
-        <Dialog title={t('transfer.title', { month: monthTag(transferring.month ?? '') })}>
+        <Dialog
+          onClose={() => setTransferring(null)}
+          title={t('transfer.title', { month: monthTag(transferring.month ?? '') })}
+        >
           <form className="form-stack" onSubmit={handleTransfer}>
             {transferring.carry_over && (
-              <label className="hint-text" aria-label={t('transfer.seed_aria')}>
+              <label className="default-radio" aria-label={t('transfer.seed_aria')}>
                 <input
                   type="checkbox"
                   checked={transferMode === 'seed'}
                   onChange={(e) => setTransferMode(e.target.checked ? 'seed' : 'move')}
-                />{' '}
+                />
                 {t('transfer.seed')}
               </label>
             )}
-            <p className="hint-text">
-              {transferMode === 'seed' ? t('transfer.seed_hint') : t('transfer.hint')}
-            </p>
-            <p className="hint-text">
-              {transferMode === 'seed' ? t('transfer.seed_hint') : t('transfer.hint')}
-            </p>
             {transferMode === 'move' && (
               <Field label={t('transfer.target_label')}>
                 <select
@@ -495,6 +495,7 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
             )}
             <Field
               label={transferMode === 'seed' ? t('transfer.seed_label', { currency }) : t('transfer.amount_label', { currency })}
+              hint={transferMode === 'seed' ? t('transfer.seed_hint') : t('transfer.hint')}
             >
               <input
                 placeholder={

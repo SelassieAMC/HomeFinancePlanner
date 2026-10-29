@@ -148,7 +148,7 @@ export const dashboard: LocaleBundle = {
     bags: {
       spent: 'Spent {{spent}}',
       unbagged: 'unbagged {{unbagged}}',
-      oversubscribed: 'Bags claim more than the account holds',
+      oversubscribed: 'Overallocated',
     },
     goals: {
       reached: 'Goal reached',
@@ -406,7 +406,7 @@ export const dashboard: LocaleBundle = {
     bags: {
       spent: 'Ausgegeben {{spent}}',
       unbagged: 'unzugeordnet {{unbagged}}',
-      oversubscribed: 'Die Belegungen übersteigen den Kontostand',
+      oversubscribed: 'Überzuteilt',
     },
     goals: {
       reached: 'Ziel erreicht',
@@ -664,7 +664,7 @@ export const dashboard: LocaleBundle = {
     bags: {
       spent: 'Gastado {{spent}}',
       unbagged: 'sin bolsillo {{unbagged}}',
-      oversubscribed: 'Las bolsillos superan el saldo de la cuenta',
+      oversubscribed: 'Sobreasignado',
     },
     goals: {
       reached: 'Meta alcanzada',

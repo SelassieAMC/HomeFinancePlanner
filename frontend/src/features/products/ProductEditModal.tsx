@@ -159,7 +159,7 @@ export function ProductEditModal({ product, categories, onClose, onSaved }: Prod
   }
 
   return (
-    <Dialog title={t('actions.editTitle')} wide>
+    <Dialog title={t('actions.editTitle')} wide onClose={onClose}>
       <div className="edit-layout">
         <div className="edit-main">
           <section className="card edit-card">

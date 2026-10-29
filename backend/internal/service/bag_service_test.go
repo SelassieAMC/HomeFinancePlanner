@@ -458,6 +458,35 @@ func TestBagOverviewUnbaggedAndOversubscribed(t *testing.T) {
 	}
 }
 
+// TestBagOverviewNoBagsNotOversubscribed: an account with no bags (or with
+// every bag closed) has no claims on its money — a negative balance there is
+// an ordinary overdraft, never "oversubscribed" (used to flag bag-less red).
+func TestBagOverviewNoBagsNotOversubscribed(t *testing.T) {
+	ctx := context.Background()
+	svc, _, accounts := newTestBagService(t)
+
+	if _, err := accounts.Create(ctx, domain.Account{Name: "Wallet", Type: domain.AccountChecking, Currency: "EUR", OpeningBalanceCents: -9380}); err != nil {
+		t.Fatalf("seed wallet: %v", err)
+	}
+
+	ov, err := svc.Overview(ctx)
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	var view *domain.BagAccountView
+	for i := range ov.Accounts {
+		if ov.Accounts[i].AccountID == 3 {
+			view = &ov.Accounts[i]
+		}
+	}
+	if view == nil {
+		t.Fatalf("account 3 missing from overview")
+	}
+	if view.UnbaggedCents != -9380 || view.Oversubscribed {
+		t.Fatalf("bag-less negative account: unbagged=%d oversubscribed=%v; want -9380/false", view.UnbaggedCents, view.Oversubscribed)
+	}
+}
+
 // TestBagYearCloseShortfall: the preview bounds facts at the year end and
 // reports shortage vs target only for open bags with a target.
 func TestBagYearCloseShortfall(t *testing.T) {

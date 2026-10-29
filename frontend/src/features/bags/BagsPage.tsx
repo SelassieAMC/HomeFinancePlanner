@@ -217,9 +217,6 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
           </Field>
           <Button type="submit">{t('actions.add')}</Button>
         </form>
-        <p className="hint-text">
-          {t('add.hint')}
-        </p>
         {formError && <ErrorMessage message={formError} />}
       </Card>
 
@@ -246,15 +243,23 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
                 {view.account_name}
                 <span className="stat-label"> · {formatCents(view.account_balance_cents, view.currency)}</span>
               </h3>
-              <div className="bag-unbagged">
-                <span className="stat-label">{t('account.unbagged')}</span>
-                <strong className={view.oversubscribed ? 'budget-status over' : ''}>
-                  {formatCents(view.unbagged_cents, view.currency)}
-                </strong>
-                {view.oversubscribed && (
-                  <span className="budget-status over">{t('account.oversubscribed')}</span>
-                )}
-              </div>
+              {/* Unbagged is meaningless noise when nothing claims the
+                  account: with no open bags it IS the balance, which the
+                  title already shows — and the backend reports
+                  oversubscribed=false there (overdraft ≠ claims). */}
+              {view.bags.some((b) => b.status === 'open') && (
+                <div className="bag-unbagged">
+                  <span className="stat-label">{t('account.unbagged')}</span>
+                  <strong className={view.oversubscribed ? 'budget-status over' : ''}>
+                    {formatCents(view.unbagged_cents, view.currency)}
+                  </strong>
+                  {view.oversubscribed && (
+                    <span className="budget-status over" title={t('account.oversubscribed_hint')}>
+                      {t('account.oversubscribed')}
+                    </span>
+                  )}
+                </div>
+              )}
               {view.bags.some((b) => b.status === 'open') && (
                 <Button variant="secondary" className="btn-sm" onClick={() => setRebalancing(String(view.account_id))}>
                   {t('actions.rebalance')}
@@ -406,7 +411,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {editing && (
-        <Dialog title={t('dialogs.edit.title')}>
+        <Dialog title={t('dialogs.edit.title')} help={t('dialogs.edit.notice')} onClose={() => setEditing(null)}>
           <BagEditForm
             initial={editing}
             currency={sections.find((a) => a.account_id === editing.account_id)?.currency ?? ''}
@@ -423,7 +428,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {allocating && (
-        <Dialog title={t('dialogs.allocate.title', { name: allocating.name })}>
+        <Dialog title={t('dialogs.allocate.title', { name: allocating.name })} onClose={() => setAllocating(null)}>
           <AllocateForm
             currency={sections.find((a) => a.account_id === allocating.account_id)?.currency ?? ''}
             initialKind={allocateKind}
@@ -438,7 +443,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {historyOf && (
-        <Dialog title={t('dialogs.history.title', { name: historyOf.bag.name })}>
+        <Dialog title={t('dialogs.history.title', { name: historyOf.bag.name })} onClose={() => setHistoryOf(null)}>
           <LedgerList rows={historyOf.rows} currency={historyOf.currency} />
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setHistoryOf(null)}>
@@ -449,7 +454,11 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {rebalancing && (
-        <Dialog title={t('dialogs.rebalance.title')}>
+        <Dialog
+          title={t('dialogs.rebalance.title')}
+          help={t('dialogs.rebalance.crossAccountHint')}
+          onClose={() => { setRebalancing(''); setRebalanceFrom(null); }}
+        >
           <RebalanceForm
             account={sections.find((a) => String(a.account_id) === rebalancing)}
             initialFromBag={rebalanceFrom}
@@ -467,7 +476,11 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {yearClose && (
-        <Dialog title={t('dialogs.yearClose.title', { year: yearClose.year })}>
+        <Dialog
+          title={t('dialogs.yearClose.title', { year: yearClose.year })}
+          help={yearClose.bags.length > 0 ? t('dialogs.yearClose.hint', { year: yearClose.year }) : undefined}
+          onClose={() => setYearClose(null)}
+        >
           <YearCloseList
             preview={yearClose}
             onSubmit={async () => {
@@ -481,7 +494,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {confirmDelete && (
-        <Dialog title={t('dialogs.delete.title')}>
+        <Dialog title={t('dialogs.delete.title')} onClose={() => setConfirmDelete(null)}>
           <p className="hint-text">
             {t('dialogs.delete.body', { name: confirmDelete.name })}
           </p>
@@ -611,9 +624,6 @@ function BagEditForm({
           onChange={(e) => setTarget(e.target.value)}
         />
       </Field>
-      <p className="hint-text">
-        {t('dialogs.edit.notice')}
-      </p>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
@@ -823,7 +833,6 @@ function RebalanceForm({
       {from && from.balance_cents < 0 && (
         <p className="hint-text">{t('dialogs.rebalance.warnOverspending')}</p>
       )}
-      <p className="hint-text">{t('dialogs.rebalance.crossAccountHint')}</p>
       {formError && <ErrorMessage message={formError} />}
       <div className="form-actions">
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy}>
@@ -856,11 +865,6 @@ function YearCloseList({
   const anyRows = preview.bags.length > 0;
   return (
     <div className="year-close">
-      {anyRows && (
-        <p className="hint-text">
-          {t('dialogs.yearClose.hint', { year: preview.year })}
-        </p>
-      )}
       {!anyRows && <EmptyState message={t('dialogs.yearClose.empty')} />}
       <div className="budget-list">
         {preview.bags.map((row) => (

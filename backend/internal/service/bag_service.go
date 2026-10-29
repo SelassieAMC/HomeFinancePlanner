@@ -115,15 +115,21 @@ func (s *BagService) Overview(ctx context.Context) (domain.BagOverview, error) {
 		})
 	}
 	for _, v := range byAccount {
+		hasOpenBags := false
 		for _, st := range v.Bags {
 			// A closed bag's leftover counts toward "bagged" only while it
 			// stays open; unbagged is the ready-to-assign number of THIS
 			// account's open reservations.
 			if st.Status == domain.BagOpen {
+				hasOpenBags = true
 				v.UnbaggedCents -= st.BalanceCents
 			}
 		}
-		v.Oversubscribed = v.UnbaggedCents < 0
+		// Oversubscription needs claims: an account with no open bags has
+		// nothing claiming its money, so a negative balance there is an
+		// ordinary overdraft, never "bags claim more than the hold" (used to
+		// flag empty accounts red when their balance dipped below zero).
+		v.Oversubscribed = hasOpenBags && v.UnbaggedCents < 0
 	}
 
 	out := domain.BagOverview{Accounts: []domain.BagAccountView{}, ConversionWarnings: []string{}}

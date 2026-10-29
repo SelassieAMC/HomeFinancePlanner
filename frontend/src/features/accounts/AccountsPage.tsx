@@ -512,13 +512,18 @@ export function AccountsPage() {
       )}
 
       {reconcilingId !== null && (
-        <Dialog title={t('dialogs.reconcile.title')}>
+        <Dialog
+  onClose={() => {
+    setReconcilingId(null);
+    setReconcileAmount('');
+    setReconcileError(null);
+  }}
+  title={t('dialogs.reconcile.title')}
+  help={t('dialogs.reconcile.hint', {
+    balance: formatCents(reconcileCurrentValue(), reconcileCurrency()),
+  })}
+>
           <form className="form-stack" onSubmit={handleReconcile}>
-            <p className="hint-text">
-              {t('dialogs.reconcile.hint', {
-                balance: formatCents(reconcileCurrentValue(), reconcileCurrency()),
-              })}
-            </p>
             <label>
               {t('dialogs.reconcile.statedLabel', { currency: reconcileCurrency() })}
               <input
@@ -541,7 +546,7 @@ export function AccountsPage() {
       )}
 
       {renameId !== null && (
-        <Dialog title={t('groups.renameTitle')}>
+        <Dialog title={t('groups.renameTitle')} onClose={() => setRenameId(null)}>
           <form className="form-stack" onSubmit={handleRenameGroup}>
             <Field label={t('groups.nameLabel')} hint={t('groups.nameHint')}>
               <input value={renameName} onChange={(e) => setRenameName(e.target.value)} required autoFocus />

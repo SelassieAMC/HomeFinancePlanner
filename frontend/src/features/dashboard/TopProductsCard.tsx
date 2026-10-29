@@ -27,7 +27,7 @@ export function TopListDialog({
   const { t } = useTranslation('dashboard');
   if (!open) return null;
   return (
-    <Dialog title={title} wide>
+    <Dialog title={title} wide onClose={onClose}>
       {children}
       <div className="dialog-actions">
         <Button variant="secondary" onClick={onClose}>

@@ -103,7 +103,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
 
   const content = (
     <>
-      <Card title={t('add.title')}>
+      <Card title={t('add.title')} help={<>{t('hints.progress')} {t('hints.target_date')}</>}>
         <form className="form-row" onSubmit={handleCreate}>
           <Field label={t('add.label_name')}>
             <input
@@ -149,9 +149,6 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
           </Field>
           <Button type="submit">{t('add.submit')}</Button>
         </form>
-        <p className="hint-text">
-          {t('hints.progress')} {t('hints.target_date')}
-        </p>
         {formError && <ErrorMessage message={formError} />}
       </Card>
 
@@ -235,7 +232,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {editing && (
-        <Dialog title={t('edit.title')}>
+        <Dialog title={t('edit.title')} onClose={() => setEditing(null)}>
           <GoalEditForm
             initial={editing}
             accounts={accounts.data ?? []}
@@ -247,7 +244,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       )}
 
       {confirmDelete && (
-        <Dialog title={t('delete.title')}>
+        <Dialog title={t('delete.title')} onClose={() => setConfirmDelete(null)}>
           <p className="hint-text">{t('delete.body', { name: confirmDelete.name })}</p>
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={busy}>
