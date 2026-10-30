@@ -59,6 +59,15 @@ export function ReceiptPreviewModal({
               </button>
             ))}
           <span className="receipt-viewer-spacer" />
+          <a
+            className="receipt-download-btn"
+            href={src(part)}
+            download={`receipt-part-${part}.jpg`}
+            aria-label={t('editor.receiptDownload')}
+            title={t('editor.receiptDownload')}
+          >
+            ⬇
+          </a>
           <span className="receipt-zoom-controls">
             <button
               type="button"

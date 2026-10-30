@@ -2817,6 +2817,18 @@ textarea:focus,
   align-items: center;
   gap: 0.25rem;
 }
+.receipt-download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.1rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-decoration: none;
+}
 .receipt-zoom-controls button {
   border: 1px solid var(--border);
   background: none;
