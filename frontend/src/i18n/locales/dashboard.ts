@@ -109,11 +109,15 @@ export const dashboard: LocaleBundle = {
       week: 'Week',
       month: 'Month',
       year: 'Year',
+      scopeHint: 'Sets the period for the spend figure and the Products & Trends tabs.',
       aria: {
         period: 'Dashboard period',
         prev: 'Previous period',
         next: 'Next period',
       },
+    },
+    zones: {
+      now: 'Now',
     },
     planning: {
       title: 'Planning',
@@ -368,11 +372,15 @@ export const dashboard: LocaleBundle = {
       week: 'Woche',
       month: 'Monat',
       year: 'Jahr',
+      scopeHint: 'Legt den Zeitraum für die Ausgaben-Zahl und die Tabs Produkte & Trends fest.',
       aria: {
         period: 'Dashboard-Zeitraum',
         prev: 'Vorheriger Zeitraum',
         next: 'Nächster Zeitraum',
       },
+    },
+    zones: {
+      now: 'Jetzt',
     },
     planning: {
       title: 'Planung',
@@ -627,11 +635,15 @@ export const dashboard: LocaleBundle = {
       week: 'Semana',
       month: 'Mes',
       year: 'Año',
+      scopeHint: 'Define el periodo para la cifra de gasto y las pestañas Productos y Tendencias.',
       aria: {
         period: 'Periodo del panel',
         prev: 'Periodo anterior',
         next: 'Periodo siguiente',
       },
+    },
+    zones: {
+      now: 'Ahora',
     },
     planning: {
       title: 'Planificación',

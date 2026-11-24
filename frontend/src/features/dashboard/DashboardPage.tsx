@@ -177,20 +177,26 @@ export function DashboardPage() {
         onNext={() => setAnchor(shiftPeriod(period, 1).start)}
       />
 
+      <p className="period-scope-hint">{t('period.scopeHint')}</p>
+
       {conversionWarning && <div className="bill-warning">{conversionWarning}</div>}
 
-      {/* Always-on-top zone: current standing (period-independent), the live
-          nudges (hidden when empty) and the stat tiles (tile 1 follows the
-          picker, tiles 2–3 state their own window). */}
-      <AtAGlanceRow glance={glance} />
+      {/* Always-on-top zone: current standing, independent of the period the
+          picker above selects. Marked "Now" so it reads as separate from the
+          period-scoped spend tile and tabs below. The live nudges
+          (insights, coming-up) are hidden when empty. */}
+      <section className="now-zone" aria-label={t('zones.now')}>
+        <h3 className="now-zone-title">{t('zones.now')}</h3>
+        <AtAGlanceRow glance={glance} />
 
-      {/* Deferred intelligence: unread price-per-unit nudges the analysis job
-          wrote after recent purchases. Hidden entirely when none are unread. */}
-      <InsightsCard />
+        {/* Deferred intelligence: unread price-per-unit nudges the analysis job
+            wrote after recent purchases. Hidden entirely when none are unread. */}
+        <InsightsCard />
 
-      {/* The scheduler's due-and-overdue occurrences: the confirm-first nudge
-          with one-click apply. Hidden entirely when nothing is due. */}
-      <ComingUpCard />
+        {/* The scheduler's due-and-overdue occurrences: the confirm-first nudge
+            with one-click apply. Hidden entirely when nothing is due. */}
+        <ComingUpCard />
+      </section>
 
       <div className="stat-grid">
         <Card className="stat-tile">

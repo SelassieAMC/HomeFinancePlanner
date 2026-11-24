@@ -1,4 +1,4 @@
-.PHONY: help dev dev-backend dev-frontend test-backend lint-backend typecheck-frontend \
+.PHONY: help dev dev-backend dev-worker dev-frontend test-backend lint-backend typecheck-frontend \
         lint-frontend build up down logs clean
 
 help: ## List available targets
@@ -6,11 +6,14 @@ help: ## List available targets
 
 # --- Local development -------------------------------------------------------
 
-dev: ## Run backend (:5001) + frontend (:5002) concurrently
-	$(MAKE) -j2 dev-backend dev-frontend
+dev: ## Run backend API (:5001) + worker + frontend (:5002) concurrently
+	$(MAKE) -j3 dev-backend dev-worker dev-frontend
 
-dev-backend: ## Run backend, loading backend/.env first (listens on :5001)
+dev-backend: ## Run the API backend, loading backend/.env first (listens on :5001)
 	cd backend && set -a && . ./.env && set +a && exec go run ./cmd/server
+
+dev-worker: ## Run the background job worker (no HTTP), loading backend/.env first
+	cd backend && set -a && . ./.env && set +a && exec env LOG_FILE=./data/worker.log go run ./cmd/server -worker
 
 dev-frontend: ## Run Vite dev server
 	cd frontend && npm run dev -- --host

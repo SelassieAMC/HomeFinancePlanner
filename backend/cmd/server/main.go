@@ -44,6 +44,8 @@ func main() {
 
 func run() error {
 	healthcheck := flag.Bool("healthcheck", false, "verify the server is running (used by docker healthcheck)")
+	workerMode := flag.Bool("worker", false, "run only the background job queue (no HTTP server)")
+	ping := flag.Bool("ping", false, "verify the database is reachable (used by the worker healthcheck)")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -55,6 +57,9 @@ func run() error {
 
 	if *healthcheck {
 		return doHealthcheck(cfg, log)
+	}
+	if *ping {
+		return doDBPing(cfg)
 	}
 
 	ctx := context.Background()
@@ -110,7 +115,33 @@ func run() error {
 	cartSearchSvc := service.NewOfferSearchService(offerSearches, products, stores, settingsSvc,
 		promptSvc, billExtractor, cfg.LLMTimeout, log)
 
-	jobsMgr, err := buildJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, insights, fxSvc, productSvc, billSvc, cartSearchSvc, log)
+	// Both processes register the same workers: River validates a job's kind
+	// against the client's Workers bundle at Insert time, so even a
+	// producer-only client must know every kind it enqueues. The difference is
+	// execution — only the worker calls Start. The API registers the workers
+	// (so Insert passes) but never starts its client, so a slow AI scan or a
+	// crashed worker cannot take the API down, and an API crash leaves the
+	// worker processing unaffected. The worker owns the boot-time enqueueing
+	// (backfill, stuck-scan recovery) that the API used to do.
+	workers := buildWorkers(cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, insights, fxSvc, productSvc, billSvc, cartSearchSvc, log)
+
+	if *workerMode {
+		jobsMgr, err := jobs.NewManager(ctx, cfg.DBPath, cfg.LLMTimeout, workers, log)
+		if err != nil {
+			return fmt.Errorf("build job queue: %w", err)
+		}
+		jobEnqueuer.manager = jobsMgr
+		productSvc.SetJobEnqueuer(jobEnqueuer)
+		billSvc.SetJobEnqueuer(jobEnqueuer)
+		cartSearchSvc.SetJobEnqueuer(jobEnqueuer)
+		return runWorker(ctx, cfg, db, settingsRepo, billSvc, cartSearchSvc, jobsMgr, log)
+	}
+
+	// API path: the same workers registered but never started — a producer
+	// client for enqueueing and the River web UI. Its failure must never
+	// block the API: the enqueuer degrades to a no-op and the services refuse
+	// the scan/search requests outright.
+	jobsMgr, err := jobs.NewManager(ctx, cfg.DBPath, cfg.LLMTimeout, workers, log)
 	if err != nil {
 		log.Error("background jobs disabled for this run", "error", err)
 	}
@@ -131,23 +162,6 @@ func run() error {
 	// The one-time admin seed: the first boot on an empty users table creates
 	// admin/admin (a boot warning names it — change the password afterwards).
 	userSvc.EnsureSeedAdmin(ctx)
-
-	if jobsMgr != nil {
-		if err := jobsMgr.Start(ctx); err != nil {
-			jobsMgr.Close()
-			jobsMgr = nil
-			log.Error("background jobs disabled for this run", "error", err)
-		} else {
-			if err := enqueueUnitValueBackfill(ctx, db, settingsRepo, jobsMgr, log); err != nil {
-				log.Warn("unit-value backfill not enqueued", "error", err)
-			}
-			// Resume scans/searches that were mid-flight when the process last
-			// stopped (a clean shutdown cancels their River job but leaves the
-			// row analyzing/searching).
-			billSvc.RecoverScans(ctx)
-			cartSearchSvc.RecoverSearches(ctx)
-		}
-	}
 
 	// River's web UI, embedded (no extra process): mounted at /riverui on the
 	// same server unauthenticated — the same posture as the API on a
@@ -175,7 +189,9 @@ func run() error {
 		errCh <- srv.ListenAndServe()
 	}()
 
-	// Graceful shutdown on SIGINT/SIGTERM.
+	// Graceful shutdown on SIGINT/SIGTERM. The API never started the job
+	// queue, so there is nothing to drain — the worker process owns its own
+	// shutdown.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
@@ -190,22 +206,6 @@ func run() error {
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
-		}
-		// Stop the job queue before the DB pool closes: the queue drains its
-		// jobs (a running extraction may take longer than the drain budget, in
-		// which case StopAndCancel aborts it and the scan resumes on the next
-		// start via RecoverScans), cancelling if it cannot.
-		if jobsMgr != nil {
-			jobsStopCtx, jobsStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-			if err := jobsMgr.Stop(jobsStopCtx); err != nil {
-				log.Warn("river graceful stop interrupted; cancelling queued work", "error", err)
-			}
-			jobsStopCancel()
-			cancelCtx, cancelCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := jobsMgr.StopAndCancel(cancelCtx); err != nil {
-				log.Warn("river cancel stop failed", "error", err)
-			}
-			cancelCancel()
 		}
 	}
 	return nil
@@ -276,13 +276,10 @@ func (p *pipelineJobs) insert(ctx context.Context, args river.JobArgs, opts *riv
 	return p.manager.Insert(ctx, args, opts)
 }
 
-// buildJobs wires the River job queue (its own single-connection pool over
-// the same SQLite file) with its workers but does not start it — the caller
-// starts it once the services that enqueue into it exist. The returned
-// manager is nil when the queue could not be built — boot continues without
-// it.
-func buildJobs(
-	ctx context.Context,
+// buildWorkers registers every River worker the queue executes. The API
+// process never calls it — its producer-only client has no workers — so the
+// worker process is the only place the AI-backed jobs run.
+func buildWorkers(
 	cfg config.Config,
 	db *sql.DB,
 	settingsRepo *repository.SettingsRepository,
@@ -295,7 +292,7 @@ func buildJobs(
 	billSvc *service.BillService,
 	cartSearchSvc *service.OfferSearchService,
 	log *slog.Logger,
-) (*jobs.Manager, error) {
+) *river.Workers {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, jobs.NewUnitValueBackfillWorker(
 		repository.NewProductRepository(db),
@@ -353,7 +350,74 @@ func buildJobs(
 	river.AddWorker(workers, service.NewBillScanWorker(billSvc))
 	river.AddWorker(workers, service.NewOfferSearchWorker(cartSearchSvc))
 	river.AddWorker(workers, service.NewProductNormalizationWorker(productSvc))
-	return jobs.NewManager(ctx, cfg.DBPath, cfg.LLMTimeout, workers, log)
+	return workers
+}
+
+// runWorker is the worker process's whole life: start the queue, enqueue the
+// one-time backfill, resume any scans/searches left mid-flight by the last
+// stop, then block until a shutdown signal and drain the queue. No HTTP.
+func runWorker(
+	ctx context.Context,
+	cfg config.Config,
+	db *sql.DB,
+	settingsRepo *repository.SettingsRepository,
+	billSvc *service.BillService,
+	cartSearchSvc *service.OfferSearchService,
+	jobsMgr *jobs.Manager,
+	log *slog.Logger,
+) error {
+	if err := jobsMgr.Start(ctx); err != nil {
+		jobsMgr.Close()
+		return fmt.Errorf("start job queue: %w", err)
+	}
+	if err := enqueueUnitValueBackfill(ctx, db, settingsRepo, jobsMgr, log); err != nil {
+		log.Warn("unit-value backfill not enqueued", "error", err)
+	}
+	// Resume scans/searches that were mid-flight when this process last
+	// stopped (a clean shutdown cancels their River job but leaves the row
+	// analyzing/searching).
+	billSvc.RecoverScans(ctx)
+	cartSearchSvc.RecoverSearches(ctx)
+
+	log.Info("worker running", "env", cfg.Env, "db", cfg.DBPath)
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	sig := <-stop
+	log.Info("shutting down", "signal", sig.String())
+
+	// Stop the job queue before the DB pool closes: the queue drains its jobs
+	// (a running extraction may take longer than the drain budget, in which
+	// case StopAndCancel aborts it and the scan resumes on the next start via
+	// RecoverScans), cancelling if it cannot.
+	jobsStopCtx, jobsStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer jobsStopCancel()
+	if err := jobsMgr.Stop(jobsStopCtx); err != nil {
+		log.Warn("river graceful stop interrupted; cancelling queued work", "error", err)
+	}
+	cancelCtx, cancelCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelCancel()
+	if err := jobsMgr.StopAndCancel(cancelCtx); err != nil {
+		log.Warn("river cancel stop failed", "error", err)
+	}
+	return nil
+}
+
+// doDBPing opens the database and pings it, exiting 0 when reachable. It is
+// the worker container's healthcheck: a worker has no HTTP endpoint to probe,
+// so liveness is proxied by "can this process still open and reach SQLite".
+func doDBPing(cfg config.Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := repository.Open(ctx, cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("ping: %w", err)
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping: %w", err)
+	}
+	return nil
 }
 
 // startRiverUI embeds River's web UI (riverqueue.com/riverui) at /riverui as

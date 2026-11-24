@@ -1386,6 +1386,25 @@ textarea:focus,
   min-width: 8ch;
 }
 
+/* Muted caption under the period picker: states what the selector governs,
+   so the always-on-top "Now" zone below it reads as separate. */
+.period-scope-hint {
+  margin: -0.25rem 0 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* Small overline-style heading marking the always-on-top zone: current
+   standing, independent of the period selector. */
+.now-zone-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 /* --- Status badges --------------------------------------------------------- */
 .badge {
   display: inline-block;

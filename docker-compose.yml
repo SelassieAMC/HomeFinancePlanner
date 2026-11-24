@@ -38,6 +38,40 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ./backend
+    image: home-finance-planner/backend:local
+    # Same binary, worker mode: runs only the River job queue (no HTTP). The
+    # API enqueues through the shared SQLite file; this process executes. A
+    # slow AI scan or a worker crash cannot take the API down, and vice versa.
+    command: ["/app/server", "-worker"]
+    environment:
+      APP_ENV: production
+      DB_PATH: /data/finance.db
+      BILLS_PATH: /data/bills
+      STORES_PATH: /data/stores
+      PRODUCTS_PATH: /data/products
+      AVATARS_PATH: /data/avatars
+      # Separate log target so API and worker traces stay readable.
+      LOG_FILE: /data/worker.log
+      AI_ENCRYPTION_KEY: ${AI_ENCRYPTION_KEY:?set AI_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-5m}
+    volumes:
+      - sqlite-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/server", "-ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
