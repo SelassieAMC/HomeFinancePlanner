@@ -49,6 +49,7 @@ export function TransactionsPage() {
   const registerId = Number(searchParams.get('account')) || null;
   const [month, setMonth] = useState(currentMonth());
   const [kind, setKind] = useState<TransactionKind | ''>('');
+  const [accountFilter, setAccountFilter] = useState('');
   const [bagFilter, setBagFilter] = useState('');
   const [tab, setTab] = useState<ViewTab>('activity');
   const [savedNotice, setSavedNotice] = useState(false);
@@ -62,13 +63,14 @@ export function TransactionsPage() {
 
   const filters: TransactionFilters = { month, limit: 100 };
   if (kind) filters.kind = kind;
+  if (accountFilter) filters.account_id = Number(accountFilter);
   if (bagFilter) filters.bag_id = Number(bagFilter);
 
   // The register view reads its own endpoint (all-time thread); the month
   // list stays quiet while it is pinned.
   const { data, loading, error, reload } = useAsync(
     () => (registerId ? Promise.resolve<Transaction[]>([]) : transactionsApi.list(filters)),
-    [month, kind, bagFilter, registerId],
+    [month, kind, accountFilter, bagFilter, registerId],
   );
   const accounts = useAsync(() => accountsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
@@ -129,7 +131,8 @@ export function TransactionsPage() {
     // already 0.
     setRegisterNonce((n) => n + 1);
   }
-  // Bag filter options: every bag that has its own activity view.
+  // Bag filter options: the cascading second dropdown lists the selected
+  // account's bags only (the overview groups bags per account).
   const bagsView = useAsync(() => bagsApi.overview(), []);
 
   // Expanded panel: the list endpoint omits item lines, so expanding a
@@ -235,6 +238,11 @@ export function TransactionsPage() {
   const transactions: Transaction[] = data ?? [];
   const categoryNames = new Map((categories.data ?? []).map((c) => [c.id, c.name]));
   const accountNames = new Map((accounts.data ?? []).map((a) => [a.id, a.name]));
+  // The cascading bag dropdown's options: only the selected account's bags
+  // (a bag lives on one account, so the bag filter narrows within it).
+  const selectedBagAccount = accountFilter
+    ? (bagsView.data?.accounts ?? []).find((v) => v.account_id === Number(accountFilter))
+    : undefined;
 
   // Group consecutive transactions sharing a date (the list arrives sorted by
   // date desc) into "TODAY −$60.15"-style sections, like the reference design.
@@ -336,7 +344,28 @@ export function TransactionsPage() {
                     aria-label={t('filters.monthAria')}
                   />
                 </Field>
-                {(bagsView.data?.accounts ?? []).some((v) => v.bags.length > 0) && (
+                {(accounts.data?.length ?? 0) > 0 && (
+                  <Field label={t('filters.account')} layout="row">
+                    <select
+                      value={accountFilter}
+                      onChange={(e) => {
+                        setAccountFilter(e.target.value);
+                        // A bag belongs to one account — switching accounts
+                        // clears any bag chosen for the previous one.
+                        setBagFilter('');
+                      }}
+                      aria-label={t('filters.accountAria')}
+                    >
+                      <option value="">{t('filters.allAccounts')}</option>
+                      {(accounts.data ?? []).map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                {selectedBagAccount && selectedBagAccount.bags.length > 0 && (
                   <Field label={t('filters.bag')} layout="row">
                     <select
                       value={bagFilter}
@@ -344,13 +373,11 @@ export function TransactionsPage() {
                       aria-label={t('filters.bagAria')}
                     >
                       <option value="">{t('filters.allBags')}</option>
-                      {(bagsView.data?.accounts ?? []).flatMap((v) =>
-                        v.bags.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.name} ({v.account_name})
-                          </option>
-                        )),
-                      )}
+                      {selectedBagAccount.bags.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
                     </select>
                   </Field>
                 )}
@@ -468,7 +495,15 @@ export function TransactionsPage() {
                           : formatCents(tx.amount_cents, tx.currency)
                       }
                       valueClass={
-                        row ? (row.change_cents > 0 ? 'stat-positive' : '') : isIncome ? 'stat-positive' : ''
+                        row
+                          ? (row.change_cents > 0 ? 'stat-positive' : '')
+                          : kind === ''
+                            ? isIncome
+                              ? 'stat-positive'
+                              : isTransfer
+                                ? ''
+                                : 'stat-negative'
+                            : ''
                       }
                       onToggle={(open) => {
                         if (open && expandedId !== tx.id) {
