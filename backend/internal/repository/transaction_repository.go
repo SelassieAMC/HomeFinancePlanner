@@ -87,8 +87,12 @@ func (r *TransactionRepository) List(ctx context.Context, f TransactionFilters) 
 		args = append(args, *f.BagID)
 	}
 	if f.StoreID != nil && *f.StoreID > 0 {
-		where = append(where, "t.store_id = ?")
-		args = append(args, *f.StoreID)
+		// A manual purchase stores its store on the transaction row, but a
+		// bill-linked row keeps its store on the bill (t.store_id stays NULL).
+		// Match both, so filtering by store sees every visit, not just manual
+		// entries.
+		where = append(where, "(t.store_id = ? OR t.bill_id IN (SELECT b.id FROM bills b WHERE b.store_id = ?))")
+		args = append(args, *f.StoreID, *f.StoreID)
 	}
 
 	limit := f.Limit
