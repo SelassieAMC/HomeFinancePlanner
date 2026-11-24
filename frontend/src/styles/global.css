@@ -1634,8 +1634,11 @@ textarea:focus,
 }
 
 .group-members > td {
-  background: color-mix(in srgb, var(--surface) 92%, var(--border));
-  padding: 0 0.5rem 0.5rem;
+  /* The expanded members read as children of the family row: an indented,
+   * recessed well with an accent edge instead of a flush sibling table. */
+  background: color-mix(in srgb, var(--bg-raised) 60%, var(--surface));
+  border-left: 3px solid var(--accent);
+  padding: 0.4rem 0.75rem 0.75rem 1.5rem;
   /* The wrapper cell spans the whole table — it must not inherit the
    * first-column ellipsis clipping (the mini table would be cut off). */
   max-width: none;
@@ -1644,7 +1647,12 @@ textarea:focus,
 }
 
 .group-members-table {
-  margin: 0.4rem 0 0;
+  margin: 0.3rem 0 0;
+  /* The mini table sits on the recessed well — no card chrome of its own, so
+   * the member rows read as part of the expanded group, not a new table. */
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 
 .group-members-table th,
