@@ -16,6 +16,7 @@ export {
   IconCloseCircle,
   IconReopen,
   IconCheck,
+  IconHistory,
   IconChevronLeft,
   IconChevronRight,
 } from './IconButton';

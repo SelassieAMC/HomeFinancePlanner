@@ -45,6 +45,7 @@ export const budgets: LocaleBundle = {
       edit: 'Edit',
       mark_finished: 'Mark finished',
       delete: 'Delete',
+      history: 'History',
     },
     edit: {
       title: 'Edit budget',
@@ -127,6 +128,7 @@ export const budgets: LocaleBundle = {
       edit: 'Bearbeiten',
       mark_finished: 'Als erledigt markieren',
       delete: 'Löschen',
+      history: 'Verlauf',
     },
     edit: {
       title: 'Budget bearbeiten',
@@ -209,6 +211,7 @@ export const budgets: LocaleBundle = {
       edit: 'Editar',
       mark_finished: 'Marcar como terminado',
       delete: 'Eliminar',
+      history: 'Historial',
     },
     edit: {
       title: 'Editar presupuesto',

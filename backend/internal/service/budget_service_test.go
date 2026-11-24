@@ -430,23 +430,24 @@ func TestBudgetCarrySkippedWithoutConversionSources(t *testing.T) {
 	}
 }
 
-// TestBudgetCreateCarryOverDefaultsAndOptOut: new monthly rows default to
-// carry ON (decision 3), an explicit false opts out, envelopes never carry.
-func TestBudgetCreateCarryOverDefaultsAndOptOut(t *testing.T) {
+// TestBudgetCreateCarryOverDefaultsOff: new monthly rows default to carry OFF
+// (clean monthly reset, 2026-11-24), an explicit true opts in, envelopes never
+// carry.
+func TestBudgetCreateCarryOverDefaultsOff(t *testing.T) {
 	svc, _ := newTestBudgetService()
 	monthly, err := svc.Create(context.Background(), BudgetInput{CategoryID: 1, AmountCents: 10_000, Cadence: domain.BudgetMonthly})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !monthly.CarryOver {
-		t.Errorf("new monthly carry_over = %+v; want default ON", monthly)
+	if monthly.CarryOver {
+		t.Errorf("new monthly carry_over = %+v; want default OFF", monthly)
 	}
-	off, err := svc.Create(context.Background(), BudgetInput{CategoryID: 1, AmountCents: 10_000, Cadence: domain.BudgetMonthly, CarryOver: boolPtr(false)})
+	on, err := svc.Create(context.Background(), BudgetInput{CategoryID: 1, AmountCents: 10_000, Cadence: domain.BudgetMonthly, CarryOver: boolPtr(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if off.CarryOver {
-		t.Errorf("opted-out monthly carry_over = %+v; want false", off)
+	if !on.CarryOver {
+		t.Errorf("opted-in monthly carry_over = %+v; want true", on)
 	}
 	env, err := svc.Create(context.Background(), BudgetInput{CategoryID: 1, AmountCents: 10_000, CarryOver: boolPtr(true)})
 	if err != nil {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { intlLocale } from '../../i18n/core';
@@ -33,6 +33,9 @@ export function PlanningCard({ summary }: { summary: AsyncState<Summary> }) {
   const bags = useAsync(() => bagsApi.overview(), []);
 
   const [active, setActive] = useState<PlanningSection>('budgets');
+  // Once the user clicks a tab, their choice wins — the auto-place below only
+  // picks the first non-empty section on initial load, never after a click.
+  const userPicked = useRef(false);
 
   // Section presence: `false` only once that section's fetch finished empty
   // (nothing yet = still loading, never "absent"); budgets come from the
@@ -48,6 +51,7 @@ export function PlanningCard({ summary }: { summary: AsyncState<Summary> }) {
   // another section has content — the first loaded section wins. Mid-load,
   // the loading spinner keeps the tab stable.
   useEffect(() => {
+    if (userPicked.current) return; // explicit choice always wins
     const present: Record<PlanningSection, boolean> = {
       budgets: hasBudgets,
       goals: hasGoals,
@@ -96,7 +100,10 @@ export function PlanningCard({ summary }: { summary: AsyncState<Summary> }) {
       <Tabs
         tabs={tabs}
         active={active}
-        onChange={setActive}
+        onChange={(key) => {
+          userPicked.current = true;
+          setActive(key);
+        }}
         ariaLabel={t('planning.aria')}
       />
       <div className="planning-pane">

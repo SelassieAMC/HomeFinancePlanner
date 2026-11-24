@@ -357,12 +357,11 @@ func (s *BudgetService) build(ctx context.Context, in BudgetInput) (domain.Budge
 	}
 	if cadence == domain.BudgetMonthly {
 		// A new monthly row covers the month it is created in; the rollover
-		// takes it from there. Rollover defaults ON (decision 2026-10-28);
-		// a payload that says otherwise opts out. The first month never
-		// inherits a carried balance (MoneyWiz's "carried balance" seed is a
-		// later slice).
+		// takes it from there. Rollover defaults OFF (2026-11-24 — clean
+		// monthly reset, the user's model; carry-over stays an opt-in).
+		// The first month never inherits a carried balance.
 		b.Month = currentMonth()
-		b.CarryOver = in.CarryOver == nil || *in.CarryOver
+		b.CarryOver = in.CarryOver != nil && *in.CarryOver
 	}
 	return b, nil
 }

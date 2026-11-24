@@ -21,6 +21,7 @@ import {
   IconButton,
   IconCloseCircle,
   IconEdit,
+  IconHistory,
   IconMoveBetween,
   IconReopen,
   IconTrash,
@@ -65,9 +66,9 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   // irregular pools like clothes or vacations.
   const [cadence, setCadence] = useState<BudgetCadence>('monthly');
   // Monthly series may roll the running leftover into the next month
-  // (deficits negative — MoneyWiz envelopes). On by default; envelopes never
-  // carry.
-  const [carry, setCarry] = useState(true);
+  // (deficits negative — MoneyWiz envelopes). Off by default (clean monthly
+  // reset, 2026-11-24); envelopes never carry.
+  const [carry, setCarry] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   // Amount editing: only open rows offer it (the backend refuses closed ones
@@ -77,11 +78,14 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   const [editCarry, setEditCarry] = useState(true);
   const [editError, setEditError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Expanded history per category_id: closed monthly rows revealed under the
+  // current row of a recurring series.
+  const [historyOpen, setHistoryOpen] = useState<Set<number>>(new Set());
 
   function openEdit(b: Budget) {
     setEditing(b);
     setEditAmount((b.amount_cents / 100).toFixed(2));
-    setEditCarry(b.carry_over ?? true);
+    setEditCarry(b.carry_over ?? false);
     setEditError(null);
   }
 
@@ -224,6 +228,143 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
     return (b.month ?? '').localeCompare(a.month ?? '');
   });
 
+  // Closed monthly rows are history, not list rows: grouped under their
+  // category's current row and revealed by the "history" toggle.
+  const monthlyClosedByCat = new Map<number, Budget[]>();
+  for (const b of data ?? []) {
+    if (b.cadence === 'monthly' && b.status === 'closed') {
+      const list = monthlyClosedByCat.get(b.category_id) ?? [];
+      list.push(b);
+      monthlyClosedByCat.set(b.category_id, list);
+    }
+  }
+  const visibleBudgets = budgets.filter(
+    (b) => b.cadence !== 'monthly' || b.status === 'open',
+  );
+
+  const toggleHistory = (categoryId: number) =>
+    setHistoryOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(categoryId)) next.delete(categoryId);
+      else next.add(categoryId);
+      return next;
+    });
+
+  const renderRow = (b: Budget, isHistory = false) => {
+    const lifetime = lifetimeSpentByBudget.get(b.id) ?? 0;
+    // A carrying monthly row's available money is cap + running carry
+    // (deficits negative) − month spend.
+    const carried = b.carry_over ? b.carried_cents ?? 0 : 0;
+    const available = b.amount_cents + carried - lifetime;
+    const history =
+      !isHistory && b.cadence === 'monthly' && b.status === 'open'
+        ? (monthlyClosedByCat.get(b.category_id) ?? [])
+        : [];
+    const showHistory = history.length > 0;
+    return (
+      <tr key={b.id}>
+        <td>
+          <span className="cell-entity">
+            {(categories.data ?? []).find((c) => c.id === b.category_id)?.icon && (
+              <span aria-hidden="true">
+                {(categories.data ?? []).find((c) => c.id === b.category_id)?.icon}
+              </span>
+            )}
+            <span className="entity-name">
+              {categoryNames.get(b.category_id) ?? `#${b.category_id}`}
+            </span>
+          </span>
+        </td>
+        <td className="cell-muted">
+          {b.cadence === 'monthly'
+            ? budgetPeriodLabel(t, b.month ?? '')
+            : t('table.envelope')}
+        </td>
+        <td className="num">
+          <strong>{formatCents(lifetime, currency)}</strong>
+        </td>
+        <td className="num">
+          <span className={b.status === 'closed' ? 'cell-muted' : undefined}>
+            {formatCents(b.amount_cents, currency)}
+          </span>
+          {carried !== 0 && (
+            <span
+              className={carried < 0 ? '' : 'ok'}
+              style={{ display: 'block', fontSize: '0.85em' }}
+            >
+              {t('card.carried', { amount: formatCents(carried, currency) })}
+            </span>
+          )}
+        </td>
+        <td className="cell-progress">
+          <ProgressBar
+            pct={b.amount_cents > 0 ? (lifetime / b.amount_cents) * 100 : 0}
+            over={available < 0}
+          />
+        </td>
+        <td>
+          <BudgetStatusCell
+            isClosed={b.status === 'closed'}
+            over={available < 0}
+            remaining={available}
+            currency={currency}
+          />
+        </td>
+        <td className="cell-actions">
+          {!isHistory && b.status !== 'closed' && (
+            <>
+              {b.cadence === 'monthly' && (
+                <IconButton
+                  icon={<IconMoveBetween />}
+                  label={t('actions.transfer')}
+                  disabled={busy}
+                  onClick={() => openTransfer(b)}
+                />
+              )}
+              <IconButton
+                icon={<IconEdit />}
+                label={t('card.edit')}
+                disabled={busy}
+                onClick={() => openEdit(b)}
+              />
+              <IconButton
+                icon={<IconCloseCircle />}
+                label={t('card.mark_finished')}
+                disabled={busy}
+                onClick={() => handleStatus(b.id, 'closed')}
+              />
+            </>
+          )}
+          {!isHistory && b.status === 'closed' && (
+            <IconButton
+              icon={<IconReopen />}
+              label={t('card.reopen')}
+              disabled={busy}
+              onClick={() => handleStatus(b.id, 'open')}
+            />
+          )}
+          {!isHistory && (
+            <IconButton
+              icon={<IconTrash />}
+              label={t('card.delete')}
+              variant="danger"
+              disabled={busy}
+              onClick={() => handleDelete(b.id)}
+            />
+          )}
+          {showHistory && (
+            <IconButton
+              icon={<IconHistory />}
+              label={t('card.history')}
+              disabled={busy}
+              onClick={() => toggleHistory(b.category_id)}
+            />
+          )}
+        </td>
+      </tr>
+    );
+  };
+
   const content = (
     <>
       <Card title={t('add.title')}>
@@ -296,104 +437,18 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {budgets.map((b) => {
-                const lifetime = lifetimeSpentByBudget.get(b.id) ?? 0;
-                // A carrying monthly row's available money is cap + running
-                // carry (deficits negative) − month spend.
-                const carried = b.carry_over ? b.carried_cents ?? 0 : 0;
-                const available = b.amount_cents + carried - lifetime;
-                return (
-                  <tr key={b.id}>
-                    <td>
-                      <span className="cell-entity">
-                        {(categories.data ?? []).find((c) => c.id === b.category_id)?.icon && (
-                          <span aria-hidden="true">
-                            {(categories.data ?? []).find((c) => c.id === b.category_id)?.icon}
-                          </span>
-                        )}
-                        <span className="entity-name">
-                          {categoryNames.get(b.category_id) ?? `#${b.category_id}`}
-                        </span>
-                      </span>
-                    </td>
-                    <td className="cell-muted">
-                      {b.cadence === 'monthly'
-                        ? budgetPeriodLabel(t, b.month ?? '')
-                        : t('table.envelope')}
-                    </td>
-                    <td className="num">
-                      <strong>{formatCents(lifetime, currency)}</strong>
-                    </td>
-                    <td className="num">
-                      <span className={b.status === 'closed' ? 'cell-muted' : undefined}>
-                        {formatCents(b.amount_cents, currency)}
-                      </span>
-                      {carried !== 0 && (
-                        <span
-                          className={carried < 0 ? '' : 'ok'}
-                          style={{ display: 'block', fontSize: '0.85em' }}
-                        >
-                          {t('card.carried', { amount: formatCents(carried, currency) })}
-                        </span>
-                      )}
-                    </td>
-                    <td className="cell-progress">
-                      <ProgressBar
-                        pct={b.amount_cents > 0 ? (lifetime / b.amount_cents) * 100 : 0}
-                        over={available < 0}
-                      />
-                    </td>
-                    <td>
-                      <BudgetStatusCell
-                        isClosed={b.status === 'closed'}
-                        over={available < 0}
-                        remaining={available}
-                        currency={currency}
-                      />
-                    </td>
-                    <td className="cell-actions">
-                      {b.status !== 'closed' && (
-                        <>
-                          {b.cadence === 'monthly' && (
-                            <IconButton
-                              icon={<IconMoveBetween />}
-                              label={t('actions.transfer')}
-                              disabled={busy}
-                              onClick={() => openTransfer(b)}
-                            />
-                          )}
-                          <IconButton
-                            icon={<IconEdit />}
-                            label={t('card.edit')}
-                            disabled={busy}
-                            onClick={() => openEdit(b)}
-                          />
-                          <IconButton
-                            icon={<IconCloseCircle />}
-                            label={t('card.mark_finished')}
-                            disabled={busy}
-                            onClick={() => handleStatus(b.id, 'closed')}
-                          />
-                        </>
-                      )}
-                      {b.status === 'closed' && (
-                        <IconButton
-                          icon={<IconReopen />}
-                          label={t('card.reopen')}
-                          disabled={busy}
-                          onClick={() => handleStatus(b.id, 'open')}
-                        />
-                      )}
-                      <IconButton
-                        icon={<IconTrash />}
-                        label={t('card.delete')}
-                        variant="danger"
-                        disabled={busy}
-                        onClick={() => handleDelete(b.id)}
-                      />
-                    </td>
-                  </tr>
-                );
+              {visibleBudgets.flatMap((b) => {
+                const rows = [renderRow(b)];
+                if (
+                  b.cadence === 'monthly' &&
+                  b.status === 'open' &&
+                  historyOpen.has(b.category_id)
+                ) {
+                  for (const h of monthlyClosedByCat.get(b.category_id) ?? []) {
+                    rows.push(renderRow(h, true));
+                  }
+                }
+                return rows;
               })}
             </tbody>
           </table>

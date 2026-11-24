@@ -172,6 +172,16 @@ export function IconCheck() {
   );
 }
 
+/** History: a clock — reveal a recurring budget's past months. */
+export function IconHistory() {
+  return (
+    <Svg>
+      <circle cx="12" cy="12" r="9.5" />
+      <path d="M12 7v5l3.5 2" />
+    </Svg>
+  );
+}
+
 /** Month navigation — previous. */
 export function IconChevronLeft() {
   return (
