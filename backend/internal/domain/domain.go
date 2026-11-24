@@ -97,6 +97,7 @@ type TransactionFilters struct {
 	Month     string // YYYY-MM
 	Kind      TransactionKind
 	BagID     *int64
+	StoreID   *int64
 	Limit     int
 	Offset    int
 }

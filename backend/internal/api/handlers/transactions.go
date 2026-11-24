@@ -97,6 +97,14 @@ func (h *TransactionHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		f.BagID = &id
 	}
+	if v := q.Get("store_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			respondError(w, r, http.StatusBadRequest, "invalid store_id")
+			return
+		}
+		f.StoreID = &id
+	}
 
 	transactions, err := h.Svc.List(r.Context(), f)
 	if err != nil {

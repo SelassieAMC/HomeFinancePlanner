@@ -871,7 +871,7 @@ export interface ProductInsight {
   source: 'ai' | 'auto';
   data: ProductInsightData;
   acknowledged: boolean;
-  created_at: string; // unix seconds
+  created_at: string; // ISO 8601 (RFC3339) timestamp
   updated_at: string;
 }
 

@@ -32,8 +32,11 @@ export function InsightsCard() {
     return date.toLocaleString(intlLocale(i18n.language), { month: 'short', year: 'numeric' });
   };
 
-  /** Relative age of a unix-second timestamp ("just now", "3d ago"). */
-  const ageOf = (unixSeconds: number): string => {
+  /** Relative age of the ISO-8601 created_at ("just now", "3d ago"); an
+   *  unparseable timestamp hides the age rather than printing "NaN". */
+  const ageOf = (createdAt: string): string => {
+    const unixSeconds = Date.parse(createdAt) / 1000;
+    if (Number.isNaN(unixSeconds)) return '';
     const days = Math.floor((Date.now() / 1000 - unixSeconds) / 86400);
     if (days <= 0) return t('insights.relative.justNow');
     if (days === 1) return t('insights.relative.yesterday');
@@ -122,7 +125,7 @@ export function InsightsCard() {
                 <span className="hint-inline">{factsOf(insight)}</span>
               )}
             </div>
-            <span className="insight-age hint-inline">{ageOf(Number(insight.created_at))}</span>
+            <span className="insight-age hint-inline">{ageOf(insight.created_at)}</span>
             <Button variant="ghost" onClick={() => void dismiss(insight.id)}>
               {t('insights.dismiss')}
             </Button>

@@ -51,6 +51,7 @@ export function TransactionsPage() {
   const [kind, setKind] = useState<TransactionKind | ''>('');
   const [accountFilter, setAccountFilter] = useState('');
   const [bagFilter, setBagFilter] = useState('');
+  const [storeFilter, setStoreFilter] = useState('');
   const [tab, setTab] = useState<ViewTab>('activity');
   const [savedNotice, setSavedNotice] = useState(false);
 
@@ -65,12 +66,13 @@ export function TransactionsPage() {
   if (kind) filters.kind = kind;
   if (accountFilter) filters.account_id = Number(accountFilter);
   if (bagFilter) filters.bag_id = Number(bagFilter);
+  if (storeFilter) filters.store_id = Number(storeFilter);
 
   // The register view reads its own endpoint (all-time thread); the month
   // list stays quiet while it is pinned.
   const { data, loading, error, reload } = useAsync(
     () => (registerId ? Promise.resolve<Transaction[]>([]) : transactionsApi.list(filters)),
-    [month, kind, accountFilter, bagFilter, registerId],
+    [month, kind, accountFilter, bagFilter, storeFilter, registerId],
   );
   const accounts = useAsync(() => accountsApi.list(), []);
   const categories = useAsync(() => categoriesApi.list(), []);
@@ -376,6 +378,22 @@ export function TransactionsPage() {
                       {selectedBagAccount.bags.map((b) => (
                         <option key={b.id} value={b.id}>
                           {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                {(stores.data?.length ?? 0) > 0 && (
+                  <Field label={t('filters.store')} layout="row">
+                    <select
+                      value={storeFilter}
+                      onChange={(e) => setStoreFilter(e.target.value)}
+                      aria-label={t('filters.storeAria')}
+                    >
+                      <option value="">{t('filters.allStores')}</option>
+                      {(stores.data ?? []).map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
                         </option>
                       ))}
                     </select>

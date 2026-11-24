@@ -22,6 +22,9 @@ export const transactions: LocaleBundle = {
       bag: 'Bag',
       bagAria: 'Filter by bag',
       allBags: 'All bags',
+      store: 'Store',
+      storeAria: 'Filter by store',
+      allStores: 'All stores',
       kindAria: 'Filter by kind',
     },
     kind: {
@@ -226,6 +229,9 @@ export const transactions: LocaleBundle = {
       bag: 'Umschlag',
       bagAria: 'Nach Umschlag filtern',
       allBags: 'Alle Umschläge',
+      store: 'Geschäft',
+      storeAria: 'Nach Geschäft filtern',
+      allStores: 'Alle Geschäfte',
       kindAria: 'Nach Art filtern',
     },
     kind: {
@@ -430,6 +436,9 @@ export const transactions: LocaleBundle = {
       bag: 'Bolsillo',
       bagAria: 'Filtrar por bolsillo',
       allBags: 'Todos los bolsillos',
+      store: 'Tienda',
+      storeAria: 'Filtrar por tienda',
+      allStores: 'Todas las tiendas',
       kindAria: 'Filtrar por tipo',
     },
     kind: {

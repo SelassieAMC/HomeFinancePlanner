@@ -86,6 +86,10 @@ func (r *TransactionRepository) List(ctx context.Context, f TransactionFilters) 
 		where = append(where, "t.bag_id = ?")
 		args = append(args, *f.BagID)
 	}
+	if f.StoreID != nil && *f.StoreID > 0 {
+		where = append(where, "t.store_id = ?")
+		args = append(args, *f.StoreID)
+	}
 
 	limit := f.Limit
 	if limit <= 0 {
