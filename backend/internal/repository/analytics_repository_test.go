@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"home-finance-planner/backend/internal/domain"
 )
@@ -327,4 +328,87 @@ func TestAnalyticsItemPricesFoldKey(t *testing.T) {
 			t.Fatalf("key %q count %d; want %d (all keys: %v)", key, byKey[key], n, byKey)
 		}
 	}
+}
+
+// TestAnalyticsCategorySpendAndHeatmapIncludeManual covers the manual-expense
+// union: CategorySpend and Heatmap must read accepted bill lines AND manual
+// expense transactions with a category (bills carry no category on their
+// transaction, so the two branches never double-count one another).
+func TestAnalyticsCategorySpendAndHeatmapIncludeManual(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewAnalyticsRepository(db)
+
+	seed := func(query string, args ...any) int64 {
+		t.Helper()
+		res, err := db.ExecContext(ctx, query, args...)
+		if err != nil {
+			t.Fatalf("seed %q: %v", query, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatalf("seed id: %v", err)
+		}
+		return id
+	}
+
+	grocery := seed(`INSERT INTO categories (name, section, created_at) VALUES ('Audit Fruits Cat', 'Fruits', 100)`)
+	utilities := seed(`INSERT INTO categories (name, section, created_at) VALUES ('Audit Utility Cat', 'Utilities', 100)`)
+	account := seed(`INSERT INTO accounts (name, type, currency, created_at, updated_at) VALUES ('Wallet', 'cash', 'EUR', 100, 100)`)
+
+	// Bill branch: an accepted bill line under the grocery category.
+	bill := seed(`INSERT INTO bills (market_name, date, currency, status, created_at, updated_at)
+		VALUES ('Market', '2026-05-10', 'EUR', 'accepted', 100, 100)`)
+	seed(`INSERT INTO bill_items (bill_id, name, category_id, quantity, unit_price_cents, line_total_cents)
+		VALUES (?, 'apples', ?, 1, 400, 400)`, bill, grocery)
+
+	// Manual branch: a category expense transaction with no bill.
+	seed(`INSERT INTO transactions (account_id, kind, amount_cents, currency, category_id, description, date, created_at, updated_at)
+		VALUES (?, 'expense', 1200, 'EUR', ?, 'Rent', '2026-05-14', 100, 100)`, account, utilities)
+
+	// CategorySpend must return BOTH branches (one row per source).
+	rows, err := repo.CategorySpend(ctx, "2026-05-01", "2026-05-31")
+	if err != nil {
+		t.Fatalf("category spend: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("category rows = %d; want 2 (bill branch + manual branch): %+v", len(rows), rows)
+	}
+	byCat := map[int64]int64{}
+	for _, r := range rows {
+		byCat[r.CategoryID] += r.TotalCents
+	}
+	if byCat[grocery] != 400 || byCat[utilities] != 1200 {
+		t.Errorf("category totals: grocery=%d utilities=%d; want 400 / 1200", byCat[grocery], byCat[utilities])
+	}
+
+	// Heatmap must include the manual transaction's weekday × section cell.
+	hm, err := repo.Heatmap(ctx, "2026-05-01", "2026-05-31")
+	if err != nil {
+		t.Fatalf("heatmap: %v", err)
+	}
+	dow := mondayDow("2026-05-14")
+	foundManual := false
+	for _, h := range hm {
+		if h.Section == "Utilities" && h.Dow == dow {
+			foundManual = true
+			if h.TotalCents != 1200 {
+				t.Errorf("manual heatmap cell = %d; want 1200", h.TotalCents)
+			}
+		}
+	}
+	if !foundManual {
+		t.Errorf("heatmap missing manual 'Utilities' cell on dow %d: %+v", dow, hm)
+	}
+}
+
+// mondayDow returns the Monday-first weekday index (0=Mon … 6=Sun) of a
+// YYYY-MM-DD date — the same index the Heatmap query derives from
+// strftime('%w').
+func mondayDow(date string) int {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return -1
+	}
+	return (int(t.Weekday()) + 6) % 7
 }

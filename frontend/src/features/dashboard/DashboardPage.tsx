@@ -212,6 +212,9 @@ export function DashboardPage() {
               ? t('tiles.noData')
               : t('tiles.discValue', { count: 100 - fixedPct, month: monthLabel(month) })}
           </span>
+          {fixedPct !== null && (fixedSplit.data?.unclassified_cents ?? 0) > 0 && (
+            <span className="stat-label">{t('tiles.fixedNote')}</span>
+          )}
         </Card>
         <Card className="stat-tile">
           <span className="stat-label">{t('tiles.basketTitle')}</span>

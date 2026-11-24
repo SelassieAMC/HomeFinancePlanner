@@ -197,10 +197,11 @@ func (s *AnalyticsService) storeNames(ctx context.Context) (map[int64]string, er
 
 // --- Chart 2: Micro-Category Spending Distribution (sunburst) ---------------
 
-// CategorySunburst aggregates accepted bill lines into a two-level hierarchy:
-// inner ring = category section, outer ring = product category. Sections and
-// categories under sunburstFoldShare of the grand total fold into "Other" so
-// tiny slices don't become unreadable slivers.
+// CategorySunburst aggregates accepted bill lines plus manual expense
+// transactions into a two-level hierarchy: inner ring = category section,
+// outer ring = product category. Sections and categories under
+// sunburstFoldShare of the grand total fold into "Other" so tiny slices don't
+// become unreadable slivers.
 func (s *AnalyticsService) CategorySunburst(ctx context.Context, from, to string) (domain.CategorySunburst, error) {
 	out := domain.CategorySunburst{From: from, To: to, Segments: []domain.SunburstSegment{}}
 	if err := validateDate(from, "from"); err != nil {
@@ -599,8 +600,9 @@ func heatmapGroup(section string) string {
 	}
 }
 
-// SpendHeatmap sums accepted bill lines into a weekday × purchase-type grid.
-// Cells are Monday-first and zero-filled; MaxCents anchors the color scale.
+// SpendHeatmap sums accepted bill lines plus manual expense transactions into
+// a weekday × purchase-type grid. Cells are Monday-first and zero-filled;
+// MaxCents anchors the color scale.
 func (s *AnalyticsService) SpendHeatmap(ctx context.Context, from, to string) (domain.SpendHeatmap, error) {
 	out := domain.SpendHeatmap{
 		From:   from,

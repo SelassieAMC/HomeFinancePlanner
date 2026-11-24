@@ -76,8 +76,10 @@ func (r *AnalyticsRepository) ItemPrices(ctx context.Context, from, to string) (
 	return out, rows.Err()
 }
 
-// CategorySpend sums accepted bill line amounts per product category in the
-// range, per native currency (sunburst input).
+// CategorySpend sums accepted bill line amounts plus manual expense
+// transactions per product category in the range, per native currency
+// (sunburst input). Bill transactions carry no category (their category lives
+// on bill_items), so the transaction branch never double-counts a bill's spend.
 func (r *AnalyticsRepository) CategorySpend(ctx context.Context, from, to string) ([]domain.CategorySpendRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT c.id, c.name, COALESCE(c.section, ''), b.currency, SUM(bi.line_total_cents)
@@ -85,7 +87,13 @@ func (r *AnalyticsRepository) CategorySpend(ctx context.Context, from, to string
 		JOIN bills b ON b.id = bi.bill_id
 		JOIN categories c ON c.id = bi.category_id
 		WHERE b.status = 'accepted' AND b.date >= ? AND b.date <= ?
-		GROUP BY c.id, c.name, c.section, b.currency`, from, to)
+		GROUP BY c.id, c.name, c.section, b.currency
+		UNION ALL
+		SELECT c.id, c.name, COALESCE(c.section, ''), t.currency, SUM(t.amount_cents)
+		FROM transactions t
+		JOIN categories c ON c.id = t.category_id
+		WHERE t.kind = 'expense' AND t.date >= ? AND t.date <= ?
+		GROUP BY c.id, c.name, c.section, t.currency`, from, to, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("analytics category spend %s..%s: %w", from, to, err)
 	}
@@ -126,9 +134,9 @@ func (r *AnalyticsRepository) DailyExpenseByMonth(ctx context.Context, months []
 	return out, rows.Err()
 }
 
-// Heatmap sums accepted bill line amounts per weekday and category section in
-// the range, per native currency. strftime('%w') is Sunday-first, so the
-// Monday-first index is (%w + 6) % 7.
+// Heatmap sums accepted bill line amounts plus manual expense transactions per
+// weekday and category section in the range, per native currency.
+// strftime('%w') is Sunday-first, so the Monday-first index is (%w + 6) % 7.
 func (r *AnalyticsRepository) Heatmap(ctx context.Context, from, to string) ([]domain.SectionDayRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT (CAST(strftime('%w', b.date) AS INTEGER) + 6) % 7 AS dow,
@@ -137,7 +145,14 @@ func (r *AnalyticsRepository) Heatmap(ctx context.Context, from, to string) ([]d
 		JOIN bills b ON b.id = bi.bill_id
 		LEFT JOIN categories c ON c.id = bi.category_id
 		WHERE b.status = 'accepted' AND b.date >= ? AND b.date <= ?
-		GROUP BY dow, c.section, b.currency`, from, to)
+		GROUP BY dow, c.section, b.currency
+		UNION ALL
+		SELECT (CAST(strftime('%w', t.date) AS INTEGER) + 6) % 7 AS dow,
+		       COALESCE(c.section, ''), t.currency, SUM(t.amount_cents)
+		FROM transactions t
+		JOIN categories c ON c.id = t.category_id
+		WHERE t.kind = 'expense' AND t.date >= ? AND t.date <= ?
+		GROUP BY dow, c.section, t.currency`, from, to, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("analytics heatmap %s..%s: %w", from, to, err)
 	}
