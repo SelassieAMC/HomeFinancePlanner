@@ -72,18 +72,9 @@ const MaxBillImageBytes = 10 << 20
 const MaxBillScanFiles = 8
 
 const (
-	// scanQueueCapacity bounds pending scan tokens; a full queue rejects the
-	// upload instead of silently losing it.
-	scanQueueCapacity = 64
-	// billScanWorkers bounds concurrent AI extractions (SQLite serializes the
-	// tiny row updates; the long AI HTTP call holds no DB connection).
-	billScanWorkers = 2
 	// scanSessionTTL bounds how long an unconfirmed scan draft (and its
 	// receipt file) is kept — done/failed scans older than this are swept.
 	scanSessionTTL = 24 * time.Hour
-	// shutdownDrainWindow caps how long Close waits for workers between
-	// iterations; it never waits for a running extraction (recovery re-runs it).
-	shutdownDrainWindow = 2 * time.Second
 )
 
 // billScanSource points at the receipt a bill is (or was) built from: every
@@ -114,24 +105,22 @@ type BillService struct {
 	billsDir   string
 	// insights enqueues the deferred price-per-unit analysis after a bill is
 	// confirmed or edited. nil disables the layer (tests).
-	insights       PurchaseAnalyzer
+	insights PurchaseAnalyzer
+	// jobs enqueues the scan onto the River queue (SetJobEnqueuer). nil falls
+	// back to an in-process goroutine so the feature still works without the
+	// queue (tests, or a boot where River failed to build).
+	jobs           JobEnqueuer
 	extractTimeout time.Duration
 	log            *slog.Logger
-
-	queue     chan string
-	wg        sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.Mutex // guards lastSweep only
-	lastSweep time.Time
 
 	cancelMu   sync.Mutex                    // guards cancellers
 	cancellers map[string]context.CancelFunc // aborts an in-flight extraction by scan token
 }
 
-// NewBillService wires the bill workflow and starts the background scan
-// workers. billsDir is where receipt files are stored; extractTimeout bounds
-// one AI extraction; scans still analyzing after a restart are re-enqueued.
+// NewBillService wires the bill workflow. billsDir is where receipt files are
+// stored; extractTimeout bounds one AI extraction. The River queue is attached
+// separately with SetJobEnqueuer (the service is constructed before the job
+// manager so its worker can be registered).
 func NewBillService(
 	bills BillStore,
 	scans BillScanStore,
@@ -158,8 +147,7 @@ func NewBillService(
 	if log == nil {
 		log = slog.Default()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s := &BillService{
+	return &BillService{
 		bills:          bills,
 		scans:          scans,
 		extractor:      extractor,
@@ -178,19 +166,35 @@ func NewBillService(
 		insights:       insights,
 		extractTimeout: extractTimeout,
 		log:            log,
-		queue:          make(chan string, scanQueueCapacity),
-		ctx:            ctx,
-		cancel:         cancel,
 		cancellers:     make(map[string]context.CancelFunc),
 	}
-	s.recoverScans(ctx)
-	for i := 1; i <= billScanWorkers; i++ {
-		s.wg.Add(1)
-		go s.runWorker(ctx, i)
+}
+
+// SetJobEnqueuer wires the River queue enqueuer (main does this after the job
+// manager is built). nil leaves the in-process fallback in charge.
+func (s *BillService) SetJobEnqueuer(j JobEnqueuer) { s.jobs = j }
+
+// RecoverScans re-enqueues scans still in the analyzing state after a restart
+// (a clean shutdown cancels the running River job but leaves the row
+// analyzing). Called by main once the queue is wired; idempotent via River's
+// unique-by-args dedup.
+func (s *BillService) RecoverScans(ctx context.Context) {
+	if s.jobs == nil {
+		return
 	}
-	s.wg.Add(1)
-	go s.runSweeper(ctx)
-	return s
+	pending, err := s.scans.List(ctx, []domain.BillScanStatus{domain.BillScanAnalyzing}, 200)
+	if err != nil {
+		s.log.Error("recover analyzing scans", "error", err)
+		return
+	}
+	for _, scan := range pending {
+		if err := s.jobs.EnqueueBillScan(ctx, scan.ScanToken); err != nil {
+			s.log.Warn("re-enqueue analyzing scan", "token", scan.ScanToken, "error", err)
+		}
+	}
+	if len(pending) > 0 {
+		s.log.Info("recovered analyzing scans", "count", len(pending))
+	}
 }
 
 // scanPart is one validated part of an upload, ready to be stored.
@@ -331,23 +335,28 @@ func (s *BillService) Scan(ctx context.Context, files []domain.ReceiptFile, prov
 		return domain.BillScan{}, err
 	}
 
-	if !s.enqueue(token) {
-		// Queue full: be honest instead of losing the upload — drop the row
-		// and every part file and tell the client to retry.
-		if _, derr := s.scans.Delete(context.Background(), token); derr != nil {
-			s.log.Warn("drop scan row after queue-full", "token", token, "error", derr)
-		}
-		removeParts()
-		return domain.BillScan{}, validationError("analysis queue is full — try again in a moment")
-	}
-	s.sweepStaleScans()
-	return domain.BillScan{
+	result := domain.BillScan{
 		ScanToken:  token,
 		Status:     domain.BillScanAnalyzing,
 		ProviderID: provider.ID,
 		FileCount:  len(parts),
 		CreatedAt:  time.Now().UTC(),
-	}, nil
+	}
+	if s.jobs == nil {
+		// No queue (tests, or a boot where River failed to build): run the
+		// extraction in-process so the feature still works.
+		go s.processScanSafe(context.Background(), token, s.log)
+		return result, nil
+	}
+	if err := s.jobs.EnqueueBillScan(ctx, token); err != nil {
+		if _, derr := s.scans.Delete(context.Background(), token); derr != nil {
+			s.log.Warn("drop scan row after enqueue failure", "token", token, "error", derr)
+		}
+		removeParts()
+		return domain.BillScan{}, fmt.Errorf("enqueue scan for analysis: %w", err)
+	}
+	s.sweepStaleScans(ctx)
+	return result, nil
 }
 
 // GetScan returns one scan's pipeline state, or domain.ErrNotFound for
@@ -396,10 +405,12 @@ func (s *BillService) Reextract(ctx context.Context, token, providerID string) (
 		return domain.BillScan{}, validationError("scan is currently being analyzed — wait for it to finish")
 	}
 
-	if !s.enqueue(token) {
-		// Queue full: the row stays analyzing and the sweeper re-enqueues it
-		// within minutes — but say so, the retry is not immediate.
-		s.log.Warn("reextract dropped by full queue", "token", token)
+	if s.jobs == nil {
+		go s.processScanSafe(context.Background(), token, s.log)
+	} else if err := s.jobs.EnqueueBillScan(ctx, token); err != nil {
+		// Fail the row rather than leave it analyzing with no worker behind it.
+		s.scans.MarkFailed(context.Background(), token, "scan could not be queued: "+err.Error())
+		s.log.Warn("reextract enqueue failed", "token", token, "error", err)
 	}
 	return domain.BillScan{
 		ScanToken:  token,
@@ -482,12 +493,14 @@ func (s *BillService) RescanBill(ctx context.Context, billID int64, providerID s
 				"bill_id", bill.ID, "transaction_id", *bill.TransactionID, "error", err)
 		}
 	}
-	if !s.enqueue(token) {
-		// Queue-full after the delete is still safe: the row stays analyzing
-		// and the sweeper re-enqueues it within minutes.
-		s.log.Warn("rescan dropped by full queue", "token", token)
+	if s.jobs == nil {
+		go s.processScanSafe(context.Background(), token, s.log)
+	} else if err := s.jobs.EnqueueBillScan(ctx, token); err != nil {
+		// Fail the row rather than leave it analyzing with no worker behind it.
+		s.scans.MarkFailed(context.Background(), token, "scan could not be queued: "+err.Error())
+		s.log.Warn("rescan enqueue failed", "token", token, "error", err)
 	}
-	s.sweepStaleScans()
+	s.sweepStaleScans(ctx)
 	return domain.BillScan{
 		ScanToken:  token,
 		Status:     domain.BillScanAnalyzing,
@@ -1844,101 +1857,19 @@ func fileHash(file []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// enqueue hands a token to the workers without ever blocking: a full queue
-// leaves the row in the DB for the next sweep to re-enqueue.
-func (s *BillService) enqueue(token string) bool {
-	select {
-	case s.queue <- token:
-		return true
-	default:
-		return false
-	}
-}
-
-// recoverScans re-enqueues scans still in the analyzing state — a restart or
-// crash mid-extraction leaves them there and they resume on boot.
-func (s *BillService) recoverScans(ctx context.Context) {
-	pending, err := s.scans.List(ctx, []domain.BillScanStatus{domain.BillScanAnalyzing}, scanQueueCapacity)
-	if err != nil {
-		s.log.Error("recover analyzing scans", "error", err)
-		return
-	}
-	for _, scan := range pending {
-		if !s.enqueue(scan.ScanToken) {
-			s.log.Warn("recovery queue full", "token", scan.ScanToken)
-		}
-	}
-	if len(pending) > 0 {
-		s.log.Info("recovered analyzing scans", "count", len(pending))
-	}
-}
-
-// runSweeper periodically runs the stale-scan maintenance so recovery does not
-// depend on someone uploading a new receipt: a stranded "analyzing" row (lost
-// enqueue, lost worker) is re-enqueued even on a quiet instance.
-func (s *BillService) runSweeper(ctx context.Context) {
-	defer s.wg.Done()
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.sweepStaleScans()
-		}
-	}
-}
-
-// sweepStaleScans lazily (at most once a minute) deletes done/failed scans
-// past the TTL (with their receipt files) and re-enqueues analyzing scans that
-// stopped making progress (e.g. a queue-full enqueue or a lost worker).
-func (s *BillService) sweepStaleScans() {
-	s.mu.Lock()
-	if time.Since(s.lastSweep) <= time.Minute {
-		s.mu.Unlock()
-		return
-	}
-	s.lastSweep = time.Now()
-	s.mu.Unlock()
-
+// sweepStaleScans opportunistically deletes done/failed scans past the TTL
+// (with their receipt files). It runs inline on a new scan/rescan — the
+// periodic sweeper is gone with the worker pool, and stranded "analyzing" rows
+// are recovered by the River queue (running jobs re-run) or RecoverScans on
+// boot.
+func (s *BillService) sweepStaleScans(ctx context.Context) {
 	cutoff := time.Now().Add(-scanSessionTTL)
-	paths, err := s.scans.DeleteStale(s.ctx, cutoff)
+	paths, err := s.scans.DeleteStale(ctx, cutoff)
 	if err != nil {
 		s.log.Error("sweep stale scans", "error", err)
 	}
 	for _, path := range paths {
 		_ = os.Remove(path)
-	}
-
-	// A stranded analyzing row gets re-enqueued once it is older than the
-	// worst possible runtime of one scan (never while an in-flight extraction
-	// — possibly on a widened timeout retry — can still be running).
-	staleBefore := time.Now().Add(-worstScanRuntime(s.extractTimeout))
-	if staleAnalyzing, err := s.scans.List(s.ctx, []domain.BillScanStatus{domain.BillScanAnalyzing}, scanQueueCapacity); err == nil {
-		for _, scan := range staleAnalyzing {
-			if scan.UpdatedAt.Before(staleBefore) {
-				if !s.enqueue(scan.ScanToken) {
-					break // queue still full — next sweep retries
-				}
-			}
-		}
-	}
-}
-
-// Close stops the scan workers. It cancels the pool and waits at most
-// shutdownDrainWindow for workers between iterations — it never waits for a
-// running extraction; the scan stays analyzing and is recovered on next boot.
-func (s *BillService) Close() {
-	s.cancel()
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(shutdownDrainWindow):
 	}
 }
 

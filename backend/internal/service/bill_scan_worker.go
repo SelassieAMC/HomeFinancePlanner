@@ -12,10 +12,10 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-// The scan workers drain the token queue and run AI extraction detached from
-// any HTTP request: the DB row is the source of truth, the queue is only a
-// "please look at this" hint. Every token is re-read from the DB before work,
-// and the final result write is guarded on status='analyzing' (see
+// The scan worker runs one AI extraction detached from any HTTP request: the
+// DB row is the source of truth, the River queue is only a "please look at
+// this" hint. Every token is re-read from the DB before work, and the final
+// result write is guarded on status='analyzing' (see
 // BillScanRepository.MarkDone/MarkFailed), so a scan the user confirmed or
 // discarded mid-run is never resurrected.
 
@@ -34,40 +34,17 @@ const (
 // timeoutRetrySettle is a var (not a const) so tests can shrink the pause.
 var timeoutRetrySettle = 30 * time.Second
 
-// worstScanRuntime is the longest one scan may hold a worker: the sum of the
-// escalating budgets plus a settle pause before every retry. The stale-scan
-// sweeper only re-enqueues "analyzing" rows older than this — a re-enqueue
-// while a retry is still running would double-run the extraction.
-func worstScanRuntime(timeout time.Duration) time.Duration {
-	runtime := timeout * (1 + 2 + 4)
-	return runtime + timeoutRetrySettle*(maxExtractionAttempts-1)
-}
-
-func (s *BillService) runWorker(ctx context.Context, n int) {
-	defer s.wg.Done()
-	log := s.log.With("component", "bill_scan_worker", "worker", n)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case token := <-s.queue:
-			s.processScanSafe(token, log)
-		}
-	}
-}
-
-// processScanSafe guarantees a panic inside one extraction never kills its
-// worker: the pool would silently shrink and later scans would sit in
-// "analyzing" forever with nothing re-running them. The scan is marked failed
-// instead, so the UI shows the failure and offers a retry.
-func (s *BillService) processScanSafe(token string, log *slog.Logger) {
+// processScanSafe guarantees a panic inside one extraction never kills the
+// River worker: the scan is marked failed instead, so the UI shows the failure
+// and offers a retry.
+func (s *BillService) processScanSafe(ctx context.Context, token string, log *slog.Logger) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("extraction panicked", "token", token, "panic", r, "stack", string(debug.Stack()))
 			s.markPanicked(token, r, log)
 		}
 	}()
-	s.processScan(token, log)
+	s.processScan(ctx, token, log)
 }
 
 // markPanicked best-effort records the panic on the scan row. It must never
@@ -83,15 +60,16 @@ func (s *BillService) markPanicked(token string, r any, log *slog.Logger) {
 
 // processScan extracts one scan's draft and persists the result. All errors
 // land in the scan row (status failed) — nothing is propagated, because the
-// caller is a background goroutine. A row still analyzing after a lost write
-// is recovered by the sweeper.
-func (s *BillService) processScan(token string, log *slog.Logger) {
+// caller is the River worker. A row still analyzing after a crash is recovered
+// by the queue (running jobs re-run) or by RecoverScans on boot.
+func (s *BillService) processScan(ctx context.Context, token string, log *slog.Logger) {
 	// The run context is the user's Abort button: CancelScan marks the row
 	// cancelled and cancels this context, which stops the extraction the worker
-	// is inside right now. Registered before the row read so a cancel that
-	// lands between the read and the extraction still finds the func; removed
-	// with defer so even a panic path leaves nothing behind.
-	parent := context.Background()
+	// is inside right now. It derives from the job context so a forced shutdown
+	// (StopAndCancel) aborts the extraction too. Registered before the row read
+	// so a cancel that lands between the read and the extraction still finds
+	// the func; removed with defer so even a panic path leaves nothing behind.
+	parent := ctx
 	runCtx, runCancel := context.WithCancel(parent)
 	defer runCancel()
 	s.registerCanceller(token, runCancel)

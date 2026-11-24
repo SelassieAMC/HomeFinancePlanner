@@ -289,16 +289,11 @@ func TestSearch_NameMatchValidation(t *testing.T) {
 // persisted as the strict default.
 func TestSearch_NormalizesStoresAndDefaultsStrict(t *testing.T) {
 	store := &offerStoreFake{}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	s := &OfferSearchService{
 		searches:      store,
 		products:      offerProductStoreFake{},
 		providers:     NewSettingsService(offerSettingsStoreFake{}, wrapBox{}, nil),
 		log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
-		queue:         make(chan string, 1),
-		ctx:           ctx,
-		cancel:        cancel,
 		searchTimeout: time.Minute,
 	}
 	search, err := s.Search(context.Background(), domain.OfferSearchInput{

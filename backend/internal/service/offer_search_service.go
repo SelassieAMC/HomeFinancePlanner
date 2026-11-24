@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"home-finance-planner/backend/internal/domain"
@@ -19,12 +18,10 @@ type OfferSearcher interface {
 	SearchOffers(ctx context.Context, provider domain.AIProvider, prompt string, log *slog.Logger) (domain.OfferResult, error)
 }
 
-// The search workers drain the token queue and run AI searches detached from
-// any HTTP request, mirroring the bill-scan pipeline: the DB row is the source
-// of truth, the queue is only a "please look at this" hint.
+// The search runs detached from any HTTP request: the DB row is the source of
+// truth, and the River queue (via SetJobEnqueuer) is only a "please look at
+// this" hint.
 const (
-	offerSearchQueueCapacity = 64
-	offerSearchWorkers       = 2
 	// offerFailedSearchTTL bounds failed searches; done rows are the kept
 	// record and are never swept.
 	offerFailedSearchTTL = 7 * 24 * time.Hour
@@ -45,21 +42,17 @@ type OfferSearchService struct {
 	prompts       PromptResolver
 	searcher      OfferSearcher
 	searchTimeout time.Duration
-	log           *slog.Logger
-
-	queue  chan string
-	wg     sync.WaitGroup
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mu        sync.Mutex // guards lastSweep only
-	lastSweep time.Time
+	// jobs enqueues the search onto the River queue (SetJobEnqueuer). nil falls
+	// back to an in-process goroutine so the feature still works without the
+	// queue (tests, or a boot where River failed to build).
+	jobs JobEnqueuer
+	log  *slog.Logger
 }
 
-// NewOfferSearchService wires the offer-search workflow and starts the
-// background search workers. llmTimeout is the configured LLM_TIMEOUT; the
-// effective search timeout is a multiple of it. Rows still searching after a
-// restart are re-enqueued.
+// NewOfferSearchService wires the offer-search workflow. llmTimeout is the
+// configured LLM_TIMEOUT; the effective search timeout is a multiple of it.
+// The River queue is attached separately with SetJobEnqueuer (the service is
+// constructed before the job manager so its worker can be registered).
 func NewOfferSearchService(
 	searches OfferSearchStore,
 	products ProductStore,
@@ -76,8 +69,7 @@ func NewOfferSearchService(
 	if log == nil {
 		log = slog.Default()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s := &OfferSearchService{
+	return &OfferSearchService{
 		searches:      searches,
 		products:      products,
 		stores:        stores,
@@ -86,18 +78,34 @@ func NewOfferSearchService(
 		searcher:      searcher,
 		searchTimeout: llmTimeout * offerSearchTimeoutFactor,
 		log:           log,
-		queue:         make(chan string, offerSearchQueueCapacity),
-		ctx:           ctx,
-		cancel:        cancel,
 	}
-	s.recoverSearches(ctx)
-	for i := 1; i <= offerSearchWorkers; i++ {
-		s.wg.Add(1)
-		go s.runWorker(ctx, i)
+}
+
+// SetJobEnqueuer wires the River queue enqueuer (main does this after the job
+// manager is built). nil leaves the in-process fallback in charge.
+func (s *OfferSearchService) SetJobEnqueuer(j JobEnqueuer) { s.jobs = j }
+
+// RecoverSearches re-enqueues searches still in the searching state after a
+// restart (a clean shutdown cancels the running River job but leaves the row
+// searching). Called by main once the queue is wired; idempotent via River's
+// unique-by-args dedup.
+func (s *OfferSearchService) RecoverSearches(ctx context.Context) {
+	if s.jobs == nil {
+		return
 	}
-	s.wg.Add(1)
-	go s.runSweeper(ctx)
-	return s
+	pending, err := s.searches.List(ctx, []domain.OfferSearchStatus{domain.OfferSearchSearching}, 200)
+	if err != nil {
+		s.log.Error("recover searching offer searches", "error", err)
+		return
+	}
+	for _, search := range pending {
+		if err := s.jobs.EnqueueOfferSearch(ctx, search.SearchToken); err != nil {
+			s.log.Warn("re-enqueue searching offer search", "token", search.SearchToken, "error", err)
+		}
+	}
+	if len(pending) > 0 {
+		s.log.Info("recovered searching offer searches", "count", len(pending))
+	}
 }
 
 // Search snapshots the cart lines and enqueues an offer search. It returns
@@ -199,12 +207,18 @@ func (s *OfferSearchService) Search(ctx context.Context, in domain.OfferSearchIn
 	s.log.Info("offer search created",
 		"token", token, "provider", provider.Model, "family", provider.Type,
 		"products", len(snapshot))
-	if !s.enqueue(token) {
-		// Queue full: the row stays searching and the sweeper re-enqueues it
-		// within minutes — but say so, the search is not immediate.
-		s.log.Warn("offer search dropped by full queue", "token", token)
+	if s.jobs == nil {
+		// No queue (tests, or a boot where River failed): run the search
+		// in-process so the feature still works.
+		go s.processSearchSafe(context.Background(), token, s.log)
+	} else if err := s.jobs.EnqueueOfferSearch(ctx, token); err != nil {
+		// The row would stay "searching" with no worker behind it — fail it so
+		// the user can retry instead of leaving it stranded.
+		s.searches.MarkFailed(context.Background(), token, "offer search could not be queued: "+err.Error())
+		s.log.Warn("offer search enqueue failed", "token", token, "error", err)
+		return created, nil
 	}
-	s.sweepStaleSearches()
+	s.deleteStaleSearches(ctx)
 	return created, nil
 }
 
@@ -242,9 +256,12 @@ func (s *OfferSearchService) Retry(ctx context.Context, token, providerID string
 		}
 		return domain.OfferSearch{}, validationError("offer search is currently running — wait for it to finish")
 	}
-	if !s.enqueue(token) {
-		// Queue full: the row stays searching and the sweeper re-enqueues it.
-		s.log.Warn("offer search retry dropped by full queue", "token", token)
+	if s.jobs == nil {
+		go s.processSearchSafe(context.Background(), token, s.log)
+	} else if err := s.jobs.EnqueueOfferSearch(ctx, token); err != nil {
+		// Fail the row rather than leave it stranded with no worker.
+		s.searches.MarkFailed(context.Background(), token, "offer search could not be queued: "+err.Error())
+		s.log.Warn("offer search retry enqueue failed", "token", token, "error", err)
 	}
 	return domain.OfferSearch{
 		SearchToken: token,
@@ -267,18 +284,11 @@ func (s *OfferSearchService) Delete(ctx context.Context, token string) error {
 	return s.searches.Delete(ctx, token)
 }
 
-// Close stops the search workers. It cancels the pool and waits at most the
-// shutdown drain window for workers between iterations — it never waits for a
-// running search; the row stays searching and is recovered on next boot.
-func (s *OfferSearchService) Close() {
-	s.cancel()
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(shutdownDrainWindow):
+// deleteStaleSearches opportunistically removes failed searches past the TTL
+// (done rows are the kept record). It runs inline on a new search — the
+// periodic sweeper is gone with the worker pool.
+func (s *OfferSearchService) deleteStaleSearches(ctx context.Context) {
+	if _, err := s.searches.DeleteStale(ctx, time.Now().Add(-offerFailedSearchTTL)); err != nil {
+		s.log.Warn("delete stale offer searches", "error", err)
 	}
 }

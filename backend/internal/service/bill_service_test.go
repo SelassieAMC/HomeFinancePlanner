@@ -548,7 +548,6 @@ func newTestBillServiceWithProducts(t *testing.T, extractFn func(context.Context
 		passthroughBox{}, extractor)
 	svc := NewBillService(billStore, scanStore, extractor, settings,
 		nil, newFakeAccountStore(), catStore, storeStore, products, nil, nil, nil, newFakeTxStore(), nil, t.TempDir(), nil, 5*time.Second, nil)
-	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, storeStore, catStore, products
 }
 
@@ -928,23 +927,6 @@ func TestCancelScanNotAnalyzing(t *testing.T) {
 	}
 	if _, err := svc.CancelScan(ctx, res.ScanToken); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("cancelled-after-discard: err = %v, want ErrNotFound", err)
-	}
-}
-
-func TestCloseReturnsWhileExtractionBlocked(t *testing.T) {
-	blocked := make(chan struct{})
-	svc, _, _, _, _ := newTestBillService(t, func(context.Context, []domain.ReceiptFile, domain.AIProvider, string) (domain.BillDraft, error) {
-		<-blocked
-		return domain.BillDraft{}, errors.New("unreachable")
-	})
-	if _, err := svc.Scan(context.Background(), scanFile(testImage()), ""); err != nil {
-		t.Fatalf("Scan: %v", err)
-	}
-
-	start := time.Now()
-	svc.Close()
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Fatalf("Close waited %v; it must not wait for the extraction", elapsed)
 	}
 }
 
@@ -1631,7 +1613,7 @@ func TestWorkerFailsWhenPartMissing(t *testing.T) {
 	}
 	_ = os.Remove(row.Files[1].Path) // part 2 vanished on disk
 
-	svc.processScan(res.ScanToken, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	svc.processScan(context.Background(), res.ScanToken, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	row, _ = scanStore.GetByToken(ctx, res.ScanToken)
 	if row.Status != domain.BillScanFailed {
 		t.Fatalf("status = %q, want failed", row.Status)
@@ -2043,7 +2025,6 @@ func newTestBillServiceCustom(t *testing.T, settingsData map[string]string, rate
 	svc := NewBillService(billStore, scanStore, extractor, settings,
 		nil, accounts, &fakeCategoryStore{cats: map[int64]domain.Category{}}, storeStore,
 		nil, nil, nil, nil, txs, rates, t.TempDir(), nil, 5*time.Second, nil)
-	t.Cleanup(svc.Close)
 	return svc, scanStore, billStore, store
 }
 
@@ -3019,7 +3000,6 @@ func newTestBillServiceWithMappings(t *testing.T, mappings ProductMappingStore, 
 		nil, newFakeAccountStore(), &fakeCategoryStore{cats: map[int64]domain.Category{}},
 		newFakeStoreStore(), newFakeProductStore(), mappings, nil, nil, newFakeTxStore(), nil,
 		t.TempDir(), nil, 5*time.Second, nil)
-	t.Cleanup(svc.Close)
 	return svc, scanStore
 }
 

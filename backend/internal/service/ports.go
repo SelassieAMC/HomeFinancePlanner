@@ -286,6 +286,19 @@ type PurchaseAnalyzer interface {
 	AnalyzeTransactionCategories(ctx context.Context, transactionID int64) error
 }
 
+// JobEnqueuer enqueues the three pipeline jobs (receipt scan, offer search,
+// product normalization) onto the River queue (implemented in main by the job
+// manager). A nil enqueuer means the queue is unavailable: the service falls
+// back to running the work in-process so the feature still works (tests, or a
+// boot where River failed to build). An enqueue error must never fail the
+// caller's save — the row is failed or rolled back so it is never stranded
+// with no worker.
+type JobEnqueuer interface {
+	EnqueueBillScan(ctx context.Context, token string) error
+	EnqueueOfferSearch(ctx context.Context, token string) error
+	EnqueueProductNormalization(ctx context.Context) error
+}
+
 // InsightStore is the persistence contract for saved price-per-unit insights
 // the insight analysis job wrote. Dismiss is a guarded acknowledge (an
 // already-dismissed or missing row reports ErrNotFound).

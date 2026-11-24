@@ -1133,35 +1133,3 @@ func TestProductServiceRunNormalizationUnavailableWithoutDeps(t *testing.T) {
 		t.Fatalf("RunNormalization without normalizer = %v, want ErrValidation", err)
 	}
 }
-
-func TestNewProductServiceResetsStaleRunningJob(t *testing.T) {
-	ctx := context.Background()
-
-	// A job left "running" by a previous process is marked failed at boot.
-	stale := newFakeProductMappingStore()
-	stale.job.Status = domain.ProductNormalizationRunning
-	NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
-		stale, nil, nil, nil, time.Second, nil)
-	st, err := stale.GetJob(ctx)
-	if err != nil {
-		t.Fatalf("status: %v", err)
-	}
-	if st.Status != domain.ProductNormalizationFailed {
-		t.Fatalf("stale job status = %q, want failed", st.Status)
-	}
-	if !strings.Contains(st.Error, "interrupted by a restart") {
-		t.Fatalf("stale job error = %q, want the restart explanation", st.Error)
-	}
-
-	// A job in any other state (idle here) is left untouched.
-	fresh := newFakeProductMappingStore()
-	NewProductService(newFakeProductStore(), &fakeCategoryStore{}, t.TempDir(),
-		fresh, nil, nil, nil, time.Second, nil)
-	st, err = fresh.GetJob(ctx)
-	if err != nil {
-		t.Fatalf("status: %v", err)
-	}
-	if st.Status != domain.ProductNormalizationIdle {
-		t.Fatalf("idle job status = %q, want idle", st.Status)
-	}
-}

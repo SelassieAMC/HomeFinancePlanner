@@ -26,6 +26,16 @@ type Manager struct {
 	log      *slog.Logger
 }
 
+// Queue names for the pipeline jobs (the services' former goroutine pools).
+// The analysis/backfill jobs share River's default queue; these three get
+// their own so a burst of slow AI work never starves the interactive
+// scan/search.
+const (
+	QueueBillScan             = "bill_scan"
+	QueueOfferSearch          = "offer_search"
+	QueueProductNormalization = "product_normalization"
+)
+
 // NewManager opens the queue pool, applies the River schema migrations and
 // builds (but does not start) the client. workers must already carry the
 // registered job workers. aiTimeout is the per-AI-call budget the retry
@@ -66,7 +76,10 @@ func NewManager(ctx context.Context, dbPath string, aiTimeout time.Duration, wor
 
 	client, err := river.NewClient(driver, &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 2},
+			river.QueueDefault:        {MaxWorkers: 2}, // analysis + backfill
+			QueueBillScan:             {MaxWorkers: 2},
+			QueueOfferSearch:          {MaxWorkers: 2},
+			QueueProductNormalization: {MaxWorkers: 1},
 		},
 		Workers:     workers,
 		RetryPolicy: newRetryPolicy(aiTimeout),
@@ -78,6 +91,13 @@ func NewManager(ctx context.Context, dbPath string, aiTimeout time.Duration, wor
 		// (Stop then StopAndCancel) cancels running job contexts regardless of
 		// this setting, so a job cannot outlive the process.
 		JobTimeout: -1,
+		// A crashed process leaves its running jobs "running"; River re-runs
+		// them once they are this old. It must outlive the longest legitimate
+		// scan runtime (the ×1/×2/×4 timeout escalation is 7×LLM_TIMEOUT plus
+		// settle pauses) so a still-running extraction is never mistaken for a
+		// stuck one and double-run. Boot recovery (RecoverScans/RecoverSearches)
+		// covers the clean-shutdown case immediately.
+		RescueStuckJobsAfter: 8*aiTimeout + 15*time.Minute,
 	})
 	if err != nil {
 		pool.Close()

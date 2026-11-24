@@ -12,31 +12,17 @@ import (
 	"home-finance-planner/backend/internal/domain"
 )
 
-func (s *OfferSearchService) runWorker(ctx context.Context, n int) {
-	defer s.wg.Done()
-	log := s.log.With("component", "offer_search_worker", "worker", n)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case token := <-s.queue:
-			s.processSearchSafe(token, log)
-		}
-	}
-}
-
-// processSearchSafe guarantees a panic inside one search never kills its
-// worker: the pool would silently shrink and later searches would sit in
-// "searching" forever with nothing re-running them. The search is marked
-// failed instead, so the UI shows the failure and offers a retry.
-func (s *OfferSearchService) processSearchSafe(token string, log *slog.Logger) {
+// processSearchSafe guarantees a panic inside one search never kills the
+// River worker: the search is marked failed instead, so the UI shows the
+// failure and offers a retry.
+func (s *OfferSearchService) processSearchSafe(ctx context.Context, token string, log *slog.Logger) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("offer search panicked", "token", token, "panic", r, "stack", string(debug.Stack()))
 			s.markSearchPanicked(token, r, log)
 		}
 	}()
-	s.processSearch(token, log)
+	s.processSearch(ctx, token, log)
 }
 
 // markSearchPanicked best-effort records the panic on the search row. It must
@@ -52,11 +38,12 @@ func (s *OfferSearchService) markSearchPanicked(token string, r any, log *slog.L
 
 // processSearch runs one offer search and persists the result. All errors land
 // in the search row (status failed) — nothing is propagated, because the
-// caller is a background goroutine. A row still searching after a lost write
-// is recovered by the sweeper.
-func (s *OfferSearchService) processSearch(token string, log *slog.Logger) {
-	// Detached from any HTTP request: the cart may be long gone.
-	parent := context.Background()
+// caller is the River worker. A row still searching after a crash is recovered
+// by the queue (running jobs are re-run) or by RecoverSearches on boot.
+func (s *OfferSearchService) processSearch(ctx context.Context, token string, log *slog.Logger) {
+	// Detached from any HTTP request: the cart may be long gone. The job
+	// context is the parent so a shutdown (StopAndCancel) aborts the search.
+	parent := ctx
 
 	search, err := s.searches.GetByToken(parent, token)
 	if err != nil || search.Status != domain.OfferSearchSearching {
@@ -197,83 +184,6 @@ func (s *OfferSearchService) persistSearchResult(ctx context.Context, token stri
 	}
 	if err != nil {
 		log.Error("persist offer search result", "token", token, "error", err)
-	}
-}
-
-// recoverSearches re-enqueues searches still in the searching state — a
-// restart or crash mid-search leaves them there and they resume on boot.
-func (s *OfferSearchService) recoverSearches(ctx context.Context) {
-	pending, err := s.searches.List(ctx, []domain.OfferSearchStatus{domain.OfferSearchSearching}, offerSearchQueueCapacity)
-	if err != nil {
-		s.log.Error("recover searching offer searches", "error", err)
-		return
-	}
-	for _, search := range pending {
-		if !s.enqueue(search.SearchToken) {
-			s.log.Warn("recovery queue full", "token", search.SearchToken)
-		}
-	}
-	if len(pending) > 0 {
-		s.log.Info("recovered searching offer searches", "count", len(pending))
-	}
-}
-
-// runSweeper periodically runs the stale-search maintenance so recovery does
-// not depend on someone confirming a new cart: a stranded "searching" row
-// (lost enqueue, lost worker) is re-enqueued even on a quiet instance.
-func (s *OfferSearchService) runSweeper(ctx context.Context) {
-	defer s.wg.Done()
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.sweepStaleSearches()
-		}
-	}
-}
-
-// sweepStaleSearches lazily (at most once a minute) deletes failed searches
-// past the TTL and re-enqueues searching searches that stopped making
-// progress (e.g. a queue-full enqueue or a lost worker).
-func (s *OfferSearchService) sweepStaleSearches() {
-	s.mu.Lock()
-	if time.Since(s.lastSweep) <= time.Minute {
-		s.mu.Unlock()
-		return
-	}
-	s.lastSweep = time.Now()
-	s.mu.Unlock()
-
-	cutoff := time.Now().Add(-offerFailedSearchTTL)
-	if _, err := s.searches.DeleteStale(s.ctx, cutoff); err != nil {
-		s.log.Error("sweep stale offer searches", "error", err)
-	}
-
-	// A stranded searching row gets re-enqueued once it is older than two
-	// search timeouts (never while an in-flight search can still be running).
-	staleBefore := time.Now().Add(-2 * s.searchTimeout)
-	if stale, err := s.searches.List(s.ctx, []domain.OfferSearchStatus{domain.OfferSearchSearching}, offerSearchQueueCapacity); err == nil {
-		for _, search := range stale {
-			if search.UpdatedAt.Before(staleBefore) {
-				if !s.enqueue(search.SearchToken) {
-					break // queue still full — next sweep retries
-				}
-			}
-		}
-	}
-}
-
-// enqueue hands a token to the workers without ever blocking: a full queue
-// leaves the row in the DB for the next sweep to re-enqueue.
-func (s *OfferSearchService) enqueue(token string) bool {
-	select {
-	case s.queue <- token:
-		return true
-	default:
-		return false
 	}
 }
 

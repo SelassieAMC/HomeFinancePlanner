@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"home-finance-planner/backend/internal/api"
 	"home-finance-planner/backend/internal/config"
@@ -90,27 +91,34 @@ func run() error {
 	promptRepo := repository.NewAIPromptRepository(db)
 	promptSvc := service.NewAIPromptService(promptRepo, categories)
 	storeSvc := service.NewStoreService(stores, cfg.StoresPath)
+
+	// Background jobs (River over SQLite). The pipeline enqueuer is created
+	// before the services — they hold it while their workers are registered into
+	// the queue — and its manager is attached once the queue is built. A queue
+	// that cannot build must never block the API: its failure is logged, boot
+	// continues, the enqueuer degrades to a no-op, and the services refuse the
+	// scan/search requests outright (their SetJobEnqueuer is left unset).
+	jobEnqueuer := &pipelineJobs{}
+
 	productSvc := service.NewProductService(products, categories, cfg.ProductsPath,
 		productMappings, billExtractor, settingsSvc, promptSvc, cfg.LLMTimeout, log)
-	// Background jobs (River over SQLite): the queue builds BEFORE the services
-	// — the bill/transaction save hooks enqueue the deferred PPU analysis
-	// through it — and starts right after they are wired. A queue that cannot
-	// start must never block the API: its failure is logged and boot continues
-	// (the enqueue adapter degrades to a no-op), and the one-time unit-value
-	// backfill simply re-attempts on the next start.
-	jobsMgr, err := buildJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, insights, fxSvc, log)
-	if err != nil {
-		log.Error("background jobs disabled for this run", "error", err)
-	}
-	billAnalyzer := riverPurchaseAnalyzer{manager: jobsMgr}
-
 	billSvc := service.NewBillService(bills, billScans, billExtractor, settingsSvc,
 		promptSvc, accounts, categories, stores, products, productMappings, budgets,
 		repository.NewBagRepository(db), transactions, fxSvc,
-		cfg.BillsPath, billAnalyzer, cfg.LLMTimeout, log)
+		cfg.BillsPath, jobEnqueuer, cfg.LLMTimeout, log)
 	offerSearches := repository.NewOfferSearchRepository(db)
 	cartSearchSvc := service.NewOfferSearchService(offerSearches, products, stores, settingsSvc,
 		promptSvc, billExtractor, cfg.LLMTimeout, log)
+
+	jobsMgr, err := buildJobs(ctx, cfg, db, settingsRepo, settingsSvc, promptSvc, billExtractor, insights, fxSvc, productSvc, billSvc, cartSearchSvc, log)
+	if err != nil {
+		log.Error("background jobs disabled for this run", "error", err)
+	}
+	jobEnqueuer.manager = jobsMgr
+	productSvc.SetJobEnqueuer(jobEnqueuer)
+	billSvc.SetJobEnqueuer(jobEnqueuer)
+	cartSearchSvc.SetJobEnqueuer(jobEnqueuer)
+
 	analyticsRepo := repository.NewAnalyticsRepository(db)
 	analyticsSvc := service.NewAnalyticsService(analyticsRepo, settingsSvc, fxSvc, storeSvc)
 
@@ -129,8 +137,15 @@ func run() error {
 			jobsMgr.Close()
 			jobsMgr = nil
 			log.Error("background jobs disabled for this run", "error", err)
-		} else if err := enqueueUnitValueBackfill(ctx, db, settingsRepo, jobsMgr, log); err != nil {
-			log.Warn("unit-value backfill not enqueued", "error", err)
+		} else {
+			if err := enqueueUnitValueBackfill(ctx, db, settingsRepo, jobsMgr, log); err != nil {
+				log.Warn("unit-value backfill not enqueued", "error", err)
+			}
+			// Resume scans/searches that were mid-flight when the process last
+			// stopped (a clean shutdown cancels their River job but leaves the
+			// row analyzing/searching).
+			billSvc.RecoverScans(ctx)
+			cartSearchSvc.RecoverSearches(ctx)
 		}
 	}
 
@@ -176,11 +191,10 @@ func run() error {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
-		// Stop the scan workers and the job queue before the DB pool closes
-		// (scans never wait for a running extraction — those resume on the
-		// next start; the queue drains its jobs, cancelling if it cannot).
-		billSvc.Close()
-		cartSearchSvc.Close()
+		// Stop the job queue before the DB pool closes: the queue drains its
+		// jobs (a running extraction may take longer than the drain budget, in
+		// which case StopAndCancel aborts it and the scan resumes on the next
+		// start via RecoverScans), cancelling if it cannot.
 		if jobsMgr != nil {
 			jobsStopCtx, jobsStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 			if err := jobsMgr.Stop(jobsStopCtx); err != nil {
@@ -197,31 +211,69 @@ func run() error {
 	return nil
 }
 
-// riverPurchaseAnalyzer implements service.PurchaseAnalyzer over the River
-// job manager: the deferred PPU analysis of an accepted purchase is one
-// enqueued payload. A nil manager (the queue failed to build) degrades the
-// enqueue to a silent no-op — the insight is lost for that purchase only.
-type riverPurchaseAnalyzer struct{ manager *jobs.Manager }
+// pipelineJobs adapts the River job manager to the service enqueue contracts:
+// the deferred purchase analysis (service.PurchaseAnalyzer) and the three
+// pipeline jobs (service.JobEnqueuer). It is created before the services — so
+// they can hold it while their workers are registered into the queue — and its
+// manager is attached once the queue is built. A nil manager (the queue failed
+// to build) degrades the enqueue to a silent no-op; the services nil-guard the
+// same way and refuse the scan/search request outright.
+type pipelineJobs struct{ manager *jobs.Manager }
 
-func (a riverPurchaseAnalyzer) AnalyzeBill(ctx context.Context, billID int64) error {
-	return a.insert(ctx, jobs.BillPPUAnalysisArgs{BillID: billID})
+func (p *pipelineJobs) AnalyzeBill(ctx context.Context, billID int64) error {
+	return p.insert(ctx, jobs.BillPPUAnalysisArgs{BillID: billID}, nil)
 }
 
-func (a riverPurchaseAnalyzer) AnalyzeTransaction(ctx context.Context, transactionID int64) error {
-	return a.insert(ctx, jobs.TransactionPPUAnalysisArgs{TransactionID: transactionID})
+func (p *pipelineJobs) AnalyzeTransaction(ctx context.Context, transactionID int64) error {
+	return p.insert(ctx, jobs.TransactionPPUAnalysisArgs{TransactionID: transactionID}, nil)
 }
 
 // AnalyzeTransactionCategories enqueues the category anomaly check of a
 // saved manual expense transaction.
-func (a riverPurchaseAnalyzer) AnalyzeTransactionCategories(ctx context.Context, transactionID int64) error {
-	return a.insert(ctx, jobs.TransactionCategoryAnalysisArgs{TransactionID: transactionID})
+func (p *pipelineJobs) AnalyzeTransactionCategories(ctx context.Context, transactionID int64) error {
+	return p.insert(ctx, jobs.TransactionCategoryAnalysisArgs{TransactionID: transactionID}, nil)
 }
 
-func (a riverPurchaseAnalyzer) insert(ctx context.Context, args river.JobArgs) error {
-	if a.manager == nil {
+func (p *pipelineJobs) EnqueueBillScan(ctx context.Context, token string) error {
+	return p.insert(ctx, service.BillScanArgs{Token: token}, &river.InsertOpts{
+		Queue: jobs.QueueBillScan,
+		UniqueOpts: river.UniqueOpts{
+			ByArgs: true, // a re-enqueue of the same token is a no-op
+		},
+	})
+}
+
+func (p *pipelineJobs) EnqueueOfferSearch(ctx context.Context, token string) error {
+	return p.insert(ctx, service.OfferSearchArgs{Token: token}, &river.InsertOpts{
+		Queue: jobs.QueueOfferSearch,
+		UniqueOpts: river.UniqueOpts{
+			ByArgs: true,
+		},
+	})
+}
+
+func (p *pipelineJobs) EnqueueProductNormalization(ctx context.Context) error {
+	return p.insert(ctx, service.ProductNormalizationArgs{}, &river.InsertOpts{
+		Queue: jobs.QueueProductNormalization,
+		UniqueOpts: river.UniqueOpts{
+			// Single-flight: the singleton job, keyed by kind (no args) — refuse
+			// a second enqueue while one is queued or running.
+			ByState: []rivertype.JobState{
+				rivertype.JobStateAvailable,
+				rivertype.JobStateRunning,
+				rivertype.JobStateRetryable,
+				rivertype.JobStateScheduled,
+				rivertype.JobStatePending,
+			},
+		},
+	})
+}
+
+func (p *pipelineJobs) insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) error {
+	if p.manager == nil {
 		return nil
 	}
-	return a.manager.Insert(ctx, args, nil)
+	return p.manager.Insert(ctx, args, opts)
 }
 
 // buildJobs wires the River job queue (its own single-connection pool over
@@ -239,6 +291,9 @@ func buildJobs(
 	extractor *extractor.Extractor,
 	insights *repository.InsightRepository,
 	fxSvc *service.FXService,
+	productSvc *service.ProductService,
+	billSvc *service.BillService,
+	cartSearchSvc *service.OfferSearchService,
 	log *slog.Logger,
 ) (*jobs.Manager, error) {
 	workers := river.NewWorkers()
@@ -292,6 +347,12 @@ func buildJobs(
 		cfg.LLMTimeout,
 		log,
 	))
+	// The three pipeline workers formerly owned by the services (their
+	// goroutine pools are gone): receipt scan, offer search and product
+	// normalization, each routed to its own queue in NewManager.
+	river.AddWorker(workers, service.NewBillScanWorker(billSvc))
+	river.AddWorker(workers, service.NewOfferSearchWorker(cartSearchSvc))
+	river.AddWorker(workers, service.NewProductNormalizationWorker(productSvc))
 	return jobs.NewManager(ctx, cfg.DBPath, cfg.LLMTimeout, workers, log)
 }
 

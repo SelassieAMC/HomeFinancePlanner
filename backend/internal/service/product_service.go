@@ -43,7 +43,11 @@ type ProductService struct {
 	// models need minutes to emit a full batch), so later batches of the same
 	// process fit the deadline. Only the job's single-flight run touches it.
 	batchSize int
-	log       *slog.Logger
+	// jobs enqueues the backfill job onto the River queue (SetJobEnqueuer).
+	// nil degrades RunNormalization to an in-process goroutine — the job still
+	// runs, just not on the queue (tests, or a boot where River failed).
+	jobs JobEnqueuer
+	log  *slog.Logger
 }
 
 // ProductFilters re-exports the shared domain filter type.
@@ -72,8 +76,10 @@ type ProductInput struct {
 // resolution, default_for_bills policy), prompts (managed
 // product_normalization prompt) and the per-call timeout. A nil normalizer
 // or providers disables the backfill job; a nil mappings disables the
-// normalization endpoints. A job left "running" by a previous process is
-// marked failed at boot — the user simply runs it again.
+// normalization endpoints. A job left "running" by a previous process is no
+// longer reset here — the River queue owns crash recovery (a running job is
+// re-run on boot), so the status row keeps its "running" state until the
+// re-run finishes.
 func NewProductService(
 	products ProductStore,
 	categories CategoryStore,
@@ -88,7 +94,7 @@ func NewProductService(
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &ProductService{
+	return &ProductService{
 		products:   products,
 		categories: categories,
 		photosDir:  photosDir,
@@ -100,17 +106,12 @@ func NewProductService(
 		batchSize:  normalizationBatch,
 		log:        log,
 	}
-	if s.mappings != nil {
-		if job, err := s.mappings.GetJob(context.Background()); err == nil && job.Status == domain.ProductNormalizationRunning {
-			job.Status = domain.ProductNormalizationFailed
-			job.Error = "interrupted by a restart — run the analysis again"
-			if err := s.mappings.UpdateJob(context.Background(), job); err != nil {
-				log.Warn("reset stale product normalization job", "error", err)
-			}
-		}
-	}
-	return s
 }
+
+// SetJobEnqueuer wires the River queue enqueuer (main does this after the job
+// manager is built — the service is constructed first so its worker can be
+// registered into the queue). nil leaves the fallback goroutine in charge.
+func (s *ProductService) SetJobEnqueuer(j JobEnqueuer) { s.jobs = j }
 
 // List returns the paged product list.
 func (s *ProductService) List(ctx context.Context, f domain.ProductFilters) (domain.ProductPage, error) {
@@ -725,7 +726,17 @@ func (s *ProductService) RunNormalization(ctx context.Context) (domain.ProductNo
 	if err := s.mappings.UpdateJob(ctx, job); err != nil {
 		return domain.ProductNormalizationJob{}, err
 	}
-	go s.runNormalizationJob()
+	if s.jobs != nil {
+		if err := s.jobs.EnqueueProductNormalization(ctx); err != nil {
+			// The row would otherwise stay "running" with no worker behind it.
+			s.failNormalizationJob(ctx, job, fmt.Errorf("enqueue product normalization job: %w", err))
+			return job, nil
+		}
+		return job, nil
+	}
+	// No queue wired (tests, or a boot where River failed to build): run the
+	// job in-process so the feature still works.
+	go s.runNormalizationJob(context.Background())
 	return job, nil
 }
 
@@ -749,8 +760,12 @@ func (s *ProductService) RunNormalization(ctx context.Context) (domain.ProductNo
 // below the failed size, and the re-ask runs at that smaller size, the
 // recursion bottoms out: a timeout on a single-name batch fails the run with
 // actionable advice instead of burning a deadline per remaining name.
-func (s *ProductService) runNormalizationJob() {
-	ctx := context.Background()
+//
+// ctx is the worker's job context (or context.Background() for the in-process
+// fallback): it is cancellable, so a shutdown aborts the run between batches.
+// A cancelled run leaves the status row "running" and River re-runs it on boot
+// — the job is idempotent and only works on the remaining unmapped names.
+func (s *ProductService) runNormalizationJob(ctx context.Context) {
 	job, err := s.mappings.GetJob(ctx)
 	if err != nil {
 		s.log.Error("product normalization job lost its status row", "error", err)
