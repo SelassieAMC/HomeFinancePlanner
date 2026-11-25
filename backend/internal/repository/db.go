@@ -42,7 +42,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
 
-	if err := migrate(ctx, db); err != nil {
+	if err := migrate(ctx, path); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -67,7 +67,23 @@ const fkOffMarker = "pragma: foreign_keys=off"
 
 // migrate applies pending *.sql migrations in filename order, recording each
 // applied version in schema_migrations. Each migration runs in one transaction.
-func migrate(ctx context.Context, db *sql.DB) error {
+//
+// It uses its own single-connection handle whose transactions are IMMEDIATE
+// (`_txlock`): the write lock is taken at BEGIN, so two processes booting at
+// once — the API and the River worker both call repository.Open on the same
+// file — serialize on the lock instead of racing on the same DDL. A deferred
+// transaction would let both read the pre-migration schema and one ALTER would
+// then fail with "duplicate column name".
+func migrate(ctx context.Context, path string) error {
+	migDSN := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_txlock=immediate", path)
+	mdb, err := sql.Open("sqlite", migDSN)
+	if err != nil {
+		return fmt.Errorf("open migration sqlite: %w", err)
+	}
+	defer mdb.Close()
+	mdb.SetMaxOpenConns(1)
+	mdb.SetMaxIdleConns(1)
+
 	entries, err := fs.ReadDir(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("read embedded migrations: %w", err)
@@ -81,60 +97,114 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	}
 	sort.Strings(names)
 
-	if err := ensureMigrationsTable(ctx, db); err != nil {
+	if err := ensureMigrationsTable(ctx, mdb); err != nil {
 		return err
 	}
 
 	for i, name := range names {
 		version := i + 1
 
-		var applied int64
-		err := db.QueryRowContext(ctx,
-			`SELECT 1 FROM schema_migrations WHERE version = ?`, version).Scan(&applied)
-		switch {
-		case err == nil:
-			continue // already applied
-		case !errors.Is(err, sql.ErrNoRows):
+		// Fast path: skip already-applied migrations without taking the write
+		// lock. The authoritative check happens again inside the transaction.
+		applied, err := migrationApplied(ctx, mdb, version)
+		if err != nil {
 			return fmt.Errorf("check migration %d: %w", version, err)
 		}
-
-		sqlBytes, err := migrations.FS.ReadFile(name)
-		if err != nil {
-			return fmt.Errorf("read migration %s: %w", name, err)
+		if applied {
+			continue
 		}
 
-		// The pragma must land on the connection BEFORE the migration's BEGIN
-		// (it is a no-op inside a transaction) and this pool has exactly one
-		// connection, so it is set outside and restored after the run.
-		appliedOff, err := setForeignKeys(ctx, db, strings.Contains(strings.ToLower(string(sqlBytes)), fkOffMarker))
-		if err != nil {
-			return fmt.Errorf("toggle foreign keys for migration %s: %w", name, err)
+		if err := applyMigration(ctx, mdb, version, name); err != nil {
+			return err
 		}
-
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			_ = restoreForeignKeys(ctx, db, appliedOff)
-			return fmt.Errorf("begin migration %d: %w", version, err)
-		}
-		if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
-			tx.Rollback()
-			_ = restoreForeignKeys(ctx, db, appliedOff)
-			return fmt.Errorf("apply migration %s: %w", name, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO schema_migrations (version, name, applied_at)
-			 VALUES (?, ?, strftime('%s','now'))`, version, name); err != nil {
-			tx.Rollback()
-			_ = restoreForeignKeys(ctx, db, appliedOff)
-			return fmt.Errorf("record migration %s: %w", name, err)
-		}
-		if err := tx.Commit(); err != nil {
-			_ = restoreForeignKeys(ctx, db, appliedOff)
-			return fmt.Errorf("commit migration %s: %w", name, err)
-		}
-		_ = restoreForeignKeys(ctx, db, appliedOff)
 	}
 	return nil
+}
+
+// applyMigration runs one migration in an immediate transaction, re-checking
+// inside the write lock so a concurrent migrator that committed just before we
+// acquired it is skipped rather than re-applied.
+func applyMigration(ctx context.Context, db *sql.DB, version int, name string) error {
+	sqlBytes, err := migrations.FS.ReadFile(name)
+	if err != nil {
+		return fmt.Errorf("read migration %s: %w", name, err)
+	}
+
+	// The pragma must land on the connection BEFORE the migration's BEGIN (it
+	// is a no-op inside a transaction) and this pool has exactly one
+	// connection, so it is set outside and restored after the run.
+	appliedOff, err := setForeignKeys(ctx, db, strings.Contains(strings.ToLower(string(sqlBytes)), fkOffMarker))
+	if err != nil {
+		return fmt.Errorf("toggle foreign keys for migration %s: %w", name, err)
+	}
+
+	// BeginTx is IMMEDIATE here (the migration handle's `_txlock`): the write
+	// lock is acquired now, so concurrent migrators block until we commit.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		_ = restoreForeignKeys(ctx, db, appliedOff)
+		return fmt.Errorf("begin migration %d: %w", version, err)
+	}
+	defer tx.Rollback()
+
+	applied, err := migrationAppliedTx(ctx, tx, version)
+	if err != nil {
+		_ = restoreForeignKeys(ctx, db, appliedOff)
+		return fmt.Errorf("check migration %d: %w", version, err)
+	}
+	if applied {
+		_ = restoreForeignKeys(ctx, db, appliedOff)
+		return nil // a concurrent boot already applied it
+	}
+
+	if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
+		_ = restoreForeignKeys(ctx, db, appliedOff)
+		return fmt.Errorf("apply migration %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations (version, name, applied_at)
+		 VALUES (?, ?, strftime('%s','now'))`, version, name); err != nil {
+		_ = restoreForeignKeys(ctx, db, appliedOff)
+		return fmt.Errorf("record migration %s: %w", name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		_ = restoreForeignKeys(ctx, db, appliedOff)
+		return fmt.Errorf("commit migration %s: %w", name, err)
+	}
+	_ = restoreForeignKeys(ctx, db, appliedOff)
+	return nil
+}
+
+// migrationApplied reports whether a schema_migrations row already exists for
+// the version (read outside any transaction — the fast path).
+func migrationApplied(ctx context.Context, db *sql.DB, version int) (bool, error) {
+	var applied int64
+	err := db.QueryRowContext(ctx,
+		`SELECT 1 FROM schema_migrations WHERE version = ?`, version).Scan(&applied)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+// migrationAppliedTx is migrationApplied read through a transaction (the
+// re-check under the migration write lock).
+func migrationAppliedTx(ctx context.Context, tx *sql.Tx, version int) (bool, error) {
+	var applied int64
+	err := tx.QueryRowContext(ctx,
+		`SELECT 1 FROM schema_migrations WHERE version = ?`, version).Scan(&applied)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // setForeignKeys turns the connection's foreign-keys enforcement off only when
