@@ -159,7 +159,7 @@ func (s *ScheduledActionService) Payables(ctx context.Context, today, month stri
 				Status:      domain.PayableProjected,
 				Schedule:    a.Payload,
 				IsPayable:   payableKind(a.Kind, a.Payload),
-				AutoApply:   a.AutoApply || a.Kind.Virtual(),
+				AutoApply:   a.AutoApply || effectiveVirtual(a),
 				Recurrence:  a.Recurrence,
 				StartDate:   a.StartDate,
 				DayOfMonth:  a.DayOfMonth,

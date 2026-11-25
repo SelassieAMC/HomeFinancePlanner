@@ -64,6 +64,13 @@ const KIND_KEYS: Record<ScheduleKind, string> = {
 // write bag ledger rows, never a stored account balance).
 const VIRTUAL_KINDS: readonly ScheduleKind[] = ['bag_funding', 'bag_rebalance'];
 
+/** Whether an occurrence applies itself without a confirmation: the bag kinds
+ *  do, EXCEPT a cross-account funding, which also writes a real transfer and so
+ *  waits for a click (or the schedule's Automatic flag) like a transfer. */
+function isVirtual(it: { kind: ScheduleKind; schedule: SchedulePayload }): boolean {
+  return VIRTUAL_KINDS.includes(it.kind) && !(it.kind === 'bag_funding' && it.schedule.account_id !== undefined);
+}
+
 const RECURRENCE_KEYS: Record<ScheduleRecurrence, string> = {
   once: 'recurrence.once',
   monthly: 'recurrence.monthly',
@@ -182,6 +189,14 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
    *  apply confirmation, so the user always sees what a click writes. */
   function payloadSummary(p: SchedulePayload, lookup: ContextLookup): string {
     if (p.bag_id !== undefined) {
+      if (p.account_id !== undefined) {
+        return t('summary.fund_from', {
+          amount: formatCents(p.amount_cents ?? 0, lookup.currencyFor(p)),
+          from: lookup.accountName(p.account_id),
+          bag: lookup.bagName(p.bag_id),
+          account: lookup.bagAccountName(p.bag_id),
+        });
+      }
       return t('summary.into', {
         amount: formatCents(p.amount_cents ?? 0, lookup.currencyFor(p)),
         bag: lookup.bagName(p.bag_id),
@@ -496,6 +511,11 @@ function ScheduleFormDialog({
       ? String(openBags.find((b) => String(b.id) === String(p0.bag_id))?.account_id ?? '')
       : '',
   );
+  // Cross-account funding: the optional SOURCE account the money moves in from
+  // (empty = the bag's own account, no transfer). Only bag_funding carries it.
+  const [sourceAccountId, setSourceAccountId] = useState<string>(
+    p0.account_id && initial?.kind === 'bag_funding' ? String(p0.account_id) : '',
+  );
   const [fromBagId, setFromBagId] = useState(p0.from_bag_id ? String(p0.from_bag_id) : '');
   const [toBagId, setToBagId] = useState(p0.to_bag_id ? String(p0.to_bag_id) : '');
   const [accountId, setAccountId] = useState(p0.account_id ? String(p0.account_id) : '');
@@ -520,6 +540,11 @@ function ScheduleFormDialog({
   // only accounts that actually have open bags are selectable.
   const fundAccountBags = openBags.filter((b) => String(b.account_id) === fundAccountId);
   const fundingAccounts = accounts.filter((a) => openBags.some((b) => String(b.account_id) === String(a.id)));
+  // A source different from the bag's account moves the money in with a real
+  // transfer first; same-account (or no source) is the no-transfer default.
+  const isCrossAccountFunding =
+    kind === 'bag_funding' && sourceAccountId !== '' && sourceAccountId !== fundAccountId;
+  const sourceAccountName = accounts.find((a) => String(a.id) === sourceAccountId)?.name;
   // The scheduled expense's account owns its optional bag.
   const accountBags = openBags.filter((b) => String(b.account_id) === accountId);
 
@@ -558,7 +583,24 @@ function ScheduleFormDialog({
     if (kind === 'bag_funding') {
       if (!bagId) { setValidation(t('validation.need_bag')); return null; }
       if (amountCents === null || amountCents <= 0) { setValidation(t('validation.positive_amount')); return null; }
-      payload = { bag_id: Number(bagId), amount_cents: amountCents };
+      // Cross-account funding moves the money in from a same-currency account
+      // (the backend enforces it too — this gives an inline message first).
+      if (sourceAccountId && fundAccountId) {
+        const src = accounts.find((a) => String(a.id) === sourceAccountId);
+        const dst = accounts.find((a) => String(a.id) === fundAccountId);
+        if (src && dst && src.currency !== dst.currency) {
+          setValidation(t('validation.same_currency'));
+          return null;
+        }
+      }
+      payload = {
+        bag_id: Number(bagId),
+        amount_cents: amountCents,
+        // Only a source DIFFERENT from the bag's account rides the payload —
+        // same-account is the no-transfer default the backend normalizes.
+        account_id:
+          sourceAccountId && sourceAccountId !== fundAccountId ? Number(sourceAccountId) : undefined,
+      };
     } else if (kind === 'bag_rebalance') {
       if (!fromBagId || !toBagId) { setValidation(t('validation.need_bags')); return null; }
       if (fromBagId === toBagId) { setValidation(t('validation.bags_differ')); return null; }
@@ -631,11 +673,13 @@ function ScheduleFormDialog({
       wide
       help={
         <>
-          {kind === 'bag_funding' || kind === 'bag_rebalance'
-            ? t('form.hint_auto')
-            : kind === 'purchase'
-              ? t('form.hint_purchase')
-              : t('form.hint_confirm_first')}
+          {kind === 'bag_funding'
+            ? (isCrossAccountFunding ? t('form.hint_confirm_first') : t('form.hint_auto'))
+            : kind === 'bag_rebalance'
+              ? t('form.hint_auto')
+              : kind === 'purchase'
+                ? t('form.hint_purchase')
+                : t('form.hint_confirm_first')}
           {' '}{t('form.hint_editing_future')}
         </>
       }
@@ -697,7 +741,7 @@ function ScheduleFormDialog({
           </Field>
           {/* The 0046 always-visible explanation is on-demand help now:
               explicit user action (hover/tap the "?") drives the reveal. */}
-          {kind !== 'bag_funding' && kind !== 'bag_rebalance' && (
+          {(kind !== 'bag_rebalance' && (kind !== 'bag_funding' || isCrossAccountFunding)) && (
             <HelpNote note={t('form.auto_apply_hint')}>
               <label className="default-radio">
                 {t('form.auto_apply_label')}
@@ -724,6 +768,21 @@ function ScheduleFormDialog({
 
         {kind === 'bag_funding' && (
           <div className="form-grid">
+            <Field
+              label={t('form.labels.source_account')}
+              hint={isCrossAccountFunding ? t('form.source_account_hint', { account: sourceAccountName ?? '' }) : undefined}
+            >
+              <select
+                value={sourceAccountId}
+                onChange={(e) => setSourceAccountId(e.target.value)}
+                aria-label={t('form.source_account_aria')}
+              >
+                <option value="">{t('form.source_account_empty')}</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </Field>
             {fundingAccounts.length === 0 ? (
               <p className="hint-text">{t('form.funding_no_options')}</p>
             ) : (
@@ -1104,7 +1163,7 @@ function PayablesCard({
                     row (icons + tooltips), only the occurrence actions live
                     here where they have room. */}
                 <div className="dialog-actions">
-                  {it.status === 'pending' && it.run_id !== undefined && !VIRTUAL_KINDS.includes(it.kind) && (
+                  {it.status === 'pending' && it.run_id !== undefined && !isVirtual(it) && (
                     <>
                       <Button
                         variant="primary"
@@ -1132,7 +1191,7 @@ function PayablesCard({
             )}
             <div className="budget-actions">
               {it.status === 'pending' && it.run_id !== undefined && (
-                VIRTUAL_KINDS.includes(it.kind) ? (
+                isVirtual(it) ? (
                   <span className="stat-label">{t('todo.applies_itself')}</span>
                 ) : (
                   <>

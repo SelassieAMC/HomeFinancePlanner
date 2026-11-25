@@ -308,6 +308,62 @@ func (s *BagService) Allocate(ctx context.Context, bagID int64, in domain.BagAll
 	return s.bags.CreateAllocation(ctx, alloc)
 }
 
+// FundFrom reserves money into a bag, moving it in from another account first:
+// the real internal transfer (source → the bag's account) and the fund
+// allocation are written atomically. Only for a source account distinct from
+// the bag's own account and of the SAME currency — a cross-currency funding
+// would need a recorded conversion the allocation (always bag-account
+// currency) cannot carry. The transfer description and the allocation note
+// share the passed note.
+func (s *BagService) FundFrom(ctx context.Context, bagID, sourceAccountID, amountCents int64, note, date string) (domain.BagAllocation, error) {
+	bag, err := s.bags.GetBagByID(ctx, bagID)
+	if err != nil {
+		return domain.BagAllocation{}, err
+	}
+	if bag.Status == domain.BagClosed {
+		return domain.BagAllocation{}, validationError("bag %q is closed — reopen it before funding", bag.Name)
+	}
+	src, err := s.accounts.GetByID(ctx, sourceAccountID)
+	if err != nil {
+		return domain.BagAllocation{}, fmt.Errorf("validate source account: %w", err)
+	}
+	if src.ID == bag.AccountID {
+		return domain.BagAllocation{}, validationError("the source is the bag's own account — fund it directly")
+	}
+	bagAcc, err := s.accounts.GetByID(ctx, bag.AccountID)
+	if err != nil {
+		return domain.BagAllocation{}, fmt.Errorf("load bag account: %w", err)
+	}
+	if src.Currency != bagAcc.Currency {
+		return domain.BagAllocation{}, validationError(
+			"funding from %q (%s) into a bag on %q (%s) needs the same currency",
+			src.Name, src.Currency, bagAcc.Name, bagAcc.Currency)
+	}
+	alloc, err := s.buildAllocation(ctx, bag, domain.BagAllocationInput{
+		Kind:        domain.BagFund,
+		AmountCents: amountCents,
+		Note:        note,
+		Date:        date,
+	})
+	if err != nil {
+		return domain.BagAllocation{}, err
+	}
+	t := domain.Transaction{
+		AccountID:        src.ID,
+		Kind:             domain.TransactionTransfer,
+		AmountCents:      amountCents,
+		Currency:         src.Currency,
+		Description:      strings.TrimSpace(note),
+		Date:             date,
+		CounterAccountID: &bag.AccountID,
+	}
+	_, alloc, err = s.bags.CreateFunding(ctx, t, alloc)
+	if err != nil {
+		return domain.BagAllocation{}, err
+	}
+	return alloc, nil
+}
+
 // AllocationHistory lists one bag's ledger rows, newest first.
 func (s *BagService) AllocationHistory(ctx context.Context, bagID int64) ([]domain.BagAllocation, error) {
 	if _, err := s.bags.GetBagByID(ctx, bagID); err != nil {

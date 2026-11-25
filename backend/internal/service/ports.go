@@ -148,6 +148,10 @@ type BagStore interface {
 	DeleteBag(ctx context.Context, id int64) error
 	// CreateAllocation writes one ledger row.
 	CreateAllocation(ctx context.Context, a domain.BagAllocation) (domain.BagAllocation, error)
+	// CreateFunding writes a cross-account bag funding atomically: the real
+	// internal transfer (source account → the bag's account) and the fund
+	// allocation — either both rows exist or neither.
+	CreateFunding(ctx context.Context, t domain.Transaction, a domain.BagAllocation) (domain.Transaction, domain.BagAllocation, error)
 	// ListAllocations returns one bag's ledger, newest first.
 	ListAllocations(ctx context.Context, bagID int64) ([]domain.BagAllocation, error)
 	// CreateAllocationPair writes both rebalance legs atomically and links

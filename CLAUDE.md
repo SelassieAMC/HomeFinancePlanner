@@ -703,11 +703,21 @@ each due date — the catch-up auto-applies `Kind.Virtual() || a.AutoApply`
 in due order, dated AT the due date (a failed apply leaves the run pending
 and logged). A nil `auto_apply` on PUT keeps the stored mode (the
 carry_over pattern); the virtual bag kinds always run themselves
-regardless of the flag (their checkbox doesn't even render); the payables
-rows carry `auto_apply` and the register marks those "runs itself each
-period", while `bag_funding`/`bag_rebalance` remain
-(`ScheduleKind.Virtual()`) system-applied — they write only bag allocation
-ledger rows, never a stored account balance. A scheduled expense carries
+regardless of the flag (their checkbox doesn't even render) — except a
+cross-account funding. **`bag_funding` gained an optional source
+`account_id`** (2026-11-25): funding from the bag's own account (or none)
+stays virtual/system-applied (a bag allocation row only, no stored balance);
+a source that DIFFERS from the bag's account moves the money in first with a
+real internal transfer, written atomically with the fund allocation
+(`BagService.FundFrom` → `BagStore.CreateFunding`, one SQL transaction so a
+retry never doubles the money), same-currency only (a cross-currency funding
+would need a recorded conversion the allocation cannot carry). That
+cross-account funding is a real balance movement, so `effectiveVirtual` (the
+helper behind the catch-up's auto-apply, the early-apply refusal and the
+register's "runs itself" marker) treats it like `account_transfer`: it
+follows the schedule's `auto_apply` flag — manual by default, the checkbox
+renders — instead of auto-applying unconditionally. The payables rows carry
+`auto_apply` accordingly. A scheduled expense carries
 the manual form's optional **"From bag" tag** (payload `bag_id`:
 expense-only, the account's own open bag — each applied occurrence drains
 that reserve like any tagged spend)

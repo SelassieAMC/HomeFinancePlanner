@@ -945,7 +945,7 @@ export interface SchedulePayload {
   bag_id?: number; // bag_funding: the bag to fund; transaction: optional expense bag tag
   from_bag_id?: number; // bag_rebalance: source bag
   to_bag_id?: number; // bag_rebalance: destination bag
-  account_id?: number; // account_transfer: source account; transaction: its account
+  account_id?: number; // account_transfer: source account; transaction: its account; bag_funding: optional source account (cross-account funding)
   counter_account_id?: number; // account_transfer: destination account
   amount_cents?: number; // bag kinds + transfer/transaction kinds
   transaction_kind?: 'expense' | 'income'; // transaction kind only (never 'transfer')

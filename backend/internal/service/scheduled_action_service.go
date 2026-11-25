@@ -226,7 +226,7 @@ func (s *ScheduledActionService) ApplyRun(ctx context.Context, runID int64, toda
 		return domain.ScheduleRunView{}, conflictError(
 			"run %d of %q is %s — only a pending occurrence can be applied", run.ID, action.Name, run.Status)
 	}
-	if run.DueDate > today && action.Kind.Virtual() {
+	if run.DueDate > today && effectiveVirtual(action) {
 		return domain.ScheduleRunView{}, validationError(
 			"run %d is due %s — a virtual occurrence applies itself on its due date and cannot be applied early", run.ID, run.DueDate)
 	}
@@ -301,12 +301,23 @@ func (s *ScheduledActionService) executeRun(ctx context.Context, run domain.Sche
 	)
 	switch action.Kind {
 	case domain.ScheduleBagFunding:
-		alloc, err := s.bags.Allocate(ctx, *p.BagID, domain.BagAllocationInput{
-			Kind:        domain.BagFund,
-			AmountCents: p.AmountCents,
-			Note:        note,
-			Date:        effectiveDate,
-		})
+		var (
+			alloc domain.BagAllocation
+			err   error
+		)
+		if p.AccountID != nil {
+			// Cross-account funding: move the money in from the source account
+			// first (a real internal transfer), then reserve it in the bag —
+			// one atomic write.
+			alloc, err = s.bags.FundFrom(ctx, *p.BagID, *p.AccountID, p.AmountCents, note, effectiveDate)
+		} else {
+			alloc, err = s.bags.Allocate(ctx, *p.BagID, domain.BagAllocationInput{
+				Kind:        domain.BagFund,
+				AmountCents: p.AmountCents,
+				Note:        note,
+				Date:        effectiveDate,
+			})
+		}
 		if err != nil {
 			return domain.ScheduleRunView{}, fmt.Errorf("apply scheduling funding for %q: %w", action.Name, err)
 		}
@@ -390,6 +401,18 @@ func descriptionOrDefault(desc, name string) string {
 	return desc
 }
 
+// effectiveVirtual reports whether an action applies itself without a user
+// confirmation. The virtual bag kinds do — except a bag_funding that carries
+// a cross-account source: that funding also writes a real internal transfer
+// (a stored account balance), so it follows the auto_apply flag like
+// account_transfer instead of auto-applying unconditionally.
+func effectiveVirtual(a domain.ScheduledAction) bool {
+	if a.Kind == domain.ScheduleBagFunding && a.Payload.AccountID != nil {
+		return false
+	}
+	return a.Kind.Virtual()
+}
+
 // build validates an action payload over the existing row (zero for create).
 // Kind-field mismatches are refused so an ignored field never hides a mistake.
 func (s *ScheduledActionService) build(ctx context.Context, existing domain.ScheduledAction, in ScheduledActionInput, today string) (domain.ScheduledAction, error) {
@@ -465,9 +488,9 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 	p := in.Payload
 	switch in.Kind {
 	case domain.ScheduleBagFunding:
-		if p.FromBagID != nil || p.ToBagID != nil || p.AccountID != nil || p.CounterID != nil ||
+		if p.FromBagID != nil || p.ToBagID != nil || p.CounterID != nil ||
 			p.TransactionKind != "" || p.CategoryID != nil || p.EstimatedCents != nil || p.Description != "" || p.Note != "" {
-			return domain.ScheduledAction{}, validationError("bag_funding payload takes exactly bag_id and amount_cents")
+			return domain.ScheduledAction{}, validationError("bag_funding payload takes bag_id, amount_cents and an optional source account_id")
 		}
 		if p.BagID == nil {
 			return domain.ScheduledAction{}, validationError("bag_funding needs a bag_id")
@@ -481,6 +504,30 @@ func (s *ScheduledActionService) build(ctx context.Context, existing domain.Sche
 		}
 		if err := validatePositiveCents(p.AmountCents, "amount_cents"); err != nil {
 			return domain.ScheduledAction{}, err
+		}
+		// The optional source account. Funding from the bag's own account (or
+		// no source) reserves directly; a different account moves the money in
+		// with an internal transfer first. Same currency only — a
+		// cross-currency funding would need a recorded conversion the
+		// allocation (always bag-account currency) cannot carry.
+		if p.AccountID != nil {
+			src, err := s.accounts.GetByID(ctx, *p.AccountID)
+			if err != nil {
+				return domain.ScheduledAction{}, fmt.Errorf("validate account_id: %w", err)
+			}
+			if src.ID == bag.AccountID {
+				p.AccountID = nil // same account: no transfer — normalize
+			} else {
+				bagAcc, err := s.accounts.GetByID(ctx, bag.AccountID)
+				if err != nil {
+					return domain.ScheduledAction{}, fmt.Errorf("load bag account: %w", err)
+				}
+				if src.Currency != bagAcc.Currency {
+					return domain.ScheduledAction{}, validationError(
+						"funding from %q (%s) into a bag on %q (%s) needs the same currency — move the money across currencies manually first",
+						src.Name, src.Currency, bagAcc.Name, bagAcc.Currency)
+				}
+			}
 		}
 
 	case domain.ScheduleBagRebalance:
@@ -665,7 +712,7 @@ func (s *ScheduledActionService) EnsureUpcoming(ctx context.Context, today strin
 		// themselves) AND for real kinds flagged manual=off (0046): the user
 		// opted the movement into execution on its due date — a failed apply
 		// (deleted account, closed bag) leaves the run pending and logged.
-		if a.Kind.Virtual() || a.AutoApply {
+		if effectiveVirtual(a) || a.AutoApply {
 			if err := s.autoApplyDue(ctx, a, today); err != nil {
 				return err
 			}

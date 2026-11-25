@@ -62,6 +62,11 @@ func TestScheduledActionCreateRealSQLite(t *testing.T) {
 			Payload:    domain.SchedulePayload{BagID: &bagID, AmountCents: 20000},
 			Recurrence: domain.ScheduleMonthly, StartDate: "2026-10-28",
 		}},
+		{"funding-from-other-account", ScheduledActionInput{
+			Name: "Move to vacation", Kind: domain.ScheduleBagFunding,
+			Payload:    domain.SchedulePayload{BagID: &bagID, AccountID: &cashID, AmountCents: 20000},
+			Recurrence: domain.ScheduleMonthly, StartDate: "2026-10-28",
+		}},
 		{"transfer", ScheduledActionInput{
 			Name: "Rent", Kind: domain.ScheduleAccountTransfer,
 			Payload:    domain.SchedulePayload{AccountID: &accID, CounterID: &cashID, AmountCents: 100000, Description: "monthly rent"},

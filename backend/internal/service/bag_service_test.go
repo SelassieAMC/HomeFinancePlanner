@@ -21,6 +21,10 @@ type fakeBagStore struct {
 	leaks map[int64]domain.BagAllocation   // alloc id → row (all bags)
 	spend []domain.BagCurrencySpend
 	next  int64 // shared counter over bag ids and allocation ids
+	// txs receives the transfer leg of a cross-account funding (wired by the
+	// scheduler harness so the transfer can be asserted); nil in the plain
+	// bag tests, which never fund across accounts.
+	txs *fakeTxStore
 }
 
 func newFakeBagStore() *fakeBagStore {
@@ -100,6 +104,20 @@ func (f *fakeBagStore) CreateAllocation(_ context.Context, a domain.BagAllocatio
 	f.alloc[a.BagID] = append(f.alloc[a.BagID], a)
 	f.leaks[a.ID] = a
 	return a, nil
+}
+
+// CreateFunding mirrors the real atomic write's effect in the fake: the
+// allocation lands in the bag ledger and, when a transaction store is wired,
+// the transfer leg too.
+func (f *fakeBagStore) CreateFunding(_ context.Context, t domain.Transaction, a domain.BagAllocation) (domain.Transaction, domain.BagAllocation, error) {
+	if f.txs != nil {
+		t, _ = f.txs.Create(context.Background(), t)
+	}
+	a, err := f.CreateAllocation(context.Background(), a)
+	if err != nil {
+		return domain.Transaction{}, domain.BagAllocation{}, err
+	}
+	return t, a, nil
 }
 
 func (f *fakeBagStore) ListAllocations(_ context.Context, bagID int64) ([]domain.BagAllocation, error) {

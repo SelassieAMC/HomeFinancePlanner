@@ -72,7 +72,9 @@ func (s ScheduleRunStatus) Valid() bool {
 // meaningful is decided by the action's kind — validated in the service, never
 // in SQL. One struct keeps the JSON shape stable and the switch readable.
 //
-//	bag_funding       BagID, AmountCents
+//	bag_funding       BagID, AmountCents, AccountID? (optional SOURCE account:
+//	                  set and different from the bag's account moves the money
+//	                  in with an internal transfer first — same currency only)
 //	bag_rebalance     FromBagID, ToBagID, AmountCents
 //	account_transfer  AccountID (source), CounterAccountID, AmountCents
 //	transaction       AccountID, TransactionKind (expense|income), CategoryID?,

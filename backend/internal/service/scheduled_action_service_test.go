@@ -286,12 +286,14 @@ func newScheduleHarness(t *testing.T) *scheduleHarness {
 		t.Fatalf("seed account: %v", err)
 	}
 	bagStore := newFakeBagStore()
+	txStore := newFakeTxStore()
+	bagStore.txs = txStore // the transfer leg of a cross-account funding lands here
 	bagSvc := &BagService{bags: bagStore, accounts: accounts, log: discardLogger()}
 	cats := &fakeCategoryStore{cats: map[int64]domain.Category{
 		9: {ID: 9, Name: "Rent", Kind: "fixed"},
 	}}
 	txSvc := &TransactionService{
-		transactions: newFakeTxStore(),
+		transactions: txStore,
 		accounts:     accounts,
 		categories:   cats,
 		bags:         bagStore,
@@ -397,10 +399,22 @@ func TestScheduleCreateValidation(t *testing.T) {
 		}, "bag_id"},
 		{"funding carries junk fields", func() ScheduledActionInput {
 			in := scheduleFundingOnce(1, 10000, "2026-10-20")
-			acc := int64(1)
+			c := int64(2)
+			in.Payload.CounterID = &c
+			return in
+		}, "takes bag_id, amount_cents"},
+		{"funding cross-currency source", func() ScheduledActionInput {
+			in := scheduleFundingOnce(1, 10000, "2026-10-20")
+			acc := int64(2) // Cash, USD — the bag lives on the EUR account 1
 			in.Payload.AccountID = &acc
 			return in
-		}, "takes exactly bag_id and amount_cents"},
+		}, "same currency"},
+		{"funding unknown source account", func() ScheduledActionInput {
+			in := scheduleFundingOnce(1, 10000, "2026-10-20")
+			acc := int64(77)
+			in.Payload.AccountID = &acc
+			return in
+		}, "not found"},
 		{"funding missing bag row", func() ScheduledActionInput { return scheduleFundingOnce(999, 10000, "2026-10-20") }, "not found"},
 		{"zero amount", func() ScheduledActionInput { return scheduleFundingOnce(1, 0, "2026-10-20") }, "positive amount"},
 		{"transfer same account", func() ScheduledActionInput {
@@ -615,6 +629,107 @@ func TestEnsureUpcomingAutoAppliesFunding(t *testing.T) {
 	}
 	if status.BalanceCents != 15000 {
 		t.Errorf("expected balance 15000, got %d", status.BalanceCents)
+	}
+}
+
+func TestCrossAccountFundingStaysManualThenApplies(t *testing.T) {
+	h := newScheduleHarness(t)
+	bag := h.bag(t, "Vacation")
+	// A second EUR account the money moves in from (cross-account source).
+	savings, err := h.accounts.Create(h.ctx, domain.Account{Name: "Savings", Type: domain.AccountChecking, Currency: "EUR", OpeningBalanceCents: 0})
+	if err != nil {
+		t.Fatalf("seed savings: %v", err)
+	}
+
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
+		Name:       "Move to vacation",
+		Kind:       domain.ScheduleBagFunding,
+		Payload:    domain.SchedulePayload{BagID: &bag.ID, AccountID: &savings.ID, AmountCents: 15000},
+		Recurrence: domain.ScheduleOnce,
+		StartDate:  "2026-10-10",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.Payload.AccountID == nil || *created.Payload.AccountID != savings.ID {
+		t.Fatalf("expected the cross-account source stored, got %+v", created.Payload)
+	}
+
+	// Cross-account funding is a real movement: the catch-up must NOT
+	// auto-apply it (manual by default) — no transfer, no allocation.
+	if err := h.svc.EnsureUpcoming(h.ctx, h.today); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	runs, _ := h.scheduledRuns(t, created.ID)
+	if len(runs) != 1 || runs[0].Status != domain.SchedulePending {
+		t.Fatalf("expected the overdue run to stay pending, got %+v", runs)
+	}
+	if len(allTxs(h.txStore)) != 0 {
+		t.Fatalf("manual funding must write no transfer before apply")
+	}
+	if allocs, _ := h.bagSvc.AllocationHistory(h.ctx, bag.ID); len(allocs) != 0 {
+		t.Fatalf("manual funding must write no allocation before apply")
+	}
+
+	// One click applies it: the transfer (source → bag account) AND the fund
+	// allocation land, dated at the due date.
+	applied, err := h.svc.ApplyRun(h.ctx, runs[0].ID, h.today)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if applied.Status != domain.ScheduleApplied {
+		t.Fatalf("expected applied, got %+v", applied)
+	}
+	txs := allTxs(h.txStore)
+	if len(txs) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(txs))
+	}
+	tx := txs[0]
+	if tx.Kind != domain.TransactionTransfer || tx.AccountID != savings.ID || tx.CounterAccountID == nil || *tx.CounterAccountID != bag.AccountID {
+		t.Fatalf("unexpected transfer: %+v", tx)
+	}
+	if tx.AmountCents != 15000 || tx.Date != "2026-10-10" {
+		t.Fatalf("unexpected transfer fields: %+v", tx)
+	}
+	allocs, _ := h.bagSvc.AllocationHistory(h.ctx, bag.ID)
+	if len(allocs) != 1 || allocs[0].AmountCents != 15000 || allocs[0].Kind != string(domain.BagFund) {
+		t.Fatalf("unexpected allocation: %+v", allocs)
+	}
+}
+
+func TestCrossAccountFundingAutoApplies(t *testing.T) {
+	h := newScheduleHarness(t)
+	bag := h.bag(t, "Vacation")
+	savings, err := h.accounts.Create(h.ctx, domain.Account{Name: "Savings", Type: domain.AccountChecking, Currency: "EUR", OpeningBalanceCents: 0})
+	if err != nil {
+		t.Fatalf("seed savings: %v", err)
+	}
+	auto := true
+	created, err := h.svc.Create(h.ctx, h.today, ScheduledActionInput{
+		Name:       "Move to vacation",
+		Kind:       domain.ScheduleBagFunding,
+		Payload:    domain.SchedulePayload{BagID: &bag.ID, AccountID: &savings.ID, AmountCents: 15000},
+		Recurrence: domain.ScheduleOnce,
+		StartDate:  "2026-10-10",
+		AutoApply:  &auto,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := h.svc.EnsureUpcoming(h.ctx, h.today); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	runs, _ := h.scheduledRuns(t, created.ID)
+	if len(runs) != 1 || runs[0].Status != domain.ScheduleApplied {
+		t.Fatalf("expected auto-applied run, got %+v", runs)
+	}
+	txs := allTxs(h.txStore)
+	if len(txs) != 1 || txs[0].Kind != domain.TransactionTransfer {
+		t.Fatalf("expected the auto-applied transfer, got %+v", txs)
+	}
+	allocs, _ := h.bagSvc.AllocationHistory(h.ctx, bag.ID)
+	if len(allocs) != 1 || allocs[0].AmountCents != 15000 {
+		t.Fatalf("expected the auto-applied allocation, got %+v", allocs)
 	}
 }
 

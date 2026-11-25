@@ -174,6 +174,45 @@ func (r *BagRepository) CreateAllocationPair(ctx context.Context, from, to domai
 	return src, dst, nil
 }
 
+// CreateFunding writes a cross-account bag funding atomically: the internal
+// transfer (source account → the bag's account) and the fund allocation in one
+// transaction — either both rows exist or neither, so a failed retry never
+// doubles the money. The transfer is pre-built by the service (same-currency
+// source, so no counter leg); the allocation carries the same note and date.
+func (r *BagRepository) CreateFunding(ctx context.Context, t domain.Transaction, a domain.BagAllocation) (domain.Transaction, domain.BagAllocation, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Transaction{}, domain.BagAllocation{}, fmt.Errorf("begin funding: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().Unix()
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO transactions
+			(account_id, category_id, kind, amount_cents, currency, description, date, created_at, updated_at, bill_id, store_id, counter_account_id, counter_amount_cents, counter_currency, fee_cents, fx_rate, account_amount_cents, bag_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.AccountID, nullableID(t.CategoryID), string(t.Kind), t.AmountCents,
+		t.Currency, t.Description, t.Date, now, now, nullableID(t.BillID), nullableID(t.StoreID), nullableID(t.CounterAccountID),
+		nullableID(t.CounterAmountCents), nullString(t.CounterCurrency), nullableID(t.FeeCents), nullableFloat(t.FxRate), nullableID(t.AccountAmountCents), nullableID(t.BagID))
+	if err != nil {
+		return domain.Transaction{}, domain.BagAllocation{}, mapWriteError("create funding transfer", err)
+	}
+	txID, err := res.LastInsertId()
+	if err != nil {
+		return domain.Transaction{}, domain.BagAllocation{}, fmt.Errorf("funding transfer insert id: %w", err)
+	}
+	allocID, err := insertAllocation(ctx, tx, a, now)
+	if err != nil {
+		return domain.Transaction{}, domain.BagAllocation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Transaction{}, domain.BagAllocation{}, fmt.Errorf("commit funding: %w", err)
+	}
+	t.ID = txID
+	a.ID = allocID
+	return t, a, nil
+}
+
 func insertAllocation(ctx context.Context, tx *sql.Tx, a domain.BagAllocation, now int64) (int64, error) {
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO bag_allocations (bag_id, kind, amount_cents, note, date, created_at, updated_at)
