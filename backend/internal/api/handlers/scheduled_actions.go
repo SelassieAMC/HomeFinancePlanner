@@ -27,6 +27,11 @@ type scheduleRequest struct {
 	StartDate   string                 `json:"start_date"`
 	DayOfMonth  *int                   `json:"day_of_month"`
 	MonthOfYear *int                   `json:"month_of_year"`
+	// AutoApply is the execution mode (0046): nil on an update keeps the
+	// stored value, a create without it means manual. The frontend always
+	// sends the boolean — dropping it here made the "runs itself" checkbox a
+	// silent no-op.
+	AutoApply *bool `json:"auto_apply"`
 }
 
 func (h *ScheduleHandler) input(r scheduleRequest) service.ScheduledActionInput {
@@ -38,6 +43,7 @@ func (h *ScheduleHandler) input(r scheduleRequest) service.ScheduledActionInput 
 		StartDate:   r.StartDate,
 		DayOfMonth:  r.DayOfMonth,
 		MonthOfYear: r.MonthOfYear,
+		AutoApply:   r.AutoApply,
 	}
 }
 
