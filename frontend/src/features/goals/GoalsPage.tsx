@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { goalsApi } from '../../api/goals';
 import { accountsApi } from '../../api/accounts';
+import { bagsApi } from '../../api/bags';
 import { dollarsToCents, formatCents } from '../../lib/money';
 import type { GoalStatus, GoalInput } from '../../types/domain';
 import {
@@ -19,18 +20,31 @@ import {
   ProgressBar,
 } from '../../components/ui';
 
-// Goals are named savings targets tracked against one account: the account's
-// live balance is the goal's progress — contributions are transfers into it
-// (Transactions → Transfer), so the balance stays the single source of truth
-// the net-worth math already trusts. The achieved state is derived, never
-// stored.
+// A goal's tracker is either an account (progress = the account's live balance)
+// or a bag (progress = the bag's reserved balance — money actually set aside for
+// it). One flat shape for the bag selector: id, name, and the account it lives
+// in (which decides the goal's currency).
+export interface GoalBagOption {
+  id: number;
+  name: string;
+  account_id: number;
+  account_name: string;
+  currency: string;
+}
+
+// Goals are named savings targets tracked against one account — or one bag.
+// The account's (or bag's) live balance is the goal's progress — account
+// contributions are transfers into it; a bag's balance is Σ allocations −
+// tagged spend. The achieved state is derived, never stored.
 export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation('goals');
   const { data, loading, error, reload } = useAsync(() => goalsApi.list(), []);
   const accounts = useAsync(() => accountsApi.list(), []);
+  const bagsOverview = useAsync(() => bagsApi.overview(), []);
 
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [bagId, setBagId] = useState('');
   const [accountId, setAccountId] = useState('');
   const [targetDate, setTargetDate] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -39,6 +53,17 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
   const [confirmDelete, setConfirmDelete] = useState<GoalStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
+
+  const bagOptions: GoalBagOption[] = (bagsOverview.data?.accounts ?? []).flatMap(
+    (acct) =>
+      (acct.bags ?? []).map((b) => ({
+        id: b.id,
+        name: b.name,
+        account_id: b.account_id,
+        account_name: acct.account_name,
+        currency: acct.currency,
+      })),
+  );
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -49,14 +74,16 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
       setFormError(t('validation.positive_amount'));
       return;
     }
-    if (!accountId) {
-      setFormError(t('validation.choose_account'));
+    if (!bagId && !accountId) {
+      setFormError(t('validation.choose_tracker'));
       return;
     }
     try {
-      await goalsApi.create(input(name, cents, accountId, targetDate));
+      await goalsApi.create(input(name, cents, accountId, bagId, targetDate));
       setName('');
       setAmount('');
+      setBagId('');
+      setAccountId('');
       setTargetDate('');
       reload();
     } catch (err) {
@@ -103,7 +130,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
 
   const content = (
     <>
-      <Card title={t('add.title')} help={<>{t('hints.progress')} {t('hints.target_date')}</>}>
+      <Card title={t('add.title')} help={<>{t('hints.progress')} {t('hints.bag')} {t('hints.target_date')}</>}>
         <form className="form-row" onSubmit={handleCreate}>
           <Field label={t('add.label_name')}>
             <input
@@ -124,21 +151,37 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
               required
             />
           </Field>
-          <Field label={t('add.label_account')}>
+          <Field label={t('add.label_bag')}>
             <select
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              aria-label={t('add.account_aria')}
-              required
+              value={bagId}
+              onChange={(e) => setBagId(e.target.value)}
+              aria-label={t('add.bag_aria')}
             >
-              <option value="">{t('add.account_empty')}</option>
-              {(accounts.data ?? []).map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.currency})
+              <option value="">{t('add.bag_empty')}</option>
+              {bagOptions.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} — {b.account_name} ({b.currency})
                 </option>
               ))}
             </select>
           </Field>
+          {!bagId && (
+            <Field label={t('add.label_account')}>
+              <select
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                aria-label={t('add.account_aria')}
+                required
+              >
+                <option value="">{t('add.account_empty')}</option>
+                {(accounts.data ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.currency})
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label={t('add.label_date')}>
             <input
               type="date"
@@ -184,7 +227,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
                         <span className="entity-name">{g.name}</span>
                       </span>
                     </td>
-                    <td className="cell-muted">{g.account_name}</td>
+                    <td className="cell-muted">{g.bag_name ?? g.account_name}</td>
                     <td className="num">
                       <strong>{formatCents(g.progress_cents, g.currency)}</strong>
                       {' / '}
@@ -236,6 +279,7 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
           <GoalEditForm
             initial={editing}
             accounts={accounts.data ?? []}
+            bagOptions={bagOptions}
             busy={busy}
             onSubmit={handleUpdate}
             onCancel={() => setEditing(null)}
@@ -269,28 +313,34 @@ export function GoalsPage({ embedded = false }: { embedded?: boolean }) {
   );
 }
 
-function input(name: string, cents: number, accountId: string, targetDate: string): GoalInput {
+function input(name: string, cents: number, accountId: string, bagId: string, targetDate: string): GoalInput {
+  const bag = bagId ? Number(bagId) : null;
   return {
     name,
     target_cents: cents,
-    account_id: Number(accountId),
+    // A bag goal derives its account (and currency) from the bag — send 0.
+    account_id: bag ? 0 : Number(accountId),
+    bag_id: bag,
     target_date: targetDate || null,
   };
 }
 
 // GoalEditForm is the modal's body: a full-replace PUT of the editable fields.
-// The goal's currency follows its account, so re-pointing at an account in a
-// different currency is refused by the backend (the target would change
-// meaning) — only same-currency accounts are offered.
+// The goal's currency follows its account (or its bag's account), so
+// re-pointing at an account/bag in a different currency is refused by the
+// backend (the target would change meaning) — only same-currency options are
+// offered.
 function GoalEditForm({
   initial,
   accounts,
+  bagOptions,
   busy,
   onSubmit,
   onCancel,
 }: {
   initial: GoalStatus;
   accounts: { id: number; name: string; currency: string }[];
+  bagOptions: GoalBagOption[];
   busy: boolean;
   onSubmit: (input: GoalInput) => Promise<void>;
   onCancel: () => void;
@@ -298,9 +348,12 @@ function GoalEditForm({
   const { t } = useTranslation('goals');
   const [name, setName] = useState(initial.name);
   const [amount, setAmount] = useState((initial.target_cents / 100).toString());
+  const [bagId, setBagId] = useState(initial.bag_id ? String(initial.bag_id) : '');
   const [accountId, setAccountId] = useState(String(initial.account_id));
   const [targetDate, setTargetDate] = useState(initial.target_date ?? '');
   const [formError, setFormError] = useState<string | null>(null);
+
+  const sameCurrencyBags = bagOptions.filter((b) => b.currency === initial.currency);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -310,8 +363,12 @@ function GoalEditForm({
       setFormError(t('validation.positive_amount'));
       return;
     }
+    if (!bagId && !accountId) {
+      setFormError(t('validation.choose_tracker'));
+      return;
+    }
     try {
-      await onSubmit(input(name, cents, accountId, targetDate));
+      await onSubmit(input(name, cents, accountId, bagId, targetDate));
     } catch (err) {
       setFormError(err instanceof Error ? err.message : t('errors.save'));
     }
@@ -335,19 +392,33 @@ function GoalEditForm({
           required
         />
       </Field>
-      <Field label={t('edit.account')}>
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
-          {/* Same-currency accounts only: the backend refuses a cross-currency
+      <Field label={t('edit.bag')}>
+        <select value={bagId} onChange={(e) => setBagId(e.target.value)}>
+          <option value="">{t('add.bag_empty')}</option>
+          {/* Same-currency bags only: the backend refuses a cross-currency
               re-point — the target would silently change meaning. */}
-          {accounts
-            .filter((a) => a.currency === initial.currency)
-            .map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.currency})
-              </option>
-            ))}
+          {sameCurrencyBags.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name} — {b.account_name}
+            </option>
+          ))}
         </select>
       </Field>
+      {!bagId && (
+        <Field label={t('edit.account')}>
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
+            {/* Same-currency accounts only: the backend refuses a cross-currency
+                re-point — the target would silently change meaning. */}
+            {accounts
+              .filter((a) => a.currency === initial.currency)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.currency})
+                </option>
+              ))}
+          </select>
+        </Field>
+      )}
       <Field
         label={t('edit.date')}
         hint={t('hints.target_date')}

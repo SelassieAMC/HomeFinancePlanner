@@ -271,10 +271,12 @@ func (s *BagService) Delete(ctx context.Context, id int64) error {
 }
 
 // Allocate records a manual ledger entry: fund (money reserved), withdraw
-// (money released back to unbagged) or adjust (an explicit correction of a
-// drifted balance). Rebalances must go through Rebalance — they are two rows
-// on two bags, not one. Closed bags admit the withdraw rule only after being
-// reopened: all ledger writes refuse on closed bags.
+// (money released back to unbagged) or adjust. Adjust means "set the reserve
+// to this value", NOT a signed delta: the service derives the correction from
+// the live balance (Σ allocations − tagged spend) so a stale client snapshot
+// can never double-apply. Rebalances must go through Rebalance — they are two
+// rows on two bags, not one. Closed bags admit the withdraw rule only after
+// being reopened: all ledger writes refuse on closed bags.
 func (s *BagService) Allocate(ctx context.Context, bagID int64, in domain.BagAllocationInput) (domain.BagAllocation, error) {
 	bag, err := s.bags.GetBagByID(ctx, bagID)
 	if err != nil {
@@ -282,6 +284,22 @@ func (s *BagService) Allocate(ctx context.Context, bagID int64, in domain.BagAll
 	}
 	if bag.Status == domain.BagClosed {
 		return domain.BagAllocation{}, validationError("bag %q is closed — reopen it before touching its reserve", bag.Name)
+	}
+	if in.Kind == domain.BagAdjust {
+		cur, err := s.withBalance(ctx, bag)
+		if err != nil {
+			return domain.BagAllocation{}, err
+		}
+		if in.AmountCents < 0 {
+			return domain.BagAllocation{}, validationError(
+				"an adjustment sets the reserve to a non-negative value — %d is below zero", in.AmountCents)
+		}
+		delta := in.AmountCents - cur.BalanceCents
+		if delta == 0 {
+			return domain.BagAllocation{}, validationError(
+				"the reserve already holds %d — nothing to adjust", cur.BalanceCents)
+		}
+		in.AmountCents = delta
 	}
 	alloc, err := s.buildAllocation(ctx, bag, in)
 	if err != nil {
@@ -494,7 +512,7 @@ func (s *BagService) buildAllocation(ctx context.Context, bag domain.Bag, in dom
 		if kind == domain.BagWithdraw {
 			amount = -in.AmountCents
 		}
-	default: // adjust — an explicit correction, any sign
+	default: // adjust — the derived correction from Allocate, any sign
 		if in.AmountCents == 0 {
 			return domain.BagAllocation{}, validationError("an adjustment must not be zero")
 		}

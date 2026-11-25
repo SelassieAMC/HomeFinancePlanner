@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAsync } from '../../hooks/useAsync';
 import { bagsApi } from '../../api/bags';
 import { accountsApi } from '../../api/accounts';
+import { goalsApi } from '../../api/goals';
 import { dollarsToCents, formatCents, formatSignedCents } from '../../lib/money';
 import { todayISO } from '../../lib/date';
 import type {
@@ -13,6 +14,7 @@ import type {
   BagRebalanceInput,
   YearClosePreview,
   YearCloseBagRow,
+  GoalStatus,
 } from '../../types/domain';
 import {
   Button,
@@ -43,6 +45,9 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation('bags');
   const overview = useAsync(() => bagsApi.overview(), []);
   const accounts = useAsync(() => accountsApi.list(), []);
+  // Goals linked to a bag cascade with it — the delete dialog warns with the
+  // goal names before the bag (and its linked goals) are removed.
+  const goals = useAsync(() => goalsApi.list(), []);
 
   const [formError, setFormError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -178,6 +183,11 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
 
   const accountsData = accounts.data ?? [];
   const sections = overview.data?.accounts ?? [];
+  // Goals whose bag_id points at the bag pending deletion — the delete dialog
+  // names them so the cascade is explicit, never a surprise.
+  const linkedGoals: GoalStatus[] = confirmDelete
+    ? (goals.data ?? []).filter((g) => g.bag_id === confirmDelete.id)
+    : [];
 
   const content = (
     <>
@@ -365,7 +375,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
                                   label={t('actions.adjust')}
                                   disabled={busy}
                                   onClick={() => {
-                                    setAllocateKind('fund');
+                                    setAllocateKind('adjust');
                                     setAllocating(b);
                                   }}
                                 />
@@ -431,6 +441,7 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
         <Dialog title={t('dialogs.allocate.title', { name: allocating.name })} onClose={() => setAllocating(null)}>
           <AllocateForm
             currency={sections.find((a) => a.account_id === allocating.account_id)?.currency ?? ''}
+            balanceCents={allocating.balance_cents}
             initialKind={allocateKind}
             busy={busy}
             onSubmit={async (input) => {
@@ -498,6 +509,13 @@ export function BagsPage({ embedded = false }: { embedded?: boolean }) {
           <p className="hint-text">
             {t('dialogs.delete.body', { name: confirmDelete.name })}
           </p>
+          {linkedGoals.length > 0 && (
+            <p className="hint-text">
+              {t('dialogs.delete.goalsWarning', {
+                names: linkedGoals.map((g) => g.name).join(', '),
+              })}
+            </p>
+          )}
           <div className="dialog-actions">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} disabled={busy}>
               {t('actions.cancel')}
@@ -639,12 +657,14 @@ function BagEditForm({
 
 function AllocateForm({
   currency,
+  balanceCents,
   initialKind = 'fund',
   busy,
   onSubmit,
   onCancel,
 }: {
   currency: string;
+  balanceCents: number;
   initialKind?: 'fund' | 'withdraw' | 'adjust';
   busy: boolean;
   onSubmit: (input: BagAllocationInput) => Promise<void>;
@@ -662,8 +682,10 @@ function AllocateForm({
     setFormError(null);
     const cents = dollarsToCents(amount);
     if (kind === 'adjust') {
-      if (!Number.isFinite(cents) || cents === 0) {
-        setFormError(t('validation.adjustNonZero'));
+      // Adjust sets the reserve to a new value — 0 empties it, negative is
+      // meaningless for a reserve. The backend derives the correction.
+      if (!Number.isFinite(cents) || cents < 0) {
+        setFormError(t('validation.adjustTarget'));
         return;
       }
     } else if (!Number.isFinite(cents) || cents <= 0) {
@@ -686,7 +708,18 @@ function AllocateForm({
           <option value="adjust">{t('dialogs.allocate.kindAdjust')}</option>
         </select>
       </Field>
-      <Field label={t('dialogs.allocate.amountLabel', { currency })}>
+      <Field
+        label={
+          kind === 'adjust'
+            ? t('dialogs.allocate.adjustAmountLabel', { currency })
+            : t('dialogs.allocate.amountLabel', { currency })
+        }
+        hint={
+          kind === 'adjust'
+            ? t('dialogs.allocate.adjustHint', { balance: formatCents(balanceCents, currency) })
+            : undefined
+        }
+      >
         <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required />
       </Field>
       <Field label={t('dialogs.allocate.noteLabel')}>

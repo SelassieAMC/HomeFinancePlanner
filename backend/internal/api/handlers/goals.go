@@ -13,6 +13,7 @@ type goalRequest struct {
 	Name        string  `json:"name"`
 	TargetCents int64   `json:"target_cents"`
 	AccountID   int64   `json:"account_id"`
+	BagID       *int64  `json:"bag_id"`      // track the goal against a bag (nil = account)
 	TargetDate  *string `json:"target_date"` // optional YYYY-MM-DD milestone
 }
 
@@ -21,6 +22,7 @@ func (r goalRequest) input() service.GoalInput {
 		Name:        r.Name,
 		TargetCents: r.TargetCents,
 		AccountID:   r.AccountID,
+		BagID:       r.BagID,
 		TargetDate:  r.TargetDate,
 	}
 }

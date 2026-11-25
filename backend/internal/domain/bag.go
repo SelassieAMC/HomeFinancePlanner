@@ -116,7 +116,8 @@ type BagCurrencySpend struct {
 
 // BagAllocationInput is the manual ledger entry payload. Kind carries the
 // sign: fund and withdraw are validated sign-pure (fund > 0, withdraw < 0);
-// adjust carries any non-zero amount.
+// adjust takes the target reserve value — the service derives the signed
+// delta from the live balance and stores that.
 type BagAllocationInput struct {
 	Kind        BagAllocationKind
 	AmountCents int64

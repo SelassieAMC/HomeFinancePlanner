@@ -18,16 +18,21 @@ export const goals: LocaleBundle = {
       label_name: 'Goal name',
       label_amount: 'Target amount',
       label_account: 'Tracked account',
+      label_bag: 'Tracked bag (optional)',
       label_date: 'Target date (optional)',
       amount_placeholder: 'Target amount',
       account_aria: 'Tracked account',
       account_empty: 'Tracked account…',
+      bag_aria: 'Tracked bag (optional)',
+      bag_empty: 'Tracked bag…',
       date_aria: 'Target date (optional)',
       submit: 'Add',
     },
     hints: {
       progress:
         "Progress is the tracked account's current balance — contribute with a transfer into it. The currency follows that account.",
+      bag:
+        "Track a bag instead and progress is the bag's reserved balance — money actually set aside for the goal. The account (and currency) follow the bag.",
       target_date:
         "The target date is a milestone you're aiming for (\"by when\") — purely informational: nothing is enforced or reminded by it.",
     },
@@ -44,6 +49,7 @@ export const goals: LocaleBundle = {
       name: 'Name',
       target_amount: 'Target amount ({{currency}})',
       account: 'Tracked account',
+      bag: 'Tracked bag (optional)',
       date: 'Target date (optional)',
       cancel: 'Cancel',
       save: 'Save changes',
@@ -59,6 +65,7 @@ export const goals: LocaleBundle = {
     validation: {
       positive_amount: 'Enter a positive target amount.',
       choose_account: 'Choose the account the goal tracks.',
+      choose_tracker: 'Choose the account or bag the goal tracks.',
     },
     errors: {
       create: 'Failed to create goal.',
@@ -81,16 +88,21 @@ export const goals: LocaleBundle = {
       label_name: 'Zielname',
       label_amount: 'Zielbetrag',
       label_account: 'Beobachtetes Konto',
+      label_bag: 'Beobachteter Umschlag (optional)',
       label_date: 'Zieldatum (optional)',
       amount_placeholder: 'Zielbetrag',
       account_aria: 'Beobachtetes Konto',
       account_empty: 'Beobachtetes Konto…',
+      bag_aria: 'Beobachteter Umschlag (optional)',
+      bag_empty: 'Beobachteter Umschlag…',
       date_aria: 'Zieldatum (optional)',
       submit: 'Hinzufügen',
     },
     hints: {
       progress:
         'Der Fortschritt ist der aktuelle Kontostand des beobachteten Kontos – einzahlen mit einer Überweisung auf es. Die Währung folgt dem Konto.',
+      bag:
+        'Beobachte stattdessen einen Umschlag, dann ist der Fortschritt dessen reservierter Saldo — tatsächlich für das Ziel zurückgelegtes Geld. Konto (und Währung) folgen dem Umschlag.',
       target_date:
         'Das Zieldatum ist eine Markierung, auf die du hinarbeitest („bis wann“) – rein informativ: nichts wird dadurch erzwungen oder erinnert.',
     },
@@ -107,6 +119,7 @@ export const goals: LocaleBundle = {
       name: 'Name',
       target_amount: 'Zielbetrag ({{currency}})',
       account: 'Beobachtetes Konto',
+      bag: 'Beobachteter Umschlag (optional)',
       date: 'Zieldatum (optional)',
       cancel: 'Abbrechen',
       save: 'Änderungen speichern',
@@ -122,6 +135,7 @@ export const goals: LocaleBundle = {
     validation: {
       positive_amount: 'Gib einen positiven Zielbetrag ein.',
       choose_account: 'Wähle das Konto, das das Ziel beobachtet.',
+      choose_tracker: 'Wähle das Konto oder den Umschlag, das/den das Ziel beobachtet.',
     },
     errors: {
       create: 'Ziel konnte nicht erstellt werden.',
@@ -144,16 +158,21 @@ export const goals: LocaleBundle = {
       label_name: 'Nombre de la meta',
       label_amount: 'Importe objetivo',
       label_account: 'Cuenta seguida',
+      label_bag: 'Bolsillo seguido (opcional)',
       label_date: 'Fecha objetivo (opcional)',
       amount_placeholder: 'Importe objetivo',
       account_aria: 'Cuenta seguida',
       account_empty: 'Cuenta seguida…',
+      bag_aria: 'Bolsillo seguido (opcional)',
+      bag_empty: 'Bolsillo seguido…',
       date_aria: 'Fecha objetivo (opcional)',
       submit: 'Añadir',
     },
     hints: {
       progress:
         'El progreso es el saldo actual de la cuenta seguida: aporta con una transferencia hacia ella. La moneda sigue a esa cuenta.',
+      bag:
+        'Sigue un bolsillo y el progreso será su saldo reservado: dinero realmente apartado para la meta. La cuenta (y la moneda) siguen al bolsillo.',
       target_date:
         'La fecha objetivo es un hito al que apuntas («para cuándo»): puramente informativa, nada se impone ni se recuerda por ella.',
     },
@@ -170,6 +189,7 @@ export const goals: LocaleBundle = {
       name: 'Nombre',
       target_amount: 'Importe objetivo ({{currency}})',
       account: 'Cuenta seguida',
+      bag: 'Bolsillo seguido (opcional)',
       date: 'Fecha objetivo (opcional)',
       cancel: 'Cancelar',
       save: 'Guardar cambios',
@@ -185,6 +205,7 @@ export const goals: LocaleBundle = {
     validation: {
       positive_amount: 'Introduce un importe objetivo positivo.',
       choose_account: 'Elige la cuenta que sigue la meta.',
+      choose_tracker: 'Elige la cuenta o el bolsillo que sigue la meta.',
     },
     errors: {
       create: 'No se pudo crear la meta.',

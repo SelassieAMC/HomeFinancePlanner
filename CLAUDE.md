@@ -644,7 +644,9 @@ fund of a negative deficit), note "Closed: <name>", left in the ledger as
 ordinary history; the stamp `closed_at` is set on close and cleared on reopen.
 Manual spend-tag tagging is still refused on closed bags. Allocations are signed
 ledger rows with 4 kinds — `fund` (positive), `withdraw` (negative), `adjust`
-(any non-zero), and `rebalance` allowed only through the dedicated endpoint,
+(set-to-target: the service derives the signed delta from the live balance,
+never a client-supplied delta), and `rebalance` allowed only through the
+dedicated endpoint,
 which posts two linked halves (`related_allocation_id` both ways, same account,
 positive amount ≤ source balance) and refuses everything else. Targets are
 optional and never enforced (only displayed + a year-close shortfall):

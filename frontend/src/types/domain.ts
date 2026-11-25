@@ -151,13 +151,14 @@ export interface TransactionInput {
   items?: TransactionItemInput[];
 }
 
-/** A named savings target tracked against one account. */
+/** A named savings target tracked against one account or one bag. */
 export interface Goal {
   id: number;
   name: string;
   target_cents: number;
   currency: string; // the linked account's currency, decided at save time
-  account_id: number;
+  account_id: number; // the currency anchor; for a bag goal it is the bag's account
+  bag_id?: number | null; // set = tracked against the bag (progress = bag balance)
   target_date?: string | null; // optional YYYY-MM-DD milestone
   created_at: string;
   updated_at: string;
@@ -166,14 +167,16 @@ export interface Goal {
 /** A goal with its live progress attached (server-computed per read). */
 export interface GoalStatus extends Goal {
   account_name: string;
-  progress_cents: number; // the linked account's current balance
+  bag_name?: string; // display-only; set when the goal tracks a bag
+  progress_cents: number; // the tracked balance, clamped to never go negative
   achieved: boolean;
 }
 
 export interface GoalInput {
   name: string;
   target_cents: number;
-  account_id: number;
+  account_id: number; // ignored when bag_id is set (derived from the bag)
+  bag_id?: number | null;
   target_date?: string | null;
 }
 

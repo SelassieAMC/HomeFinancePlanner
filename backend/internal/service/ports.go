@@ -405,7 +405,7 @@ func New(
 		Analytics:     analytics,
 		Prompts:       prompts,
 		Insights:      insights,
-		Goals:         &GoalService{goals: goals, accounts: accounts},
+		Goals:         &GoalService{goals: goals, accounts: accounts, bags: bagSvc},
 		Bags:          bagSvc,
 		Schedules:     scheduleSvc,
 		Users:         users,

@@ -192,7 +192,8 @@ func validBagInput() BagInput {
 }
 
 // TestBagAllocateSigns: fund stores positive, withdraw stores negative and
-// adjust is free-form; the balance is ledger minus spend.
+// adjust stores the derived delta that sets the reserve to the requested
+// target; the balance is ledger minus spend.
 func TestBagAllocateSigns(t *testing.T) {
 	ctx := context.Background()
 	svc, store, _ := newTestBagService(t)
@@ -215,8 +216,14 @@ func TestBagAllocateSigns(t *testing.T) {
 	if wd.AmountCents != -5000 {
 		t.Fatalf("withdraw stored %d; want -5000 (kind carries the sign)", wd.AmountCents)
 	}
-	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagAdjust, AmountCents: 300, Date: "2026-10-03"}); err != nil {
+	// Adjust is "set the reserve to this value", not a signed delta: from a
+	// 25000 balance a target of 400 stores a −24600 correction (not a +400 sum).
+	adj, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagAdjust, AmountCents: 400, Date: "2026-10-03"})
+	if err != nil {
 		t.Fatalf("adjust: %v", err)
+	}
+	if adj.AmountCents != -24600 {
+		t.Fatalf("adjust stored %d; want -24600 (derived delta to reach the target)", adj.AmountCents)
 	}
 
 	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagRebalance, AmountCents: 100, Date: "2026-10-03"}); err == nil {
@@ -228,8 +235,11 @@ func TestBagAllocateSigns(t *testing.T) {
 	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagWithdraw, AmountCents: 0, Date: "2026-10-03"}); err == nil {
 		t.Fatalf("zero magnitude accepted for withdraw")
 	}
-	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagAdjust, AmountCents: 0, Date: "2026-10-03"}); err == nil {
-		t.Fatalf("zero adjustment accepted")
+	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagAdjust, AmountCents: -1, Date: "2026-10-03"}); err == nil {
+		t.Fatalf("negative adjustment target accepted")
+	}
+	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagAdjust, AmountCents: 400, Date: "2026-10-03"}); err == nil {
+		t.Fatalf("adjustment to the current value accepted (no-op)")
 	}
 	if _, err := svc.Allocate(ctx, b.ID, domain.BagAllocationInput{Kind: domain.BagFund, AmountCents: 100, Date: "2026-13-40"}); err == nil {
 		t.Fatalf("invalid date accepted")
@@ -242,15 +252,15 @@ func TestBagAllocateSigns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	// 30000 fund − 5000 withdraw + 300 adjust = 25300
-	if st.BalanceCents != 25300 || st.TaggedSpendCents != 0 {
-		t.Fatalf("balance = %d spend %d; want 25300/0", st.BalanceCents, st.TaggedSpendCents)
+	// 30000 fund − 5000 withdraw − 24600 adjust = 400
+	if st.BalanceCents != 400 || st.TaggedSpendCents != 0 {
+		t.Fatalf("balance = %d spend %d; want 400/0", st.BalanceCents, st.TaggedSpendCents)
 	}
 
 	store.seedSpend(b.ID, "EUR", 2300)
 	st, _ = svc.Get(ctx, b.ID)
-	if st.BalanceCents != 23000 || st.TaggedSpendCents != 2300 {
-		t.Fatalf("balance after spend = %d/%d; want 23000/2300", st.BalanceCents, st.TaggedSpendCents)
+	if st.BalanceCents != -1900 || st.TaggedSpendCents != 2300 {
+		t.Fatalf("balance after spend = %d/%d; want -1900/2300", st.BalanceCents, st.TaggedSpendCents)
 	}
 }
 

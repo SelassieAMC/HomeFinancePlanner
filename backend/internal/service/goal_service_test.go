@@ -69,7 +69,28 @@ func (f *fakeGoalStore) Delete(_ context.Context, id int64) error {
 	return nil
 }
 
-func newTestGoalService(t *testing.T) (*GoalService, *fakeGoalStore, *fakeAccountStore) {
+// fakeBagReader is the minimal bag side GoalService reads: a bag's resolved
+// view (account + balance). Seed rows through the returned handle.
+type fakeBagReader struct {
+	mu   sync.Mutex
+	bags map[int64]domain.BagStatus
+}
+
+func newFakeBagReader() *fakeBagReader {
+	return &fakeBagReader{bags: map[int64]domain.BagStatus{}}
+}
+
+func (f *fakeBagReader) Get(_ context.Context, id int64) (domain.BagStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.bags[id]
+	if !ok {
+		return domain.BagStatus{}, domain.ErrNotFound
+	}
+	return b, nil
+}
+
+func newTestGoalService(t *testing.T) (*GoalService, *fakeGoalStore, *fakeAccountStore, *fakeBagReader) {
 	t.Helper()
 	accounts := newFakeAccountStore()
 	ctx := context.Background()
@@ -80,7 +101,8 @@ func newTestGoalService(t *testing.T) (*GoalService, *fakeGoalStore, *fakeAccoun
 		t.Fatalf("seed account: %v", err)
 	}
 	store := newFakeGoalStore()
-	return &GoalService{goals: store, accounts: accounts}, store, accounts
+	bags := newFakeBagReader()
+	return &GoalService{goals: store, accounts: accounts, bags: bags}, store, accounts, bags
 }
 
 func validGoalInput() GoalInput {
@@ -92,7 +114,7 @@ func validGoalInput() GoalInput {
 // with achieved derived from it.
 func TestGoalCreateDerivesCurrencyAndProgress(t *testing.T) {
 	ctx := context.Background()
-	svc, store, accounts := newTestGoalService(t)
+	svc, store, accounts, _ := newTestGoalService(t)
 
 	g, err := svc.Create(ctx, validGoalInput())
 	if err != nil {
@@ -162,7 +184,7 @@ func TestGoalCreateDerivesCurrencyAndProgress(t *testing.T) {
 // existing goal at an account in a different currency.
 func TestGoalValidation(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _ := newTestGoalService(t)
+	svc, _, _, _ := newTestGoalService(t)
 
 	if _, err := svc.Create(ctx, GoalInput{Name: "  ", TargetCents: 100, AccountID: 1}); !errors.Is(err, domain.ErrValidation) {
 		t.Errorf("empty name = %v; want ErrValidation", err)
@@ -203,5 +225,77 @@ func TestGoalValidation(t *testing.T) {
 	}
 	if _, err := svc.Get(ctx, created.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("get after delete = %v; want ErrNotFound", err)
+	}
+}
+
+// TestGoalBagTracksBagBalance: a bag-linked goal reads the bag's live balance
+// as progress (not the account's), carries the bag's name for display, and
+// clamps an overspent bag's negative balance to zero progress. Re-pointing a
+// goal at a bag on a different-currency account is refused like the account
+// path.
+func TestGoalBagTracksBagBalance(t *testing.T) {
+	ctx := context.Background()
+	svc, store, _, bags := newTestGoalService(t)
+
+	seedBag := func(id int64, name string, accountID int64, balance int64) {
+		bags.mu.Lock()
+		defer bags.mu.Unlock()
+		bags.bags[id] = domain.BagStatus{
+			Bag:          domain.Bag{ID: id, Name: name, AccountID: accountID, Status: domain.BagOpen},
+			AccountName:  "Savings",
+			BalanceCents: balance,
+		}
+	}
+	seedBag(1, "Vacations", 1, 8000)
+
+	bagID := int64(1)
+	g, err := svc.Create(ctx, GoalInput{Name: "Vacation", TargetCents: 50000, BagID: &bagID})
+	if err != nil {
+		t.Fatalf("create bag goal: %v", err)
+	}
+	if g.BagID == nil || *g.BagID != 1 {
+		t.Fatalf("bag_id = %v; want 1", g.BagID)
+	}
+	if g.Currency != "EUR" || g.AccountID != 1 {
+		t.Fatalf("currency/account = %s/%d; want EUR/1", g.Currency, g.AccountID)
+	}
+	if g.BagName != "Vacations" || g.AccountName != "Savings" {
+		t.Fatalf("names = %q/%q; want Vacations/Savings", g.BagName, g.AccountName)
+	}
+	if g.ProgressCents != 8000 || g.Achieved {
+		t.Fatalf("progress = %d achieved=%v; want 8000 false", g.ProgressCents, g.Achieved)
+	}
+
+	// Lowering the target below the balance flips achieved.
+	store.mu.Lock()
+	saved := store.items[g.ID]
+	store.mu.Unlock()
+	saved.TargetCents = 7000
+	store.mu.Lock()
+	store.items[g.ID] = saved
+	store.mu.Unlock()
+	view, err := svc.Get(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !view.Achieved || view.ProgressCents != 8000 {
+		t.Fatalf("achieved/progress = %v/%d; want true/8000", view.Achieved, view.ProgressCents)
+	}
+
+	// An overspent bag (negative balance) clamps progress to 0, never negative.
+	seedBag(1, "Vacations", 1, -3000)
+	view, err = svc.Get(ctx, g.ID)
+	if err != nil {
+		t.Fatalf("get after overspend: %v", err)
+	}
+	if view.ProgressCents != 0 || view.Achieved {
+		t.Fatalf("overspent progress = %d achieved=%v; want 0 false", view.ProgressCents, view.Achieved)
+	}
+
+	// Re-pointing at a bag on a different-currency account is refused.
+	otherBag := int64(2)
+	seedBag(2, "Gadget", 2, 400)
+	if _, err := svc.Update(ctx, g.ID, GoalInput{Name: "Vacation", TargetCents: 50000, BagID: &otherBag}); !errors.Is(err, domain.ErrValidation) {
+		t.Errorf("cross-currency bag re-point = %v; want ErrValidation", err)
 	}
 }

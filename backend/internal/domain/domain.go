@@ -309,28 +309,36 @@ type Budget struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
-// Goal is a named savings target tracked against one account. It holds no
-// money of its own: progress is the live balance of the linked account
-// (contributions are transfers into it), and the target is achieved once
-// that balance reaches TargetCents. TargetDate is an optional "by when"
-// milestone.
+// Goal is a named savings target tracked against one account or one bag. It
+// holds no money of its own: progress is the live balance of the linked
+// account (contributions are transfers into it) or, when BagID is set, the
+// linked bag's live balance (Σ allocations − tagged spend — money actually
+// reserved for the goal). The target is achieved once that balance reaches
+// TargetCents. TargetDate is an optional "by when" milestone.
 type Goal struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	TargetCents int64     `json:"target_cents"`
-	Currency    string    `json:"currency"` // the linked account's currency (decided at save time)
-	AccountID   int64     `json:"account_id"`
-	TargetDate  *string   `json:"target_date,omitempty"` // YYYY-MM-DD, nullable
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	TargetCents int64  `json:"target_cents"`
+	Currency    string `json:"currency"` // the linked account's currency (decided at save time)
+	AccountID   int64  `json:"account_id"`
+	// BagID tracks the goal against a bag instead of the account: progress is
+	// the bag's balance. NULL keeps the legacy account-linked behavior. The
+	// account stays the currency anchor — a bag-linked goal derives AccountID
+	// from the bag's account at save time.
+	BagID      *int64    `json:"bag_id,omitempty"`
+	TargetDate *string   `json:"target_date,omitempty"` // YYYY-MM-DD, nullable
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // GoalStatus is a goal with its live progress attached. ProgressCents is the
-// linked account's current balance; Achieved is derived per read, never
-// stored.
+// tracked account's (or bag's) current balance, clamped to never go negative
+// (a reserve cannot show "negative saved"); Achieved is derived per read,
+// never stored.
 type GoalStatus struct {
 	Goal
-	AccountName   string `json:"account_name"` // display-only, joined
+	AccountName   string `json:"account_name"`       // display-only, joined
+	BagName       string `json:"bag_name,omitempty"` // display-only; set when the goal tracks a bag
 	ProgressCents int64  `json:"progress_cents"`
 	Achieved      bool   `json:"achieved"`
 }

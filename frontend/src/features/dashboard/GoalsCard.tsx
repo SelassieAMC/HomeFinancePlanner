@@ -29,7 +29,7 @@ export function GoalsBody({ goals }: { goals: AsyncState<GoalStatus[]> }) {
             key={g.id}
             tone={g.achieved ? 'ok' : 'normal'}
             name={g.name}
-            context={g.account_name}
+            context={g.bag_name ?? g.account_name}
             primary={formatCents(g.progress_cents, g.currency)}
             target={formatCents(g.target_cents, g.currency)}
             pct={pct}

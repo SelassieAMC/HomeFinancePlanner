@@ -11,9 +11,10 @@ import (
 )
 
 // goalColumns is the goal column list for SELECTs, in scan order. Progress is
-// never stored on the goal row — the service reads the linked account's live
-// balance (see GoalService.withProgress), so no account join lives here.
-const goalColumns = `id, name, target_cents, currency, account_id, target_date, created_at, updated_at`
+// never stored on the goal row — the service reads the linked account's (or
+// bag's) live balance (see GoalService.withProgress), so no account join lives
+// here.
+const goalColumns = `id, name, target_cents, currency, account_id, bag_id, target_date, created_at, updated_at`
 
 // GoalRepository is the SQLite-backed implementation of the goal store.
 type GoalRepository struct{ db *sql.DB }
@@ -56,9 +57,9 @@ func (r *GoalRepository) GetByID(ctx context.Context, id int64) (domain.Goal, er
 func (r *GoalRepository) Create(ctx context.Context, g domain.Goal) (domain.Goal, error) {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
-		INSERT INTO goals (name, target_cents, currency, account_id, target_date, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		g.Name, g.TargetCents, g.Currency, g.AccountID, nullableString(g.TargetDate), now, now)
+		INSERT INTO goals (name, target_cents, currency, account_id, bag_id, target_date, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		g.Name, g.TargetCents, g.Currency, g.AccountID, nullableID(g.BagID), nullableString(g.TargetDate), now, now)
 	if err != nil {
 		return domain.Goal{}, mapWriteError("create goal", err)
 	}
@@ -72,9 +73,9 @@ func (r *GoalRepository) Create(ctx context.Context, g domain.Goal) (domain.Goal
 func (r *GoalRepository) Update(ctx context.Context, g domain.Goal) (domain.Goal, error) {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE goals
-		SET name = ?, target_cents = ?, currency = ?, account_id = ?, target_date = ?, updated_at = ?
+		SET name = ?, target_cents = ?, currency = ?, account_id = ?, bag_id = ?, target_date = ?, updated_at = ?
 		WHERE id = ?`,
-		g.Name, g.TargetCents, g.Currency, g.AccountID, nullableString(g.TargetDate), time.Now().Unix(), g.ID)
+		g.Name, g.TargetCents, g.Currency, g.AccountID, nullableID(g.BagID), nullableString(g.TargetDate), time.Now().Unix(), g.ID)
 	if err != nil {
 		return domain.Goal{}, mapWriteError("update goal", err)
 	}
@@ -99,12 +100,17 @@ func (r *GoalRepository) Delete(ctx context.Context, id int64) error {
 func scanGoal(row interface{ Scan(dest ...any) error }) (domain.Goal, error) {
 	var (
 		g              domain.Goal
+		bagID          sql.NullInt64
 		targetDate     sql.NullString
 		createdAt, upd int64
 	)
-	if err := row.Scan(&g.ID, &g.Name, &g.TargetCents, &g.Currency, &g.AccountID, &targetDate,
+	if err := row.Scan(&g.ID, &g.Name, &g.TargetCents, &g.Currency, &g.AccountID, &bagID, &targetDate,
 		&createdAt, &upd); err != nil {
 		return domain.Goal{}, err
+	}
+	if bagID.Valid {
+		v := bagID.Int64
+		g.BagID = &v
 	}
 	if targetDate.Valid {
 		v := targetDate.String
