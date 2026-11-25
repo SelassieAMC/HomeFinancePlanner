@@ -28,6 +28,7 @@ export const settings: LocaleBundle = {
       dark: 'Dark',
     },
     profile: {
+      pageTitle: 'Profile',
       photoTitle: 'Profile photo',
       photoAlt: 'Profile photo',
       photoEmpty: '?',
@@ -194,6 +195,7 @@ export const settings: LocaleBundle = {
       dark: 'Dunkel',
     },
     profile: {
+      pageTitle: 'Profil',
       photoTitle: 'Profilfoto',
       photoAlt: 'Profilfoto',
       photoEmpty: '?',
@@ -361,6 +363,7 @@ export const settings: LocaleBundle = {
       dark: 'Oscuro',
     },
     profile: {
+      pageTitle: 'Perfil',
       photoTitle: 'Foto de perfil',
       photoAlt: 'Foto de perfil',
       photoEmpty: '?',

@@ -13,7 +13,6 @@ import type { AIProvider, AIProviderType, NormalizationJob } from '../../types/d
 import { COMMON_CURRENCIES } from '../../lib/currencies';
 import { Button, Card, Tabs, Spinner, ErrorMessage, EmptyState, HelpNote, ItemPanel, ItemPanels } from '../../components/ui';
 import { useAuth } from '../auth/AuthContext';
-import { ProfileTab } from './ProfileTab';
 import { UsersTab } from './UsersTab';
 
 const providerTypes: { value: AIProviderType; labelKey: string }[] = [
@@ -84,14 +83,14 @@ function toDraft(p: AIProvider, key: DraftKey): DraftProvider {
 }
 
 // The page's sections are independent settings domains; tabs keep each one
-// readable (own profile, currency/general, AI connector drafts, the
-// normalization job, and — admins only — the household user management).
-type SettingsTab = 'profile' | 'general' | 'connectors' | 'normalization' | 'users';
+// readable (currency/general, AI connector drafts, the normalization job,
+// and — admins only — the household user management).
+type SettingsTab = 'general' | 'connectors' | 'normalization' | 'users';
 
 export function SettingsPage() {
   const { t } = useTranslation('settings');
   const { user } = useAuth();
-  const [tab, setTab] = useState<SettingsTab>('profile');
+  const [tab, setTab] = useState<SettingsTab>('general');
   const saved = useAsync(() => settingsApi.listAIProviders(), []);
 
   // --- Display currency ------------------------------------------------------
@@ -270,7 +269,6 @@ export function SettingsPage() {
       <Tabs
         ariaLabel={t('page.sectionsAria')}
         tabs={[
-          { key: 'profile', label: t('tabs.profile') },
           { key: 'general', label: t('page.tabGeneral') },
           { key: 'connectors', label: t('page.tabConnectors') },
           { key: 'normalization', label: t('page.tabNormalization') },
@@ -281,8 +279,6 @@ export function SettingsPage() {
         active={tab}
         onChange={setTab}
       />
-
-      {tab === 'profile' && <ProfileTab key="profile" />}
 
       {tab === 'users' && <UsersTab key="users" />}
 

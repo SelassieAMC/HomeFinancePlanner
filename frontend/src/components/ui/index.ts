@@ -19,6 +19,11 @@ export {
   IconHistory,
   IconChevronLeft,
   IconChevronRight,
+  IconChevronDown,
+  IconHome,
+  IconWallet,
+  IconTag,
+  IconGear,
 } from './IconButton';
 export { Card } from './Card';
 export { Spinner, ErrorMessage, EmptyState, Dialog, HelpNote, HelpHint } from './Feedback';
