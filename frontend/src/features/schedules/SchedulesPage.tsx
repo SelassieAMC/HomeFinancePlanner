@@ -177,7 +177,6 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
   const today = todayISO();
   const allRuns = runs.data ?? [];
   const historyRows = allRuns.filter((r) => r.status !== 'pending');
-  const active = schedules.data ?? [];
 
   /** Human sentence describing the payload — used in the schedule list and the
    *  apply confirmation, so the user always sees what a click writes. */
@@ -347,26 +346,27 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
     <>
       {pageError && <ErrorMessage message={pageError} />}
 
-      {(active.length > 0 || (payables.data?.items ?? []).length > 0 || historyRows.length > 0) && (
-        <PayablesCard
-          month={payables.data?.month ?? (registerMonth || today.slice(0, 7))}
-          items={payables.data?.items ?? []}
-          totals={payables.data?.totals ?? []}
-          today={today}
-          busy={payables.loading || busy}
-          describe={(p) => payloadSummary(p, lookup)}
-          historyRows={historyRows}
-          showHistory={showHistory}
-          onToggleHistory={() => setShowHistory(!showHistory)}
-          onAdd={() => { setFormError(null); setShowForm(true); }}
-          onApply={(it) => setConfirmApply(runOf(it))}
-          onRunAction={(it, action) => handleRunAction(runOf(it), action)}
-          onEdit={(it) => { setFormError(null); setEditing(planOf(it)); }}
-          onArchive={(it) => handleArchive(planOf(it))}
-          onDelete={(it) => setConfirmDelete(planOf(it))}
-          onShift={(delta) => setRegisterMonth(shiftMonth(payables.data?.month ?? today.slice(0, 7), delta))}
-        />
-      )}
+      {/* The register is always visible: with zero schedules its "add"
+          button is the only way to create the first one — hiding the card
+          here left an empty planner with no entry point. */}
+      <PayablesCard
+        month={payables.data?.month ?? (registerMonth || today.slice(0, 7))}
+        items={payables.data?.items ?? []}
+        totals={payables.data?.totals ?? []}
+        today={today}
+        busy={payables.loading || busy}
+        describe={(p) => payloadSummary(p, lookup)}
+        historyRows={historyRows}
+        showHistory={showHistory}
+        onToggleHistory={() => setShowHistory(!showHistory)}
+        onAdd={() => { setFormError(null); setShowForm(true); }}
+        onApply={(it) => setConfirmApply(runOf(it))}
+        onRunAction={(it, action) => handleRunAction(runOf(it), action)}
+        onEdit={(it) => { setFormError(null); setEditing(planOf(it)); }}
+        onArchive={(it) => handleArchive(planOf(it))}
+        onDelete={(it) => setConfirmDelete(planOf(it))}
+        onShift={(delta) => setRegisterMonth(shiftMonth(payables.data?.month ?? today.slice(0, 7), delta))}
+      />
 
       {(showForm || editing) && (
         <ScheduleFormDialog
