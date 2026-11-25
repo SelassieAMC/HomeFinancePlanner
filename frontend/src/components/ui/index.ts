@@ -1,6 +1,7 @@
 export { Button } from './Button';
 export { ThemeToggle } from './ThemeToggle';
 export { Field } from './Field';
+export { MonthPicker } from './MonthPicker';
 export {
   IconButton,
   IconEdit,

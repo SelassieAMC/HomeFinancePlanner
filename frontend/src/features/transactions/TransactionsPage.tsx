@@ -29,6 +29,7 @@ import {
   ItemPanel,
   ItemPanels,
   Field,
+  MonthPicker,
 } from '../../components/ui';
 import { TransactionForm } from './TransactionForm';
 
@@ -339,11 +340,10 @@ export function TransactionsPage() {
             <>
               <div className="filter-row">
                 <Field label={t('filters.month')} layout="row">
-                  <input
-                    type="month"
+                  <MonthPicker
                     value={month}
-                    onChange={(e) => setMonth(e.target.value)}
-                    aria-label={t('filters.monthAria')}
+                    onChange={setMonth}
+                    ariaLabel={t('filters.monthAria')}
                   />
                 </Field>
                 {(accounts.data?.length ?? 0) > 0 && (

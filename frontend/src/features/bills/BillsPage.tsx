@@ -9,7 +9,7 @@ import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
 import type { Bill, BillDraft } from '../../types/domain';
 import { formatCents, currentMonth } from '../../lib/money';
-import { Card, Spinner, ErrorMessage, EmptyState, Field, Button, ItemPanels, Dialog } from '../../components/ui';
+import { Card, Spinner, ErrorMessage, EmptyState, Field, Button, ItemPanels, Dialog, MonthPicker } from '../../components/ui';
 import { BillDraftEditor, buildConfirmInput } from './BillDraftEditor';
 import { BillDraftView } from './BillDraftView';
 
@@ -363,11 +363,10 @@ export function BillsPage() {
 
       <div className="filter-row">
         <Field label={t('filterMonthAria')} layout="row">
-          <input
-            type="month"
+          <MonthPicker
             value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            aria-label={t('filterMonthAria')}
+            onChange={setMonth}
+            ariaLabel={t('filterMonthAria')}
           />
         </Field>
       </div>

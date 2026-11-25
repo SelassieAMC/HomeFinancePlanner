@@ -42,6 +42,10 @@ export const common: LocaleBundle = {
       next: 'Next →',
       status: '{{first}}–{{last}} of {{total}}',
     },
+    month: {
+      prev: 'Previous month',
+      next: 'Next month',
+    },
     categories: {
       none: 'No category',
       search_placeholder: 'Search categories…',
@@ -94,6 +98,10 @@ export const common: LocaleBundle = {
       next: 'Weiter →',
       status: '{{first}}–{{last}} von {{total}}',
     },
+    month: {
+      prev: 'Voriger Monat',
+      next: 'Nächster Monat',
+    },
     categories: {
       none: 'Keine Kategorie',
       search_placeholder: 'Kategorien durchsuchen…',
@@ -145,6 +153,10 @@ export const common: LocaleBundle = {
       prev: '← Anterior',
       next: 'Siguiente →',
       status: '{{first}}–{{last}} de {{total}}',
+    },
+    month: {
+      prev: 'Mes anterior',
+      next: 'Mes siguiente',
     },
     categories: {
       none: 'Sin categoría',

@@ -1007,6 +1007,14 @@ textarea:focus,
   gap: 6px;
 }
 
+/* Native month input + prev/next step buttons (bills/transactions filters).
+   Mirrors .payables-month-nav but keeps the picker input in the middle. */
+.month-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .payables-month-head + .budget-list {
   margin-top: 4px;
 }
