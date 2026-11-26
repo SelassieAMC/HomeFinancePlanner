@@ -109,6 +109,12 @@ export const schedules: LocaleBundle = {
       cancel: 'Cancel',
       confirm: 'Delete',
     },
+    archiveConfirm: {
+      title: 'Archive schedule?',
+      body: 'Archive “{{name}}”? It disappears from the schedule list and its upcoming occurrences stop being shown. Movements already recorded stay in Transactions.',
+      cancel: 'Cancel',
+      confirm: 'Archive',
+    },
     fallbacks: {
       account: 'account #{{id}}',
       bag: 'bag #{{id}}',
@@ -318,6 +324,12 @@ export const schedules: LocaleBundle = {
       cancel: 'Abbrechen',
       confirm: 'Löschen',
     },
+    archiveConfirm: {
+      title: 'Termin archivieren?',
+      body: '„{{name}}“ archivieren? Der Termin verschwindet aus der Terminliste und seine künftigen Vorgänge werden nicht mehr angezeigt. Bereits gebuchte Bewegungen bleiben in Buchungen.',
+      cancel: 'Abbrechen',
+      confirm: 'Archivieren',
+    },
     fallbacks: {
       account: 'Konto #{{id}}',
       bag: 'Umschlag #{{id}}',
@@ -526,6 +538,12 @@ export const schedules: LocaleBundle = {
       body: '¿Eliminar «{{name}}»? Desaparece el plan entero: no más apariciones futuras y no se conserva su historial. Los movimientos ya registrados quedan en Transacciones.',
       cancel: 'Cancelar',
       confirm: 'Eliminar',
+    },
+    archiveConfirm: {
+      title: '¿Archivar la programación?',
+      body: '¿Archivar «{{name}}»? Desaparece de la lista de programaciones y dejan de mostrarse sus próximas apariciones. Los movimientos ya registrados quedan en Transacciones.',
+      cancel: 'Cancelar',
+      confirm: 'Archivar',
     },
     fallbacks: {
       account: 'cuenta #{{id}}',

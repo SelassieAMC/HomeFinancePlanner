@@ -9,7 +9,7 @@ import { categoriesApi } from '../../api/categories';
 import { storesApi } from '../../api/stores';
 import type { Bill, BillDraft } from '../../types/domain';
 import { formatCents, currentMonth } from '../../lib/money';
-import { Card, Spinner, ErrorMessage, EmptyState, Field, Button, ItemPanels, Dialog, MonthPicker } from '../../components/ui';
+import { Card, Spinner, ErrorMessage, EmptyState, Field, Button, ItemPanels, Dialog, MonthPicker, ConfirmDialog } from '../../components/ui';
 import { BillDraftEditor, buildConfirmInput } from './BillDraftEditor';
 import { BillDraftView } from './BillDraftView';
 
@@ -26,6 +26,8 @@ export function BillsPage() {
   const scans = useAsync(() => billsApi.listScans(), []);
   const [scanBusyToken, setScanBusyToken] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  // Discarding a scan deletes the request and its photos — confirm first.
+  const [confirmDiscardToken, setConfirmDiscardToken] = useState<string | null>(null);
   // Dialog: a re-read was enqueued; the result arrives in this list later.
   const [rereadSent, setRereadSent] = useState(false);
   const hasAnalyzing = (scans.data ?? []).some((s) => s.status === 'analyzing');
@@ -52,11 +54,13 @@ export function BillsPage() {
     }
   }
 
-  async function discardScan(token: string) {
-    setScanBusyToken(token);
+  async function confirmDiscard() {
+    if (!confirmDiscardToken) return;
+    setScanBusyToken(confirmDiscardToken);
     setScanError(null);
     try {
-      await billsApi.discardScan(token);
+      await billsApi.discardScan(confirmDiscardToken);
+      setConfirmDiscardToken(null);
     } catch (err) {
       setScanError(err instanceof Error ? err.message : t('errors.discard'));
     } finally {
@@ -330,7 +334,7 @@ export function BillsPage() {
                         <Button
                           variant="danger"
                           disabled={scanBusyToken !== null}
-                          onClick={() => discardScan(scan.scan_token)}
+                          onClick={() => setConfirmDiscardToken(scan.scan_token)}
                         >
                           {t('action.deleteRequest')}
                         </Button>
@@ -348,7 +352,7 @@ export function BillsPage() {
                       <Button
                         variant="danger"
                         disabled={scanBusyToken !== null}
-                        onClick={() => discardScan(scan.scan_token)}
+                        onClick={() => setConfirmDiscardToken(scan.scan_token)}
                       >
                         {t('action.deleteRequest')}
                       </Button>
@@ -509,6 +513,22 @@ export function BillsPage() {
             </Button>
           </div>
         </Dialog>
+      )}
+
+      {confirmDiscardToken !== null && (
+        <ConfirmDialog
+          title={t('discardDialog.title')}
+          message={t('discardDialog.body')}
+          confirmLabel={t('discardDialog.confirm')}
+          cancelLabel={t('discardDialog.cancel')}
+          busy={scanBusyToken !== null}
+          error={scanError}
+          onCancel={() => {
+            setConfirmDiscardToken(null);
+            setScanError(null);
+          }}
+          onConfirm={confirmDiscard}
+        />
       )}
     </div>
   );

@@ -8,7 +8,7 @@ import { settingsApi } from '../../api/settings';
 import type { Account, AccountGroup, AccountInput, AccountType } from '../../types/domain';
 import { formatCents, dollarsToCents } from '../../lib/money';
 import { COMMON_CURRENCIES, type CurrencyOption } from '../../lib/currencies';
-import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels, Dialog, Field } from '../../components/ui';
+import { Button, Card, Spinner, ErrorMessage, EmptyState, ItemPanel, ItemPanels, Dialog, Field, ConfirmDialog } from '../../components/ui';
 
 const ACCOUNT_TYPES: AccountType[] = ['checking', 'savings', 'credit', 'cash', 'other'];
 
@@ -59,6 +59,12 @@ export function AccountsPage() {
   const [groupError, setGroupError] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<number | null>(null);
   const [renameName, setRenameName] = useState('');
+
+  // Account delete is destructive (transactions, transfers, goals and bags
+  // cascade with it) — confirm before the call.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // New accounts default to the user's base display currency (falls back to
   // USD until the setting loads).
@@ -141,12 +147,18 @@ export function AccountsPage() {
     }
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete() {
+    if (confirmDeleteId === null) return;
+    setDeleting(true);
+    setDeleteError(null);
     try {
-      await accountsApi.remove(id);
+      await accountsApi.remove(confirmDeleteId);
+      setConfirmDeleteId(null);
       reloadAll();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : t('errors.delete'));
+      setDeleteError(err instanceof Error ? err.message : t('errors.delete'));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -393,7 +405,13 @@ export function AccountsPage() {
             <Button variant="secondary" onClick={() => startReconcile(a)}>
               {t('actions.reconcile')}
             </Button>
-            <Button variant="danger" onClick={() => handleDelete(a.id)}>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setDeleteError(null);
+                setConfirmDeleteId(a.id);
+              }}
+            >
               {t('actions.delete')}
             </Button>
           </div>
@@ -559,6 +577,24 @@ export function AccountsPage() {
             </div>
           </form>
         </Dialog>
+      )}
+
+      {confirmDeleteId !== null && (
+        <ConfirmDialog
+          title={t('dialogs.delete.title')}
+          message={t('dialogs.delete.body', {
+            name: accounts.find((a) => a.id === confirmDeleteId)?.name ?? '',
+          })}
+          confirmLabel={t('actions.delete')}
+          cancelLabel={t('actions.cancel')}
+          busy={deleting}
+          error={deleteError}
+          onCancel={() => {
+            setConfirmDeleteId(null);
+            setDeleteError(null);
+          }}
+          onConfirm={handleDelete}
+        />
       )}
     </div>
   );

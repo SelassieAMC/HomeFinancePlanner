@@ -52,6 +52,10 @@ export const accounts: LocaleBundle = {
         hint: 'The app computed a balance of {{balance}} from your transactions. If the bank says something different, type its number — the opening balance is adjusted and the transactions stay untouched.',
         statedLabel: 'What the bank says ({{currency}})',
       },
+      delete: {
+        title: 'Delete account?',
+        body: 'Delete “{{name}}”? Its transactions, transfers, goals and bags are deleted with it. This cannot be undone.',
+      },
     },
     errors: {
       invalidBalance: 'Enter a valid number.',
@@ -131,6 +135,10 @@ export const accounts: LocaleBundle = {
         hint: 'Die App hat aus deinen Buchungen einen Saldo von {{balance}} berechnet. Sagt die Bank etwas anderes, gib ihre Zahl ein — der Anfangssaldo wird angepasst, die Buchungen bleiben unberührt.',
         statedLabel: 'Was die Bank meldet ({{currency}})',
       },
+      delete: {
+        title: 'Konto löschen?',
+        body: '„{{name}}“ löschen? Seine Buchungen, Überweisungen, Ziele und Umschläge werden mitgelöscht. Das kann nicht rückgängig gemacht werden.',
+      },
     },
     errors: {
       invalidBalance: 'Gib eine gültige Zahl ein.',
@@ -209,6 +217,10 @@ export const accounts: LocaleBundle = {
         title: 'Conciliar saldo',
         hint: 'La app calculó un saldo de {{balance}} a partir de tus transacciones. Si el banco dice otra cosa, introduce su cifra: se ajusta el saldo inicial y las transacciones quedan intactas.',
         statedLabel: 'Lo que dice el banco ({{currency}})',
+      },
+      delete: {
+        title: '¿Eliminar cuenta?',
+        body: '¿Eliminar «{{name}}»? Sus transacciones, transferencias, metas y bolsillos se eliminan con ella. No se puede deshacer.',
       },
     },
     errors: {

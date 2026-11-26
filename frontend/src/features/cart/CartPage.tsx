@@ -9,7 +9,7 @@ import type { OfferResult } from '../../types/domain';
 import { useAsync } from '../../hooks/useAsync';
 import { usePolling } from '../../hooks/usePolling';
 import { formatCents } from '../../lib/money';
-import { Button, Card, Tabs, EmptyState, ErrorMessage, Field, ProductAutocomplete, Spinner } from '../../components/ui';
+import { Button, Card, Tabs, EmptyState, ErrorMessage, Field, ProductAutocomplete, Spinner, ConfirmDialog } from '../../components/ui';
 import { useCart } from './CartContext';
 import { OfferResultView } from './OfferResultView';
 
@@ -35,6 +35,10 @@ export function CartPage() {
   const [busy, setBusy] = useState(false);
   // Shown once after "Confirm purchase": the cart was cleared, the result kept.
   const [confirmed, setConfirmed] = useState(false);
+  // Destructive actions confirm first: clearing the cart loses its items;
+  // discarding a past search removes the stored report.
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmDiscardToken, setConfirmDiscardToken] = useState<string | null>(null);
 
   // "Add item" field for products not yet in the cart.
   const [pickName, setPickName] = useState('');
@@ -189,17 +193,25 @@ export function CartPage() {
     setSearchParams({});
   }
 
-  async function discardSearch(searchToken: string) {
+  async function confirmDiscardSearch() {
+    if (!confirmDiscardToken) return;
+    const searchToken = confirmDiscardToken;
     setBusy(true);
     try {
       await cartApi.remove(searchToken);
       setHistoryKey((k) => k + 1);
       if (searchToken === token) backToCart();
+      setConfirmDiscardToken(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : i18n.t('cart:errors.discard'));
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleClear() {
+    cart.clear();
+    setConfirmClear(false);
   }
 
   const noProviderHint = phase === 'cart' && (history.data?.length ?? 0) === 0;
@@ -307,7 +319,7 @@ export function CartPage() {
             >
               {t('search.offers')}
             </Button>
-            <Button variant="secondary" onClick={() => cart.clear()} disabled={busy || cart.items.length === 0}>
+            <Button variant="secondary" onClick={() => setConfirmClear(true)} disabled={busy || cart.items.length === 0}>
               {t('search.clearAll')}
             </Button>
           </div>
@@ -471,7 +483,7 @@ export function CartPage() {
                   variant="ghost"
                   className="btn-sm"
                   disabled={busy || s.status === 'searching'}
-                  onClick={() => discardSearch(s.search_token)}
+                  onClick={() => setConfirmDiscardToken(s.search_token)}
                 >
                   {t('actions.discard')}
                 </Button>
@@ -481,6 +493,33 @@ export function CartPage() {
         )}
         {history.error && <ErrorMessage message={history.error.message} />}
       </Card>
+      )}
+
+      {confirmClear && (
+        <ConfirmDialog
+          title={t('confirmClear.title')}
+          message={t('confirmClear.body')}
+          confirmLabel={t('confirmClear.confirm')}
+          cancelLabel={t('actions.cancel')}
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={handleClear}
+        />
+      )}
+
+      {confirmDiscardToken !== null && (
+        <ConfirmDialog
+          title={t('confirmDiscard.title')}
+          message={t('confirmDiscard.body')}
+          confirmLabel={t('confirmDiscard.confirm')}
+          cancelLabel={t('actions.cancel')}
+          busy={busy}
+          error={error}
+          onCancel={() => {
+            setConfirmDiscardToken(null);
+            setError(null);
+          }}
+          onConfirm={confirmDiscardSearch}
+        />
       )}
     </div>
   );

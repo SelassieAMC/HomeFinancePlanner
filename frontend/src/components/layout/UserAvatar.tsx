@@ -118,9 +118,6 @@ export function UserAvatar() {
           <button type="button" role="menuitem" onClick={() => { setOpen(false); navigate('/profile'); }}>
             {t('nav.profile')}
           </button>
-          <button type="button" role="menuitem" onClick={() => { setOpen(false); navigate('/settings'); }}>
-            {t('nav.settings')}
-          </button>
           <button type="button" role="menuitem" onClick={() => { setOpen(false); void logout(); }}>
             {t('user_menu.log_out')}
           </button>

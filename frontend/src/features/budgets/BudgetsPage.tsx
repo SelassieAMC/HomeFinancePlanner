@@ -13,6 +13,7 @@ import {
   Button,
   Card,
   CategorySelect,
+  ConfirmDialog,
   Dialog,
   Field,
   Spinner,
@@ -78,6 +79,8 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
   const [editCarry, setEditCarry] = useState(true);
   const [editError, setEditError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Budget | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   // Expanded history per category_id: closed monthly rows revealed under the
   // current row of a recurring series.
   const [historyOpen, setHistoryOpen] = useState<Set<number>>(new Set());
@@ -201,12 +204,18 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
-  async function handleDelete(id: number) {
+  async function handleDelete() {
+    if (!confirmDelete) return;
+    setBusy(true);
+    setDeleteError(null);
     try {
-      await budgetsApi.remove(id);
+      await budgetsApi.remove(confirmDelete.id);
+      setConfirmDelete(null);
       reload();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : t('errors.delete'));
+      setDeleteError(err instanceof Error ? err.message : t('errors.delete'));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -349,7 +358,10 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
               label={t('card.delete')}
               variant="danger"
               disabled={busy}
-              onClick={() => handleDelete(b.id)}
+              onClick={() => {
+                setDeleteError(null);
+                setConfirmDelete(b);
+              }}
             />
           )}
           {showHistory && (
@@ -584,6 +596,24 @@ export function BudgetsPage({ embedded = false }: { embedded?: boolean }) {
             </div>
           </form>
         </Dialog>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={t('deleteConfirm.title')}
+          message={t('deleteConfirm.body', {
+            name: categoryNames.get(confirmDelete.category_id) ?? `#${confirmDelete.category_id}`,
+          })}
+          confirmLabel={t('deleteConfirm.confirm')}
+          cancelLabel={t('deleteConfirm.cancel')}
+          busy={busy}
+          error={deleteError}
+          onCancel={() => {
+            setConfirmDelete(null);
+            setDeleteError(null);
+          }}
+          onConfirm={handleDelete}
+        />
       )}
 
       {(transferHistory.data ?? []).length > 0 && (

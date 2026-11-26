@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
-import { Button, Card, ErrorMessage } from '../../components/ui';
+import { Button, Card, ConfirmDialog, ErrorMessage } from '../../components/ui';
 import { schedulesApi } from '../../api/schedules';
 import { useAsync } from '../../hooks/useAsync';
 import { todayISO } from '../../lib/date';
@@ -33,6 +33,10 @@ export function ComingUpCard() {
   const today = todayISO();
   const runs = useAsync(() => schedulesApi.runs({ status: ['pending'], due_to: dueWindow(today), limit: 50 }), []);
   const [busy, setBusy] = useState(false);
+  // Applying writes a real movement (or ticks a purchase) — confirm before
+  // the one-click apply, like the Scheduled page does.
+  const [confirmApply, setConfirmApply] = useState<ScheduleRunView | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     const all = runs.data ?? [];
@@ -48,6 +52,17 @@ export function ComingUpCard() {
       await runs.reload();
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleApplyConfirm() {
+    if (!confirmApply) return;
+    setError(null);
+    try {
+      await act(confirmApply, 'apply');
+      setConfirmApply(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('comingUp.error'));
     }
   }
 
@@ -77,51 +92,76 @@ export function ComingUpCard() {
   };
 
   return (
-    <Card title={t('comingUp.title')} className="insights-card">
-      <div className="insight-list">
-        {rows.map((run) => (
-          <div key={run.id} className="insight-row">
-            <span className={run.due_date < today ? 'badge danger' : 'badge'}>{dueLabel(run.due_date)}</span>
-            <div className="insight-body">
-              <span className="insight-message">
-                <strong>{run.action_name}</strong>
-                {' — '}
-                {run.kind === 'purchase'
-                  ? t('comingUp.kind.purchase')
-                  : run.kind === 'account_transfer'
-                    ? t('comingUp.kind.transfer')
-                    : run.kind === 'transaction'
-                      ? (run.schedule.transaction_kind ?? t('comingUp.kind.transaction'))
-                      : run.kind === 'bag_funding'
-                        ? t('comingUp.kind.bag_funding')
-                        : t('comingUp.kind.bag_rebalance')}
-              </span>
-              <span className="hint-inline">{t('comingUp.plannedHint')}</span>
-            </div>
-            <div className="budget-actions">
-              <Button
-                variant="secondary"
-                className="btn-sm"
-                disabled={busy}
-                onClick={() => void act(run, 'apply')}
-              >
-                {run.kind === 'purchase' ? t('comingUp.done') : t('comingUp.apply')}
-              </Button>
-              {!VIRTUAL_KINDS.includes(run.kind) && (
-                <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => void act(run, 'dismiss')}>
-                  {t('comingUp.dismiss')}
+    <>
+      <Card title={t('comingUp.title')} className="insights-card">
+        <div className="insight-list">
+          {rows.map((run) => (
+            <div key={run.id} className="insight-row">
+              <span className={run.due_date < today ? 'badge danger' : 'badge'}>{dueLabel(run.due_date)}</span>
+              <div className="insight-body">
+                <span className="insight-message">
+                  <strong>{run.action_name}</strong>
+                  {' — '}
+                  {run.kind === 'purchase'
+                    ? t('comingUp.kind.purchase')
+                    : run.kind === 'account_transfer'
+                      ? t('comingUp.kind.transfer')
+                      : run.kind === 'transaction'
+                        ? (run.schedule.transaction_kind ?? t('comingUp.kind.transaction'))
+                        : run.kind === 'bag_funding'
+                          ? t('comingUp.kind.bag_funding')
+                          : t('comingUp.kind.bag_rebalance')}
+                </span>
+                <span className="hint-inline">{t('comingUp.plannedHint')}</span>
+              </div>
+              <div className="budget-actions">
+                <Button
+                  variant="secondary"
+                  className="btn-sm"
+                  disabled={busy}
+                  onClick={() => {
+                    setError(null);
+                    setConfirmApply(run);
+                  }}
+                >
+                  {run.kind === 'purchase' ? t('comingUp.done') : t('comingUp.apply')}
                 </Button>
-              )}
+                {!VIRTUAL_KINDS.includes(run.kind) && (
+                  <Button variant="ghost" className="btn-sm" disabled={busy} onClick={() => void act(run, 'dismiss')}>
+                    {t('comingUp.dismiss')}
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-      <p className="hint-text">
-        {overduePresent ? `${t('comingUp.footerOverdue')} ` : ''}
-        <Trans i18nKey="comingUp.footer">
-          Full list on the <Link to="/planning?tab=schedules">Scheduled</Link> planning page.
-        </Trans>
-      </p>
-    </Card>
+          ))}
+        </div>
+        <p className="hint-text">
+          {overduePresent ? `${t('comingUp.footerOverdue')} ` : ''}
+          <Trans i18nKey="comingUp.footer">
+            Full list on the <Link to="/planning?tab=schedules">Scheduled</Link> planning page.
+          </Trans>
+        </p>
+      </Card>
+
+      {confirmApply && (
+        <ConfirmDialog
+          title={t('comingUp.confirmTitle')}
+          message={
+            confirmApply.kind === 'purchase'
+              ? t('comingUp.confirmDone', { name: confirmApply.action_name })
+              : t('comingUp.confirmApply', { name: confirmApply.action_name })
+          }
+          confirmLabel={t('comingUp.confirmOk')}
+          cancelLabel={t('comingUp.confirmCancel')}
+          busy={busy}
+          error={error}
+          onCancel={() => {
+            setConfirmApply(null);
+            setError(null);
+          }}
+          onConfirm={handleApplyConfirm}
+        />
+      )}
+    </>
   );
 }

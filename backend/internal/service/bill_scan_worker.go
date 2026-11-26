@@ -58,6 +58,27 @@ func (s *BillService) markPanicked(token string, r any, log *slog.Logger) {
 	}
 }
 
+// abortIfNotAnalyzing polls the scan row and cancels runCancel once its status
+// leaves 'analyzing'. CancelScan (and Discard/Confirm) run in the API process
+// and can only touch the DB row — this poller is how a user abort actually
+// reaches the worker's running extraction. It stops itself when runCtx ends.
+func (s *BillService) abortIfNotAnalyzing(parent context.Context, runCtx context.Context, runCancel context.CancelFunc, token string) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-runCtx.Done():
+			return
+		case <-ticker.C:
+			cur, err := s.scans.GetByToken(parent, token)
+			if err != nil || cur.Status != domain.BillScanAnalyzing {
+				runCancel()
+				return
+			}
+		}
+	}
+}
+
 // processScan extracts one scan's draft and persists the result. All errors
 // land in the scan row (status failed) — nothing is propagated, because the
 // caller is the River worker. A row still analyzing after a crash is recovered
@@ -74,6 +95,14 @@ func (s *BillService) processScan(ctx context.Context, token string, log *slog.L
 	defer runCancel()
 	s.registerCanceller(token, runCancel)
 	defer s.removeCanceller(token)
+
+	// CancelScan runs in the API process, not this one, so it can only write
+	// the DB row — it never reaches this worker's in-process cancellers map.
+	// Poll the row instead: abort the extraction the moment the status leaves
+	// 'analyzing' (user cancelled, discarded or confirmed mid-run). Without
+	// this, a cancel only blocked the RESULT write; the AI call kept generating
+	// to completion and the River job ran to the end.
+	go s.abortIfNotAnalyzing(parent, runCtx, runCancel, token)
 
 	scan, err := s.scans.GetByToken(parent, token)
 	if err != nil || scan.Status != domain.BillScanAnalyzing {

@@ -43,6 +43,16 @@ export const cart: LocaleBundle = {
       offers: 'Search offers',
       clearAll: 'Clear all',
     },
+    confirmClear: {
+      title: 'Clear the cart?',
+      body: 'Remove every item from the cart? This cannot be undone.',
+      confirm: 'Clear cart',
+    },
+    confirmDiscard: {
+      title: 'Discard this search?',
+      body: 'The stored offer report is removed. You can run the search again anytime.',
+      confirm: 'Discard',
+    },
     options: {
       storeScope: 'Store scope',
       anyMarket: 'Any local market — whatever appears available',
@@ -158,6 +168,16 @@ export const cart: LocaleBundle = {
     search: {
       offers: 'Angebote suchen',
       clearAll: 'Alles leeren',
+    },
+    confirmClear: {
+      title: 'Warenkorb leeren?',
+      body: 'Alle Artikel aus dem Warenkorb entfernen? Das lässt sich nicht rückgängig machen.',
+      confirm: 'Warenkorb leeren',
+    },
+    confirmDiscard: {
+      title: 'Diese Suche verwerfen?',
+      body: 'Der gespeicherte Angebotsbericht wird entfernt. Du kannst die Suche jederzeit erneut starten.',
+      confirm: 'Verwerfen',
     },
     options: {
       storeScope: 'Marktauswahl',
@@ -275,6 +295,16 @@ export const cart: LocaleBundle = {
     search: {
       offers: 'Buscar ofertas',
       clearAll: 'Vaciar todo',
+    },
+    confirmClear: {
+      title: '¿Vaciar el carrito?',
+      body: '¿Quitar todos los artículos del carrito? No se puede deshacer.',
+      confirm: 'Vaciar carrito',
+    },
+    confirmDiscard: {
+      title: '¿Descartar esta búsqueda?',
+      body: 'Se elimina el informe de ofertas guardado. Puedes repetir la búsqueda cuando quieras.',
+      confirm: 'Descartar',
     },
     options: {
       storeScope: 'Alcance de tiendas',

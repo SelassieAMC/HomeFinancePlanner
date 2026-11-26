@@ -4303,3 +4303,47 @@ textarea:focus,
 .item-field.over > strong {
   color: var(--negative);
 }
+
+/* --- Responsive overflow guards + control-organization standard -------------
+   Rows of nowrap facts (badge · date · amount) and long <select> options used
+   to push their containers wider on narrow screens, clipping the row's action
+   buttons. These rules wrap instead of overflow and let children shrink to
+   their track. */
+.budget-card,
+.plan-row {
+  min-width: 0;
+}
+
+/* The occurrence header (dot · name · badge · date · amount) wraps its
+   trailing facts to a second line instead of overflowing off-card. */
+.budget-head {
+  flex-wrap: wrap;
+}
+
+/* The occurrence actions' icon cluster wraps onto its own line when the three
+   text buttons fill the width on a phone — no Apply/Dismiss/Skip button or
+   icon is ever clipped. */
+.budget-card .cell-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+/* Filter rows wrap at every width (not only on phones) so a crowded filter
+   bar never overflows its card. */
+.filter-row {
+  flex-wrap: wrap;
+}
+
+/* Controls inside a grid/flex track shrink to the track instead of spilling
+   out — a long <select> option is the usual culprit. */
+.form-grid input,
+.form-grid select,
+.form-grid textarea,
+.form-stack input,
+.form-stack select,
+.form-stack textarea {
+  min-width: 0;
+}

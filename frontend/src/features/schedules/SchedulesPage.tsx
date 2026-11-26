@@ -27,6 +27,7 @@ import type {
 import {
   Button,
   Card,
+  ConfirmDialog,
   Dialog,
   ErrorMessage,
   EmptyState,
@@ -147,6 +148,7 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
   const [editing, setEditing] = useState<ScheduledAction | null>(null);
   const [confirmApply, setConfirmApply] = useState<ScheduleRunView | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ScheduledAction | null>(null);
+  const [confirmArchive, setConfirmArchive] = useState<ScheduledAction | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -297,11 +299,13 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
-  async function handleArchive(action: ScheduledAction) {
+  async function handleArchive() {
+    if (!confirmArchive) return;
     setBusy(true);
     setPageError(null);
     try {
-      await schedulesApi.archive(action.id);
+      await schedulesApi.archive(confirmArchive.id);
+      setConfirmArchive(null);
       await schedules.reload();
       await reloadRuns();
     } catch (err) {
@@ -378,7 +382,7 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
         onApply={(it) => setConfirmApply(runOf(it))}
         onRunAction={(it, action) => handleRunAction(runOf(it), action)}
         onEdit={(it) => { setFormError(null); setEditing(planOf(it)); }}
-        onArchive={(it) => handleArchive(planOf(it))}
+        onArchive={(it) => setConfirmArchive(planOf(it))}
         onDelete={(it) => setConfirmDelete(planOf(it))}
         onShift={(delta) => setRegisterMonth(shiftMonth(payables.data?.month ?? today.slice(0, 7), delta))}
       />
@@ -457,6 +461,22 @@ export function SchedulesPage({ embedded = false }: { embedded?: boolean }) {
             </Button>
           </div>
         </Dialog>
+      )}
+
+      {confirmArchive && (
+        <ConfirmDialog
+          title={t('archiveConfirm.title')}
+          message={t('archiveConfirm.body', { name: confirmArchive.name })}
+          confirmLabel={t('archiveConfirm.confirm')}
+          cancelLabel={t('archiveConfirm.cancel')}
+          busy={busy}
+          error={pageError}
+          onCancel={() => {
+            setConfirmArchive(null);
+            setPageError(null);
+          }}
+          onConfirm={handleArchive}
+        />
       )}
     </>
   );

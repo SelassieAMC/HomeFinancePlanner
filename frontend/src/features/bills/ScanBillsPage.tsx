@@ -13,7 +13,7 @@ import { useAsync } from '../../hooks/useAsync';
 import { usePolling } from '../../hooks/usePolling';
 import { formatCents } from '../../lib/money';
 import { decodeImage, reencodeFileRotated } from '../../lib/image';
-import { Button, Card, Spinner, ErrorMessage, Dialog } from '../../components/ui';
+import { Button, Card, Spinner, ErrorMessage, Dialog, ConfirmDialog } from '../../components/ui';
 import {
   BillDraftEditor,
   buildConfirmInput,
@@ -59,6 +59,10 @@ export function ScanBillsPage() {
   const budgets = useAsync(() => budgetsApi.list('open'), []);
   const [accepted, setAccepted] = useState<Bill | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Destructive scan actions confirm before running (discard deletes the
+  // request + photos; cancel aborts the in-flight read).
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   // Summary of the last batch of uploads (capture phase only).
   const [uploadResults, setUploadResults] = useState<UploadOutcome[]>([]);
   // Checked = the selected files are consecutive parts of ONE long receipt,
@@ -383,6 +387,7 @@ export function ScanBillsPage() {
     setError(null);
     try {
       setScan(await billsApi.cancelScan(scan.scan_token));
+      setConfirmCancel(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errors.cancel'));
     } finally {
@@ -396,6 +401,7 @@ export function ScanBillsPage() {
     setError(null);
     try {
       await billsApi.discardScan(scan.scan_token);
+      setConfirmDiscard(false);
       reset();
     } catch (err) {
       setError(err instanceof Error ? err.message : t('errors.discard'));
@@ -590,7 +596,7 @@ export function ScanBillsPage() {
                 <Button onClick={handleRetry} disabled={busy !== null}>
                   {t('action.tryAgain')}
                 </Button>
-                <Button variant="secondary" onClick={handleDiscard} disabled={busy !== null}>
+                <Button variant="secondary" onClick={() => { setError(null); setConfirmDiscard(true); }} disabled={busy !== null}>
                   {t('action.discard')}
                 </Button>
               </div>
@@ -604,7 +610,7 @@ export function ScanBillsPage() {
                 <Button onClick={handleRetry} disabled={busy !== null}>
                   {t('action.tryAgain')}
                 </Button>
-                <Button variant="danger" onClick={handleDiscard} disabled={busy !== null}>
+                <Button variant="danger" onClick={() => { setError(null); setConfirmDiscard(true); }} disabled={busy !== null}>
                   {t('action.deleteRequest')}
                 </Button>
               </div>
@@ -617,7 +623,7 @@ export function ScanBillsPage() {
                 {t('analyzing.stillTail')}
               </div>
               <div className="camera-row">
-                <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
+                <Button variant="danger" onClick={() => { setError(null); setConfirmCancel(true); }} disabled={busy !== null}>
                   {t('action.cancelAnalysis')}
                 </Button>
               </div>
@@ -626,7 +632,7 @@ export function ScanBillsPage() {
             <>
               <Spinner label={t('analyzing.readingLong')} />
               <div className="camera-row">
-                <Button variant="danger" onClick={handleCancelScan} disabled={busy !== null}>
+                <Button variant="danger" onClick={() => { setError(null); setConfirmCancel(true); }} disabled={busy !== null}>
                   {t('action.cancelAnalysis')}
                 </Button>
               </div>
@@ -644,7 +650,7 @@ export function ScanBillsPage() {
             onChange={setDraft}
             onConfirm={handleConfirm}
             onRetry={handleRetry}
-            onDiscard={handleDiscard}
+            onDiscard={() => { setError(null); setConfirmDiscard(true); }}
             busy={busy}
             receipt={
               scan
@@ -705,6 +711,38 @@ export function ScanBillsPage() {
             <Button onClick={dismissReread}>{t('common.ok')}</Button>
           </div>
         </Dialog>
+      )}
+
+      {confirmDiscard && (
+        <ConfirmDialog
+          title={t('discardDialog.title')}
+          message={t('discardDialog.body')}
+          confirmLabel={t('discardDialog.confirm')}
+          cancelLabel={t('discardDialog.cancel')}
+          busy={busy !== null}
+          error={error}
+          onCancel={() => {
+            setConfirmDiscard(false);
+            setError(null);
+          }}
+          onConfirm={handleDiscard}
+        />
+      )}
+
+      {confirmCancel && (
+        <ConfirmDialog
+          title={t('cancelDialog.title')}
+          message={t('cancelDialog.body')}
+          confirmLabel={t('cancelDialog.confirm')}
+          cancelLabel={t('cancelDialog.cancel')}
+          busy={busy !== null}
+          error={error}
+          onCancel={() => {
+            setConfirmCancel(false);
+            setError(null);
+          }}
+          onConfirm={handleCancelScan}
+        />
       )}
     </div>
   );

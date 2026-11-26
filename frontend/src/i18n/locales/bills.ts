@@ -75,6 +75,20 @@ export const bills: LocaleBundle = {
       body:
         'This permanently removes “{{market}}” ({{amount}}) — its articles, the recorded expense transaction, and the stored receipt image. This cannot be undone.',
     },
+    discardDialog: {
+      title: 'Delete receipt request?',
+      body:
+        'This removes the scan and its uploaded photos. The receipt is gone — scan it again if you still need it.',
+      cancel: 'Cancel',
+      confirm: 'Delete request',
+    },
+    cancelDialog: {
+      title: 'Cancel the analysis?',
+      body:
+        'The read stops now. The uploaded photos are kept with the request, so you can try again or delete it.',
+      cancel: 'Keep reading',
+      confirm: 'Cancel analysis',
+    },
     scan: {
       title: 'Scan a bill',
       noProviderBefore: 'No AI connector configured yet — set one up in ',
@@ -340,6 +354,20 @@ export const bills: LocaleBundle = {
       title: 'Beleg löschen?',
       body:
         'Dies entfernt „{{market}}“ ({{amount}}) endgültig — seine Artikel, die erfasste Ausgaben-Transaktion und das gespeicherte Belegbild. Dies kann nicht rückgängig gemacht werden.',
+    },
+    discardDialog: {
+      title: 'Beleg-Anfrage löschen?',
+      body:
+        'Das entfernt den Scan und seine hochgeladenen Fotos. Der Beleg ist weg — scanne ihn erneut, falls du ihn noch brauchst.',
+      cancel: 'Abbrechen',
+      confirm: 'Anfrage löschen',
+    },
+    cancelDialog: {
+      title: 'Analyse abbrechen?',
+      body:
+        'Das Lesen stoppt jetzt. Die hochgeladenen Fotos bleiben bei der Anfrage erhalten — du kannst es erneut versuchen oder die Anfrage löschen.',
+      cancel: 'Weiter lesen',
+      confirm: 'Analyse abbrechen',
     },
     scan: {
       title: 'Beleg scannen',
@@ -607,6 +635,20 @@ export const bills: LocaleBundle = {
       title: '¿Eliminar recibo?',
       body:
         'Esto elimina permanentemente «{{market}}» ({{amount}}) — sus artículos, la transacción de gasto registrada y la imagen guardada del recibo. No se puede deshacer.',
+    },
+    discardDialog: {
+      title: '¿Eliminar la solicitud de recibo?',
+      body:
+        'Esto elimina el escaneo y sus fotos subidas. El recibo desaparece: vuelve a escanearlo si aún lo necesitas.',
+      cancel: 'Cancelar',
+      confirm: 'Eliminar solicitud',
+    },
+    cancelDialog: {
+      title: '¿Cancelar el análisis?',
+      body:
+        'La lectura se detiene ahora. Las fotos subidas se conservan con la solicitud, así que puedes reintentar o eliminarla.',
+      cancel: 'Seguir leyendo',
+      confirm: 'Cancelar análisis',
     },
     scan: {
       title: 'Escanear un recibo',

@@ -234,21 +234,24 @@ func (p *pipelineJobs) AnalyzeTransactionCategories(ctx context.Context, transac
 	return p.insert(ctx, jobs.TransactionCategoryAnalysisArgs{TransactionID: transactionID}, nil)
 }
 
+// The token-keyed pipeline jobs (bill scan, offer search) enqueue WITHOUT
+// River's uniqueness. A `ByArgs` unique would block a re-read: the token is
+// the same across a scan and its re-extraction, and River's default ByState
+// includes `completed`, so a finished job keeps its unique_key in the partial
+// unique index and silently skips the re-enqueue (UniqueSkippedAsDuplicate).
+// Correctness is already guarded at the DB row level — ClaimRetry/Create move
+// the status atomically, and processScan skips any scan that isn't
+// `analyzing` — so a duplicate enqueue (e.g. RecoverScans re-enqueueing a
+// pending scan) is a harmless no-op, never a double result write.
 func (p *pipelineJobs) EnqueueBillScan(ctx context.Context, token string) error {
 	return p.insert(ctx, service.BillScanArgs{Token: token}, &river.InsertOpts{
 		Queue: jobs.QueueBillScan,
-		UniqueOpts: river.UniqueOpts{
-			ByArgs: true, // a re-enqueue of the same token is a no-op
-		},
 	})
 }
 
 func (p *pipelineJobs) EnqueueOfferSearch(ctx context.Context, token string) error {
 	return p.insert(ctx, service.OfferSearchArgs{Token: token}, &river.InsertOpts{
 		Queue: jobs.QueueOfferSearch,
-		UniqueOpts: river.UniqueOpts{
-			ByArgs: true,
-		},
 	})
 }
 

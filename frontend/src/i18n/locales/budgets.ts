@@ -75,6 +75,12 @@ export const budgets: LocaleBundle = {
       from_nothing: 'From nothing (seed)',
       error: 'Failed to move the allowance.',
     },
+    deleteConfirm: {
+      title: 'Delete budget?',
+      body: 'Delete the {{name}} budget? Its transfer history is removed too; movements already recorded stay in Transactions.',
+      cancel: 'Cancel',
+      confirm: 'Delete',
+    },
     validation: {
       positive_amount: 'Enter a positive budget amount.',
       choose_category: 'Choose a category.',
@@ -158,6 +164,12 @@ export const budgets: LocaleBundle = {
       from_nothing: 'Aus dem Nichts (Übertrag)',
       error: 'Die Umbuchung ist fehlgeschlagen.',
     },
+    deleteConfirm: {
+      title: 'Budget löschen?',
+      body: 'Das Budget {{name}} löschen? Auch die Umbuchungs-Historie wird entfernt; bereits gebuchte Bewegungen bleiben in Buchungen.',
+      cancel: 'Abbrechen',
+      confirm: 'Löschen',
+    },
     validation: {
       positive_amount: 'Gib einen positiven Budgetbetrag ein.',
       choose_category: 'Wähle eine Kategorie.',
@@ -240,6 +252,12 @@ export const budgets: LocaleBundle = {
       history_title: 'Transferencias',
       from_nothing: 'Desde la nada (saldo)',
       error: 'No se pudo mover la asignación.',
+    },
+    deleteConfirm: {
+      title: '¿Eliminar presupuesto?',
+      body: '¿Eliminar el presupuesto de {{name}}? También se elimina su historial de transferencias; los movimientos ya registrados quedan en Transacciones.',
+      cancel: 'Cancelar',
+      confirm: 'Eliminar',
     },
     validation: {
       positive_amount: 'Introduce un importe de presupuesto positivo.',

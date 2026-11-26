@@ -19,9 +19,9 @@ import { UserAvatar } from './UserAvatar';
 // collapsible domain sections (Money, Catalog, System): a section row reads
 // like a regular item (icon + label, no uppercase caption) and its pages
 // indent under a vertical rail, so the hierarchy stands out. Open/closed
-// state persists per browser; the avatar menu owns Profile/Settings. The
-// mobile "More" sheet reuses the section pages as a plain list — no accordion
-// there, the sheet is transient.
+// state persists per browser; the avatar menu owns the self-service Profile
+// (Settings lives here, in System). The mobile "More" sheet reuses the
+// section pages as a plain list — no accordion there, the sheet is transient.
 // External items are plain anchors outside the SPA router (the backend serves
 // them directly — e.g. the River job-queue UI), never NavLink routes.
 // The `label` field holds a `common` i18n key (nav.*) — translated at render
@@ -74,6 +74,7 @@ const NAV_SECTIONS: NavSection[] = [
     titleKey: 'nav.section_system',
     icon: <IconGear />,
     items: [
+      { to: '/settings', label: 'nav.settings' },
       { to: '/riverui', label: 'nav.job_queue', external: true, href: '/riverui' },
     ],
   },

@@ -28,6 +28,7 @@ export {
 } from './IconButton';
 export { Card } from './Card';
 export { Spinner, ErrorMessage, EmptyState, Dialog, HelpNote, HelpHint } from './Feedback';
+export { ConfirmDialog } from './ConfirmDialog';
 export { ProgressBar } from './ProgressBar';
 export { Tabs } from './Tabs';
 export type { TabDef } from './Tabs';
