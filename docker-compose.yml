@@ -45,7 +45,7 @@ services:
     # Same binary, worker mode: runs only the River job queue (no HTTP). The
     # API enqueues through the shared SQLite file; this process executes. A
     # slow AI scan or a worker crash cannot take the API down, and vice versa.
-    command: ["/app/server", "-worker"]
+    command: ["-worker"]
     environment:
       APP_ENV: production
       DB_PATH: /data/finance.db
